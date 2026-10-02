@@ -3,39 +3,42 @@ name: system-one-foundation-models
 license: Apache-2.0
 description: >-
   Evaluate System One decision models (Laya On-Device Core ML, Laya HTTP server, TypeSafe Jev,
-  and Cloudflare Clef & Clef-Flash multimodal decision models) natively through Apple's Foundation
-  Models framework in Swift 6. Use when building iOS 27+, macOS 27+, or visionOS 27+ apps that
-  evaluate strongly-typed @Generable structs and enums using LanguageModelSession, running models
-  on-device via Core ML (Apple Neural Engine), connecting to self-hosted laya-serve, deploying
-  multimodal visual triage via Cloudflare Workers AI and AI Gateway, implementing confidence
-  routing (RoutingPolicy, NoulJudgement, ScoreValue), configuring resilient network retries (RetryPolicy),
-  or writing deterministic offline unit tests with MockSystemOneBackend and MockClefBackendProtocol.
+  Cloudflare Clef & Clef-Flash, OpenAI Decisions gpt-6-luna, Google Gemini Decisions
+  gemini-decision-1, and vendor-agnostic SystemOneProxyBackend gateways) natively through
+  Apple's Foundation Models framework in Swift 6. Use when building iOS 27+, macOS 27+, or
+  visionOS 27+ apps that evaluate strongly-typed @Generable structs and enums using
+  LanguageModelSession, running models on-device via Core ML (Apple Neural Engine), deploying
+  multimodal visual triage, securing mobile proxies via zero-dependency ProxyCredential and
+  Firebase App Check, implementing confidence routing (RoutingPolicy, NoulJudgement, ScoreValue),
+  configuring resilient network retries (RetryPolicy), or writing deterministic offline unit
+  tests with MockSystemOneBackend, MockOpenAIDecisionsBackend, MockGeminiDecisionsBackend, and
+  MockClefBackendProtocol.
 metadata:
   author: peterfriese
-  version: "2.1"
+  version: "2.2"
 ---
 
 # System One Foundation Models Bridge
 
-This skill guides the design, implementation, and testing of applications integrating **System One decision models** (**Laya On-Device Core ML**, **Laya HTTP Server**, **TypeSafe Jev**, and **Cloudflare Clef & Clef-Flash multimodal decision models**) via **Apple's Foundation Models framework** (`FoundationModels`) in Swift 6.
+This skill guides the design, implementation, and testing of applications integrating **System One decision models** (**Laya On-Device Core ML**, **Laya HTTP Server**, **TypeSafe Jev**, **Cloudflare Clef & Clef-Flash**, **OpenAI Decisions (`gpt-6-luna`)**, **Google Gemini Decisions (`gemini-decision-1`)**, and vendor-agnostic **`SystemOneProxyBackend` gateways**) via **Apple's Foundation Models framework** (`FoundationModels`) in Swift 6.
 
 ---
 
 ## 1. Core Mental Model: Decisions, Not Chat
 
-System One models are **non-autoregressive decision models**, not text-generating LLMs. They evaluate application state against a set of typed questions in a single forward pass, returning calibrated probabilities and discrete categorical decisions in 15–150ms.
+System One models are **non-autoregressive decision models**, not text-generating LLMs. They evaluate application state against a set of typed questions in a single forward pass, returning calibrated probabilities and discrete categorical decisions in 15–250ms with zero output tokens.
 
-- **Prompt $\to$ Application State**: The text passed to `session.respond(to:)` represents current application context (support tickets, sensor readings, transaction logs, user inputs, or parsed documents).
+- **Prompt $\to$ Application State**: The text (and optional image attachments on multimodal backends) passed to `session.respond(to:)` represents current application context (support tickets, sensor readings, transaction logs, camera frames, or parsed documents).
 - **`@Generable` Type $\to$ Decision Questions**: The struct or enum defines the typed questions being asked over that state.
 - **Dual Signal Output**:
-  1. **The Answer**: *What* the model judged (`response.content` containing typed enum choices, booleans, or rubric scores).
+  1. **The Answer**: *What* the model judged (`response.content` containing typed enum choices, booleans, or rubric scores). For `Bool` fields this decode is a hard `0.5` cutoff (`noul >= 0.5`) — see §5; decisions must consume `response.probability(for:)` / `response.judgement(for:policy:)`.
   2. **The Calibrated Confidence / Probability**: *Whether* to automate the action (`response.judgement(...)`, `response.decision(...)`, `response.scoreValue(...)`).
 
 ---
 
 ## 2. Pluggable Backends
 
-Developers choose between four primary execution backends by passing the appropriate model to `LanguageModelSession`:
+Developers choose among seven execution backends by passing the appropriate `LanguageModel` to `LanguageModelSession`:
 
 ### Option A: On-Device Core ML (`LayaOnDevice`)
 Runs Laya's 322M (multilingual mmBERT) or 421M (ModernBERT) model directly on the **Apple Neural Engine (ANE)** and GPU. 100% offline, zero network requests, zero secrets:
@@ -67,7 +70,7 @@ let session = LanguageModelSession(model: model)
 ```
 
 ### Option C: TypeSafe AI Jev Cloud (`JevFoundationModels`)
-Connects to TypeSafe AI's hosted decision API with automated HTTP retry resilience and backoff:
+Connects to TypeSafe AI's hosted decision API (`POST https://api.typesafe.ai/v1/systemone`) with automated HTTP retry resilience and backoff:
 
 ```swift
 import FoundationModels
@@ -78,7 +81,7 @@ let model = JevLanguageModel(apiKey: apiKey, retryPolicy: retryPolicy)
 let session = LanguageModelSession(model: model)
 ```
 
-### Option D: Cloudflare Clef & Clef-Flash (`ClefFoundationModels`)
+### Option D: Cloudflare Clef & Clef-Flash Multimodal (`ClefFoundationModels`)
 Connects to Cloudflare's **Clef** (27B) or **Clef-Flash** (9B) multimodal decision models for visual item inspection, damage assessment, KYC document verification, or mobile camera triage:
 
 ```swift
@@ -103,11 +106,52 @@ let localEndpoint = ClefEndpoint.local(port: 8000, model: .clefFlash)
 let localModel = ClefLanguageModel(endpoint: localEndpoint)
 ```
 
+### Option E: OpenAI Decisions API (`OpenAIFoundationModels`)
+Connects to OpenAI's multimodal Decisions API (`POST https://api.openai.com/v1/decisions`, default model `"gpt-6-luna"`), supporting `OpenAILanguageModel` (`typealias` for `OpenAIDecisionsLanguageModel`) and optional enterprise multi-tenant headers (`OpenAI-Organization`, `OpenAI-Project`, `X-Client-Request-Id`):
+
+```swift
+import FoundationModels
+import OpenAIFoundationModels
+
+let model = OpenAILanguageModel(
+    apiKey: apiKey,
+    organization: organizationID,
+    project: projectID
+)
+let session = LanguageModelSession(model: model)
+```
+
+### Option F: Google Gemini Decisions API (`GeminiFoundationModels`)
+Connects to Google's high-density multimodal Gemini Decisions API (`POST https://generativelanguage.googleapis.com/v1beta/decisions`, default model `"gemini-decision-1"`), supporting `GeminiLanguageModel` (`typealias` for `GeminiDecisionsLanguageModel`), up to 256K-token context, and up to 1,000 concurrent questions per forward pass:
+
+```swift
+import FoundationModels
+import GeminiFoundationModels
+
+let model = GeminiLanguageModel(apiKey: apiKey)
+let session = LanguageModelSession(model: model)
+```
+
+### Option G: Vendor-Agnostic Proxy Gateway (`SystemOneCore`)
+Dispatches canonical `SystemOneRequest` JSON via `SystemOneProxyBackend` so your backend gateway can route, A/B test, or fail over between Gemini, OpenAI, Clef, Jev, and Laya server-side with zero client code changes (see §6):
+
+```swift
+import FoundationModels
+import SystemOneCore
+
+let model = SystemOneLanguageModel(
+    proxyEndpoint: gatewayURL,
+    credential: appCheckCredential,
+    modelID: "gemini-decision-1" // supportsVision defaults to true on proxy initializers
+)
+let session = LanguageModelSession(model: model)
+```
+
 ---
 
 ## 3. Multimodal Decision Evaluation
 
-Unlike autoregressive vision-language models that generate text captions or verbose descriptions, **Clef** and **Clef-Flash** evaluate multimodal inputs (contextual text + image attachments) in a **single forward pass**, computing calibrated decision primitives with **zero output tokens** (`output_tokens: 0`).
+Unlike autoregressive vision-language models that generate text captions or verbose descriptions, multimodal System One backends — **Cloudflare Clef (`ClefLanguageModel`)**, **OpenAI Decisions (`OpenAILanguageModel`)**, **Google Gemini Decisions (`GeminiLanguageModel`)**, and **`SystemOneLanguageModel(supportsVision: true)`** — evaluate contextual text + image attachments (`PNG`, `JPEG`, `WebP`) in a **single forward pass**, computing calibrated decision primitives with **zero output tokens** (`output_tokens: 0`).
 
 ### Passing Image Attachments via `Prompt`
 
@@ -115,15 +159,10 @@ Visual inputs are attached to standard Apple Foundation Models `Prompt` builder 
 
 ```swift
 import FoundationModels
-import ClefFoundationModels
+import GeminiFoundationModels // or ClefFoundationModels / OpenAIFoundationModels
 import CoreGraphics
 
-let session = LanguageModelSession(
-    model: ClefLanguageModel(
-        endpoint: .workersAI(accountID: accountID, model: .clefFlash),
-        apiToken: token
-    )
-)
+let session = LanguageModelSession(model: GeminiLanguageModel(apiKey: apiKey))
 
 // Attach CGImage or raw Data
 let prompt = Prompt {
@@ -141,8 +180,8 @@ let decision: VisualInspectionDecision = response.content
 Apple's `FoundationModels` framework performs client-side capability validation before dispatching generation requests. If a `Prompt` contains an `Attachment` with visual data:
 - The session runtime inspects `model.capabilities`.
 - The capability set **must include `.vision`** alongside `.guidedGeneration`.
-- If `.vision` is missing (as in text-only models like `JevLanguageModel` or `LayaLanguageModel`), `LanguageModelSession` traps immediately with `LanguageModelSession.GenerationError.unsupportedCapability`: *"The selected model does not support image input. Consider trying again with a different model."*
-- `ClefLanguageModel` explicitly advertises both capabilities:
+- If `.vision` is missing (as in text-only models like `JevLanguageModel`, `LayaLanguageModel`, or `LayaOnDeviceLanguageModel`), `LanguageModelSession` fails immediately with `LanguageModelSession.GenerationError.unsupportedCapability`: *"The selected model does not support image input. Consider trying again with a different model."*
+- `ClefLanguageModel`, `OpenAIDecisionsLanguageModel`, `GeminiDecisionsLanguageModel`, and `SystemOneLanguageModel(supportsVision: true)` explicitly advertise both capabilities:
   ```swift
   public var capabilities: LanguageModelCapabilities {
       LanguageModelCapabilities([.guidedGeneration, .vision])
@@ -152,19 +191,18 @@ Apple's `FoundationModels` framework performs client-side capability validation 
 ### Image Preprocessing Best Practice: 1024px Downsampling & 0.8 JPEG Compression
 
 High-resolution mobile camera hardware (such as 12MP to 48MP iPhone sensors) creates two critical problems if uploaded uncompressed or as raw PNGs (see Tech Note 0015):
-1. **BPE Text Tokenizer Fallback**: Cloudflare's edge gateway serializes images under the `images` array as RFC 2397 Data URLs (`data:image/jpeg;base64,...`). If non-standard objects or oversized base64 blobs are parsed as text, standard BPE tokenization expands the string into **700,000+ tokens**, instantly exceeding the 64k context limit (HTTP 413).
-2. **Payload & Patch Blowout**: High-resolution PNGs consume 10–30 MB of bandwidth and generate tens of thousands of vision patches, dramatically slowing inference.
+1. **BPE Text Tokenizer Fallback**: Edge gateways serialize images as RFC 2397 Data URLs (`data:image/jpeg;base64,...`). If oversized base64 blobs are parsed as text, standard BPE tokenization expands the string into **700,000+ tokens**, exceeding context limits (HTTP 413).
+2. **Payload & Patch Blowout**: High-resolution PNGs consume 10–30 MB of bandwidth and generate tens of thousands of vision patches, slowing inference.
 
-**Best Practice**: Downsample all camera frames so the maximum dimension does not exceed **1024px**, and compress using lossy **JPEG at 0.8 quality**:
+**Best Practice**: `TranscriptAttachmentExtractor` automatically downscales `Attachment(cgImage)` inputs to a **1024px** maximum dimension (encoding opaque frames as `0.8` JPEG and alpha-bearing images as PNG). When constructing raw `Attachment(data:type:)` segments manually, pre-downsample so the maximum dimension does not exceed **1024px** at **0.8 JPEG quality**:
 ```swift
-// See TranscriptAttachmentExtractor / CameraManager
 let downsampledJPEG = TranscriptAttachmentExtractor.convertCGImageToJPEG(
     rawCGImage,
     maxDimension: 1024,
     quality: 0.8
 )
 ```
-This reduces the image payload to 100–300 KB, maps to **~1,000 vision patch tokens**, and executes in sub-100ms.
+This reduces the image payload to 100–300 KB, maps to **~1,000 vision patch tokens**, and executes in sub-250ms.
 
 ### Multimodal Guardrails
 
@@ -192,10 +230,10 @@ try SystemOneImage.validate(images: extractedImages)
 | Nested `@Generable struct` | **`nested questions`** | Dot-notation (e.g. `"metadata.priority"`) | Evaluates hierarchical sub-properties concurrently. |
 
 ### Negative Constraints (Strictly Forbidden)
-- ❌ **No unconstrained `String` properties**: Decision models do not generate free-form text. A `String` property without enum choices throws an invalid schema error.
+- ❌ **No unconstrained `String` properties**: Decision models do not generate free-form text. A `String` property without enum choices throws `SystemOneError.invalidSchema`.
 - ❌ **No unstructured collections**: Arrays of open-ended values (`[String]`) or dictionaries are not supported.
-- ❌ **No text generation requests without schemas**: Calling `session.respond(to: "Hello")` without a `generating:` argument throws a structured output required error.
-- ❌ **No tool calling**: `LanguageModelCapabilities` for System One only includes `[.guidedGeneration]`.
+- ❌ **No text generation requests without schemas**: Calling `session.respond(to: "Hello")` without a `generating:` argument throws `SystemOneError.structuredOutputRequired`.
+- ❌ **No tool calling**: `LanguageModelCapabilities` includes `[.guidedGeneration]` (plus `.vision` on multimodal backends) — `Tool` execution is not supported.
 
 ### Correct Schema Example
 
@@ -222,9 +260,16 @@ struct TriageDecision: Sendable {
 }
 ```
 
+### Batched Questions Must Self-Identify
+
+When a single `@Generable` type emits **multiple questions in one call** (e.g. two `Bool` fields → two batched nouls), each question's `@Guide(description:)` MUST self-identify its target entity ("Candidate A", "transaction #8491"). Observably **identical instruction text collapses the batch** and answers land near `0.5` (observed live: `0.77`/`0.79` before naming candidates → `0.94`/`0.01` after). **Applies to every backend — Jev, Laya, LayaOnDevice, Clef, OpenAI, Gemini, and `SystemOneProxyBackend`**: prefer one call with self-identifying guides, or fall back to one question per request.
+
 ---
 
-## 5. Confidence Routing with `RoutingPolicy`
+## 5. Confidence Routing (`RoutingPolicy`) & HTTP Resilience (`RetryPolicy`)
+
+> [!WARNING]
+> **`response.content` is a hard 0.5 cutoff for `Bool` fields.** `ResponseSynthesizer` decodes a noul probability to `Bool` via `noul >= 0.5` — `p = 0.55` decodes `true` and `p = 0.45` decodes `false` regardless of decisiveness. Treat `response.content` `Bool` fields as display/fallback values only; gate automation on `response.probability(for:)` and `response.judgement(for:policy:)` through a `RoutingPolicy`.
 
 Never write naive `if prob > 0.5` checks:
 - **`0.50` indicates maximum epistemic uncertainty**, not "half true".
@@ -262,9 +307,61 @@ case .escalate: assignManualReview()   // Undecided band (answer is nil)
 }
 ```
 
+### Network Retries & Cooperative Cancellation
+All networked backends accept `RetryPolicy` (`RetryPolicy.defaultRetryableStatuses = [408, 429, 500, 502, 503, 504, 524, 529]`, `maxAttempts = 3`, honoring RFC 9110 `Retry-After` headers). HTTP `401`/`403` and non-cancellation `ProxyCredential` failures fail fast immediately with `SystemOneError.authenticationFailed`, while `CancellationError` and `URLError(.cancelled)` propagate directly without being wrapped in `SystemOneError`.
+
 ---
 
-## 6. Cloudflare Edge Integration Nuances
+## 6. Mobile Security: Universal `ProxyCredential` & `SystemOneProxyBackend`
+
+**Never bundle upstream API keys (`GEMINI_API_KEY`, `OPENAI_API_KEY`, `CLOUDFLARE_API_TOKEN`, `TYPESAFE_API_KEY`) inside client-side iOS, macOS, or visionOS binaries.**
+
+Either run offline on-device via `LayaOnDevice`, or route client requests through an authenticated reverse proxy (e.g. Firebase Cloud Functions 2nd Gen `onRequest` + Apple App Attest / Firebase App Check) using `SystemOneCore`'s zero-dependency **`ProxyCredential`** (`.appCheck`, `.header`, `.bearer`, `.custom`, or trailing-closure `authorize:`):
+
+```swift
+import Foundation
+import FirebaseCore
+import FirebaseAppCheck
+import GeminiFoundationModels // or OpenAIFoundationModels / ClefFoundationModels / LayaFoundationModels / JevFoundationModels
+import SystemOneCore
+
+let proxyBaseURL = URL(string: "https://us-central1-your-project.cloudfunctions.net")!
+
+// Shared zero-dependency App Check credential (re-evaluated per attempt inside the retry loop)
+let appCheck = ProxyCredential.appCheck {
+    guard FirebaseApp.app() != nil else {
+        #if DEBUG
+        return "dev-monitor-placeholder"
+        #else
+        throw SystemOneError.authenticationFailed("FirebaseApp is not configured.")
+        #endif
+    }
+    return try await AppCheck.appCheck().token(forcingRefresh: false).token
+}
+
+// Pattern A: Provider Passthrough Proxy (available on Gemini, OpenAI, Clef, Laya, and Jev models)
+let gemini = GeminiLanguageModel(
+    proxyEndpoint: proxyBaseURL.appending(path: "geminiDecisions"),
+    credential: appCheck
+)
+
+// Pattern B: Vendor-Agnostic Gateway (canonical SystemOneRequest routed server-side)
+let gateway = SystemOneLanguageModel(
+    proxyEndpoint: proxyBaseURL.appending(path: "systemone"),
+    credential: appCheck,
+    modelID: "gemini-decision-1"
+)
+```
+
+### Critical Proxy & Attestation Rules
+- **Guard `FirebaseApp.app() != nil`**: Calling `AppCheck.appCheck()` before `FirebaseApp.configure()` throws an uncaught Objective-C exception that Swift `try?` cannot catch. Guard initialization and run proxies in **Monitor mode** until client attestation rollout completes.
+- **Replay Protection (`alreadyConsumed` + `limitedUseToken()`)**: In `firebase-admin/app-check`, `verifyToken(token, { consume: true })` **does not throw** on replayed tokens — it resolves `{ alreadyConsumed: true }`. Always check `if (verified.alreadyConsumed) return res.status(401)...` on the server, and pair `{ consume: true }` strictly with client `AppCheck.appCheck().limitedUseToken()` (never cached `token(forcingRefresh: false)`, which has a 1-hour TTL and would fail every subsequent call with `401`). Apple **App Attest** supports single-use consumption; legacy **DeviceCheck** does not.
+- **Rate-Limit Identity**: Never key per-caller rate limits on App Check `verified.appId` alone — `appId` is shared by every user and device of your app. Key per-user limits on verified Firebase Auth `uid`, or pair a per-client IP limit (from trusted `X-Forwarded-For`) beneath a global `appId` ceiling.
+- **Pre-Populated Body & SwiftUI Lifecycle**: Backends populate `request.httpBody` *before* invoking `.custom` / `authorize:` (enabling HMAC body signatures) and reject empty or CR/LF/NUL header tokens with `SystemOneError.authenticationFailed`. Because each `ProxyCredential` factory mints a `UUID` identity unless `id:` is supplied, hold your credential/model/session in `@State`, an `@Observable` ViewModel, or DI rather than recreating it inside `View.body`.
+
+---
+
+## 7. Cloudflare Edge Integration Nuances
 
 Deploying decision models to Cloudflare Workers AI introduces two critical edge architectural nuances:
 
@@ -319,9 +416,9 @@ In contrast, local runners (Docker Model Runner, MLX, `laya-serve`) return raw `
 
 ---
 
-## 7. Package Traits Architecture (Swift 6.1 / SE-0402)
+## 8. Package Traits Architecture (Swift 6.1 / SE-0402)
 
-`SystemOneFoundationModels` adopts Swift 6.1 Package Traits (SE-0402) to maintain zero runtime bloat. Traits are partitioned along **model boundaries** so consumers link only the dependencies and platforms they require:
+`SystemOneFoundationModels` adopts Swift 6.1 Package Traits (SE-0402) so consumers can either link the full multi-backend suite by default or narrow compilation to individual model boundaries:
 
 | Trait | Category | Included Capabilities | Intended Deployment |
 | :--- | :--- | :--- | :--- |
@@ -329,31 +426,36 @@ In contrast, local runners (Docker Model Runner, MLX, `laya-serve`) return raw `
 | `Laya` | Model Boundary | `LayaOnDevice`, Core ML engine, Apple Neural Engine | Offline mobile, air-gapped apps |
 | `LayaServe` | Model Boundary | `LayaFoundationModels`, local/remote HTTP client | Self-hosted daemons, private VPCs |
 | `Clef` | Model Boundary | `ClefFoundationModels`, Cloudflare Workers AI, AI Gateway & local Clef runners | Multimodal vision & mobile camera inspection |
+| `OpenAI` | Model Boundary | `OpenAIFoundationModels`, OpenAI Decisions API client (`gpt-6-luna`) | Enterprise & multimodal cloud decisions |
+| `Gemini` | Model Boundary | `GeminiFoundationModels`, Google Gemini Decisions API client (`gemini-decision-1`) | High-context (256K) & multimodal cloud decisions |
 | `OnDevice` | Persona / Shorthand | Enables `["Laya"]` | Zero-network mobile applications |
-| `Remote` | Persona / Shorthand | Enables `["Jev", "LayaServe", "Clef"]` | Client/server apps using networked models |
-| `All` | Persona / Shorthand | Enables `["Jev", "Laya", "LayaServe", "Clef"]` | Multi-backend reference apps (e.g. MailTriageApp) |
-| *default* | Default Trait | Enables `["Jev"]` | Backward compatibility |
+| `Remote` | Persona / Shorthand | Enables `["Jev", "LayaServe", "Clef", "OpenAI", "Gemini"]` | Client/server apps using networked models |
+| `All` | Persona / Shorthand | Enables `["Jev", "Laya", "LayaServe", "Clef", "OpenAI", "Gemini"]` | Multi-backend apps (e.g. MailTriageApp) |
+| *default* | Default Trait | Enables `["All"]` | Out-of-the-box access to all backends |
 
 ### Consumer Configuration in `Package.swift`
 
 ```swift
-// 1. Only Clef multimodal decision models
-.package(url: "https://github.com/peterfriese/system-one-foundation-models.git", from: "0.2.0", traits: ["Clef"])
+// 1. Default: enables ["All"] (Core ML + Jev + LayaServe + Clef + OpenAI + Gemini)
+.package(url: "https://github.com/peterfriese/system-one-foundation-models.git", from: "0.2.0")
 
-// 2. All remote models (Jev, LayaServe, Clef)
+// 2. Air-gapped on-device Core ML only (zero network client targets)
+.package(url: "https://github.com/peterfriese/system-one-foundation-models.git", from: "0.2.0", traits: ["OnDevice"])
+
+// 3. Single hosted provider (e.g. Google Gemini Decisions or Cloudflare Clef)
+.package(url: "https://github.com/peterfriese/system-one-foundation-models.git", from: "0.2.0", traits: ["Gemini"])
+
+// 4. All networked backends without Core ML (`Jev`, `LayaServe`, `Clef`, `OpenAI`, `Gemini`)
 .package(url: "https://github.com/peterfriese/system-one-foundation-models.git", from: "0.2.0", traits: ["Remote"])
-
-// 3. Complete suite (On-device Core ML + all remote backends)
-.package(url: "https://github.com/peterfriese/system-one-foundation-models.git", from: "0.2.0", traits: ["All"])
 ```
 
 ---
 
-## 8. Deterministic Offline Testing
+## 9. Deterministic Offline Testing
 
-Always test decision workflows deterministically without live network access, Cloudflare credentials, or GPU model loading.
+Always test decision workflows deterministically without live network access, API credentials, or GPU model loading using `MockSystemOneBackend`, `MockOpenAIDecisionsBackend`, `MockGeminiDecisionsBackend`, or an ephemeral `URLSession` protocol stub.
 
-### A. Testing Core System One Workflows (`MockSystemOneBackend`)
+### A. Testing Core & Provider Workflows (`MockSystemOneBackend` / `MockGeminiDecisionsBackend` / `MockOpenAIDecisionsBackend`)
 
 ```swift
 import Testing
@@ -380,6 +482,8 @@ struct TriageWorkflowTests {
             )
         }
 
+        // Works identically with GeminiLanguageModel(backend: MockGeminiDecisionsBackend(...))
+        // or OpenAILanguageModel(backend: MockOpenAIDecisionsBackend(...))
         let model = SystemOneLanguageModel(backend: mockBackend)
         let session = LanguageModelSession(model: model)
 
@@ -453,3 +557,4 @@ struct ClefBackendTests {
     }
 }
 ```
+
