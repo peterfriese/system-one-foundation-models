@@ -15,6 +15,8 @@ This directory contains reference applications, production examples, and runnabl
 | [**TicketTriageDemo**](TicketTriageDemo/README.md) | CLI Executable | `JevFoundationModels` | ✅ Yes (`TYPESAFE_API_KEY`) | Customer support ticket routing, RFC 9110 HTTP retry resilience (`RetryPolicy`), multi-primitive `@Generable` schema, confidence routing. |
 | [**FileOrganizerDemo**](FileOrganizerDemo/README.md) | CLI Executable | `JevFoundationModels` | Optional (`--demo` offline mode) | Foundation Models **Dynamic Profiles**, runtime session adaptation (`@SessionPropertyEntry`), turn isolation (`.historyTransform`), sensitive file quarantine. |
 | [**DuplicateArticleDemo**](DuplicateArticleDemo/README.md) | CLI Executable | `JevFoundationModels` | Optional (Built-in offline mode) | Two-layer content deduplication (exact fast-path + semantic decision), calibrated Noul undecided band ($0.35\dots0.65$), cooperative Swift 6 task cancellation. |
+| [**ClefCameraScanner**](ClefCameraScanner/README.md) | Full macOS & iOS SwiftUI App | `ClefFoundationModels` (Workers AI / Local Runner) | Optional (Local runner or `CLOUDFLARE_API_TOKEN`) | Real-time camera viewfinder, `@Observable CameraManager`, `AVCaptureVideoPreviewLayer` bridge, live visual triage, Liquid Glass HUD, simulation fallback feed. |
+| [**ClefDemo**](ClefDemo/README.md) | CLI Executable | `ClefFoundationModels` (Workers AI / Local Runner) | Optional (Local runner or `CLOUDFLARE_API_TOKEN`) | Multimodal evaluation on image files or synthetic CoreGraphics visual frames, single forward-pass non-autoregressive triage, latency breakdown. |
 | [**TraitSamples/01-OfflineLayaApp**](TraitSamples/01-OfflineLayaApp/README.md) | Standalone Package | `LayaOnDevice` | ❌ No API key | Pure on-device classification via Apple Neural Engine (`traits: ["Laya"]`). Zero network code linked. |
 | [**TraitSamples/02-CloudJevWorker**](TraitSamples/02-CloudJevWorker/README.md) | Standalone Package | `JevFoundationModels` | ✅ Yes (`TYPESAFE_API_KEY`) | Ultra-lean ticket triage worker (`traits: ["Jev"]`). Sub-second build, zero ML linkage. Fails fast if API key is missing. |
 | [**TraitSamples/03-PrivateLayaServer**](TraitSamples/03-PrivateLayaServer/README.md) | Standalone Package | `LayaFoundationModels` | `laya-serve` daemon | Internal VPC cluster scoring (`traits: ["LayaServe"]`). Custom DNS, TLS, and bearer auth. Requires reachable `laya-serve`. |
@@ -126,7 +128,44 @@ For complete documentation, see [Examples/DuplicateArticleDemo/README.md](Duplic
 
 ---
 
-### 6. Trait Samples (`Examples/TraitSamples/`)
+### 6. ClefCameraScanner (Real-Time Multimodal Camera Viewfinder App)
+
+A production-representative native SwiftUI camera viewfinder app (iOS & macOS) for holding physical objects up to the camera and performing real-time visual inspection:
+
+```bash
+# 1. Run the camera scanner natively on macOS
+swift run clef-camera-scanner
+
+# 2. Or run with live Cloudflare Workers AI edge credentials
+export CLOUDFLARE_ACCOUNT_ID="your-account-id"
+export CLOUDFLARE_API_TOKEN="your-api-token"
+swift run clef-camera-scanner
+```
+
+For complete documentation, see [Examples/ClefCameraScanner/README.md](ClefCameraScanner/README.md).
+
+---
+
+### 7. ClefDemo (Multimodal CLI Demonstrator)
+
+Demonstrates single forward-pass multimodal evaluation with visual image attachments or synthetic CoreGraphics test frames:
+
+```bash
+# 1. Run against local runner with in-memory synthetic frame:
+swift run clef-demo --backend local
+
+# 2. Evaluate a physical image file (PNG, JPEG, WebP):
+swift run clef-demo /path/to/product_capture.jpg
+
+# 3. Evaluate against Cloudflare Workers AI edge:
+CLOUDFLARE_ACCOUNT_ID="your-id" CLOUDFLARE_API_TOKEN="your-token" swift run clef-demo --backend workers-ai
+```
+
+For complete documentation, see [Examples/ClefDemo/README.md](ClefDemo/README.md).
+
+---
+
+### 8. Trait Samples (`Examples/TraitSamples/`)
 
 Five standalone SPM packages demonstrating fine-grained package traits and modularity:
 

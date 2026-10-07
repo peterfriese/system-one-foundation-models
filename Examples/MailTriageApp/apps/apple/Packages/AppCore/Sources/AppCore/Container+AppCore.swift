@@ -30,5 +30,10 @@ extension Container {
     public var mailStore: Factory<MailStore> {
         self { MailStore() }.singleton
     }
+
+    @MainActor
+    public var benchmarkSessionStore: Factory<BenchmarkSessionStore> {
+        self { BenchmarkSessionStore() }.singleton
+    }
 }
 

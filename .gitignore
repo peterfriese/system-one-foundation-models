@@ -55,4 +55,9 @@ firestore-debug.log
 .agents/skills/
 .claude/skills/
 
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
 

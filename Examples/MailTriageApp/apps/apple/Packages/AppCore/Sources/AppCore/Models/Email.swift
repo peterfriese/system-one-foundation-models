@@ -14,6 +14,11 @@ public struct Email: Identifiable, Sendable, Hashable, Codable {
     public var isVIP: Bool
     public var mailbox: Mailbox
 
+    // Attachments
+    public var attachments: [EmailAttachment] = []
+    public var hasAttachments: Bool { !attachments.isEmpty }
+    public var imageAttachments: [EmailAttachment] { attachments.filter { $0.isImage } }
+
     // Optional triage metadata
     public var category: EmailCategory?
     public var urgencyScore: Int?
@@ -38,7 +43,8 @@ public struct Email: Identifiable, Sendable, Hashable, Codable {
         urgencyScore: Int? = nil,
         requiresAction: Bool? = nil,
         suggestedAction: String? = nil,
-        triageResult: TriageResult? = nil
+        triageResult: TriageResult? = nil,
+        attachments: [EmailAttachment] = []
     ) {
         self.id = id
         self.sender = sender
@@ -57,6 +63,7 @@ public struct Email: Identifiable, Sendable, Hashable, Codable {
         self.requiresAction = requiresAction
         self.suggestedAction = suggestedAction
         self.triageResult = triageResult
+        self.attachments = attachments
     }
 
     /// Extracted initials for avatar monogram rendering (e.g. "JD" for "Jeff Dean")

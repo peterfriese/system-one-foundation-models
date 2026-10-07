@@ -122,11 +122,6 @@ public final class CoreMLModelManager: @unchecked Sendable {
         modelsDirectory.appendingPathComponent("LayaDecisionModel.mlmodelc")
     }
 
-    public var legacyModelURL: URL {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        return appSupport.appendingPathComponent("Models").appendingPathComponent("LayaDecisionModel.mlmodelc")
-    }
-
     /// Returns the active model URL if found on disk.
     public var resolvedModelURL: URL? {
         if let custom = customModelsDirectory {
@@ -150,8 +145,7 @@ public final class CoreMLModelManager: @unchecked Sendable {
             appSupport.appendingPathComponent(Bundle.main.bundleIdentifier ?? "dev.peterfriese.mailtriageapp").appendingPathComponent("Models").appendingPathComponent("LayaDecisionModel.mlmodelc"),
             appSupport.appendingPathComponent(Bundle.main.bundleIdentifier ?? "dev.peterfriese.mailtriageapp").appendingPathComponent("Models").appendingPathComponent("model.safetensors"),
             appSupport.appendingPathComponent("ai.typesafe.MailTriage").appendingPathComponent("Models").appendingPathComponent("LayaDecisionModel.mlmodelc"),
-            appSupport.appendingPathComponent("ai.typesafe.MailTriage").appendingPathComponent("Models").appendingPathComponent("model.safetensors"),
-            legacyModelURL
+            appSupport.appendingPathComponent("ai.typesafe.MailTriage").appendingPathComponent("Models").appendingPathComponent("model.safetensors")
         ]
 
         for candidate in candidateURLs {
@@ -521,9 +515,6 @@ public final class CoreMLModelManager: @unchecked Sendable {
             if FileManager.default.fileExists(atPath: canonicalModelURL.path) {
                 try FileManager.default.removeItem(at: canonicalModelURL)
             }
-            if FileManager.default.fileExists(atPath: legacyModelURL.path) {
-                try? FileManager.default.removeItem(at: legacyModelURL)
-            }
 
             // Copy to canonical location
             try FileManager.default.copyItem(at: finalCompiledURL, to: canonicalModelURL)
@@ -555,9 +546,6 @@ public final class CoreMLModelManager: @unchecked Sendable {
         }
         if FileManager.default.fileExists(atPath: canonicalModelURL.path) {
             try FileManager.default.removeItem(at: canonicalModelURL)
-        }
-        if FileManager.default.fileExists(atPath: legacyModelURL.path) {
-            try FileManager.default.removeItem(at: legacyModelURL)
         }
         if Thread.isMainThread {
             MainActor.assumeIsolated {

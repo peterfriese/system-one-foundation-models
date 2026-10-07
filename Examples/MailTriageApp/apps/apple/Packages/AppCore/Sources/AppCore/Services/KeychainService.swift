@@ -3,241 +3,118 @@ import Security
 
 /// Thread-safe contract for securely persisting sensitive credentials.
 public protocol KeychainServiceProtocol: Sendable {
-    func get(key: String) -> String?
-    func set(_ value: String?, for key: String) throws
-    func delete(key: String) throws
-
-    var typesafeApiKey: String? { get set }
-    var hostedVpcToken: String? { get set }
-    var huggingFaceToken: String? { get set }
+    func string(forKey key: String) -> String?
+    func set(_ value: String?, forKey key: String) throws
+    func delete(forKey key: String) throws
 }
 
-/// Production implementation of `KeychainServiceProtocol` using Apple's Security framework.
-/// Includes thread-safe locking and graceful in-memory fallback for unsigned test environments.
-/// Conforms to SEC-1: Credentials are never written to UserDefaults.
+extension KeychainServiceProtocol {
+    public func string(for key: KeychainKey) -> String? { string(forKey: key.rawValue) }
+    public func set(_ value: String?, for key: KeychainKey) throws { try set(value, forKey: key.rawValue) }
+    public func delete(for key: KeychainKey) throws { try delete(forKey: key.rawValue) }
+}
+
+/// Errors thrown by Apple Security framework keychain operations.
+public struct KeychainError: LocalizedError, Sendable {
+    public let status: OSStatus
+
+    public init(status: OSStatus) {
+        self.status = status
+    }
+
+    public var errorDescription: String? {
+        if let message = SecCopyErrorMessageString(status, nil) {
+            return (message as String) + " (OSStatus \(status))"
+        }
+        return "Keychain operation failed with status \(status)"
+    }
+}
+
+/// Pure Apple Security framework implementation of `KeychainServiceProtocol`.
+///
+/// Uses Apple's Data Protection Keychain (`kSecUseDataProtectionKeychain = true`)
+/// with `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`.
 public final class KeychainService: KeychainServiceProtocol, @unchecked Sendable {
     private let serviceName: String
-    private let defaults: UserDefaults
     private let lock = NSLock()
-    private static let fallbackLock = NSLock()
-    nonisolated(unsafe) private static var sharedFallbackStore: [String: [String: String]] = [:]
-    private let persistentKeyPrefix = "ai.typesafe.secure.storage."
 
-    public static let keyTypeSafeAPIKey = "typesafeApiKey"
-    public static let keyHostedVPCToken = "hostedVpcToken"
-    public static let keyHuggingFaceToken = "huggingFaceToken"
-
-    /// Resets the in-memory fallback store across all service domains or for a specific service.
-    /// Used by test suites to guarantee fresh, isolated state.
-    public static func resetFallbackStore(for serviceName: String? = nil) {
-        fallbackLock.lock()
-        defer { fallbackLock.unlock() }
-        if let serviceName = serviceName {
-            sharedFallbackStore.removeValue(forKey: serviceName)
-        } else {
-            sharedFallbackStore.removeAll()
-        }
-    }
-
-    private var inMemoryFallback: [String: String] {
-        get {
-            Self.fallbackLock.lock()
-            defer { Self.fallbackLock.unlock() }
-            return Self.sharedFallbackStore[serviceName] ?? [:]
-        }
-        set {
-            Self.fallbackLock.lock()
-            defer { Self.fallbackLock.unlock() }
-            Self.sharedFallbackStore[serviceName] = newValue
-        }
-    }
-
-    public init(
-        serviceName: String = "ai.typesafe.mailtriage",
-        defaults: UserDefaults = .standard
-    ) {
+    public init(serviceName: String = "ai.typesafe.mailtriage") {
         self.serviceName = serviceName
-        self.defaults = defaults
-        purgeAndMigrateLegacyDefaults()
     }
 
-    /// One-time migration/purge routine (SEC-1) that checks UserDefaults for any legacy keys
-    /// prefixed with `ai.typesafe.secure.storage.` and removes them after migrating to Keychain.
-    private func purgeAndMigrateLegacyDefaults() {
-        let dictionary = defaults.dictionaryRepresentation()
-        for (storageKey, value) in dictionary where storageKey.hasPrefix(persistentKeyPrefix) {
-            let secretKey = String(storageKey.dropFirst(persistentKeyPrefix.count))
-            if let stringValue = value as? String, !stringValue.isEmpty {
-                // If not already in Keychain, migrate it
-                if get(key: secretKey) == nil {
-                    try? set(stringValue, for: secretKey)
-                }
-            }
-            defaults.removeObject(forKey: storageKey)
-        }
-    }
-
-    public var typesafeApiKey: String? {
-        get {
-            if serviceName == "ai.typesafe.mailtriage",
-               let envKey = ProcessInfo.processInfo.environment["TYPESAFE_API_KEY"],
-               !envKey.isEmpty {
-                if get(key: Self.keyTypeSafeAPIKey) != envKey {
-                    try? set(envKey, for: Self.keyTypeSafeAPIKey)
-                }
-                return envKey
-            }
-            if let stored = get(key: Self.keyTypeSafeAPIKey), !stored.isEmpty {
-                return stored
-            }
-            guard serviceName == "ai.typesafe.mailtriage" else {
-                return nil
-            }
-            if let dotEnvKey = BackendConfigurationStore.loadKeyFromDotEnv("TYPESAFE_API_KEY"), !dotEnvKey.isEmpty {
-                try? set(dotEnvKey, for: Self.keyTypeSafeAPIKey)
-                return dotEnvKey
-            }
-            return nil
-        }
-        set { try? set(newValue, for: Self.keyTypeSafeAPIKey) }
-    }
-
-    public var hostedVpcToken: String? {
-        get { get(key: Self.keyHostedVPCToken) }
-        set { try? set(newValue, for: Self.keyHostedVPCToken) }
-    }
-
-    public var huggingFaceToken: String? {
-        get { get(key: Self.keyHuggingFaceToken) }
-        set { try? set(newValue, for: Self.keyHuggingFaceToken) }
-    }
-
-    public func persistentStorageKey(for key: String) -> String {
-        "\(persistentKeyPrefix)\(key)"
-    }
-
-    public func get(key: String) -> String? {
-        lock.lock()
-        defer { lock.unlock() }
-
-        // 1. Check in-memory fallback first (ephemeral RAM store)
-        if let fallback = inMemoryFallback[key], !fallback.isEmpty {
-            return fallback
-        }
-
-        // 2. Check Keychain strictly via Apple Security Framework (never UserDefaults)
-        let query: [String: Any] = [
+    private func baseQuery(forKey key: String) -> [String: Any] {
+        [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: serviceName,
             kSecAttrAccount as String: key,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
             kSecUseDataProtectionKeychain as String: true
         ]
+    }
+
+    public func string(forKey key: String) -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+
+        var query = baseQuery(forKey: key)
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
 
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
 
-        if status == errSecSuccess,
-           let data = item as? Data,
-           let string = String(data: data, encoding: .utf8),
-           !string.isEmpty {
-            inMemoryFallback[key] = string
-            return string
+        guard status == errSecSuccess,
+              let data = item as? Data,
+              let string = String(data: data, encoding: .utf8),
+              !string.isEmpty else {
+            return nil
         }
-
-        if status == errSecMissingEntitlement {
-            // Un-entitled environment (e.g. CLI, test runner, Xcode preview, un-provisioned dev build).
-            return inMemoryFallback[key]
-        }
-
-        return nil
+        return string
     }
 
-    public func set(_ value: String?, for key: String) throws {
+    public func set(_ value: String?, forKey key: String) throws {
         lock.lock()
         defer { lock.unlock() }
 
         guard let value = value, !value.isEmpty else {
-            try deleteLocked(key: key)
+            try deleteLocked(forKey: key)
             return
         }
 
-        // In-memory fallback remains strictly in RAM for ephemeral test/preview environments.
-        // SEC-1: NEVER write secrets to UserDefaults.
-        inMemoryFallback[key] = value
-
         let data = Data(value.utf8)
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: serviceName,
-            kSecAttrAccount as String: key,
-            kSecUseDataProtectionKeychain as String: true
-        ]
-
+        let query = baseQuery(forKey: key)
         let updateAttributes: [String: Any] = [
             kSecValueData as String: data
         ]
 
-        // 1. Try SecItemUpdate
-        let updateStatus = SecItemUpdate(query as CFDictionary, updateAttributes as CFDictionary)
-        if updateStatus == errSecMissingEntitlement {
-            // Un-entitled environment (e.g. CLI, test runner, Xcode preview, un-provisioned dev build).
-            // Retain in-memory fallback and return without throwing or touching legacy keychain.
-            return
+        var status = SecItemUpdate(query as CFDictionary, updateAttributes as CFDictionary)
+
+        if status == errSecItemNotFound {
+            var addAttributes = query
+            addAttributes[kSecValueData as String] = data
+            addAttributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+
+            status = SecItemAdd(addAttributes as CFDictionary, nil)
+            if status == errSecDuplicateItem {
+                status = SecItemUpdate(query as CFDictionary, updateAttributes as CFDictionary)
+            }
         }
 
-        if updateStatus == errSecSuccess {
-            return
-        }
-
-        // 2. If update returns errSecItemNotFound (-25300), call SecItemAdd
-        if updateStatus == errSecItemNotFound {
-            var attributes = query
-            attributes[kSecValueData as String] = data
-            attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-
-            let addStatus = SecItemAdd(attributes as CFDictionary, nil)
-            if addStatus == errSecMissingEntitlement {
-                // Un-entitled environment: retain in-memory fallback and return without touching legacy keychain.
-                return
-            }
-
-            if addStatus == errSecSuccess {
-                return
-            }
-
-            // 3. If SecItemAdd returns errSecDuplicateItem (-25299), retry SecItemUpdate
-            if addStatus == errSecDuplicateItem {
-                _ = SecItemUpdate(query as CFDictionary, updateAttributes as CFDictionary)
-            }
+        if status != errSecSuccess {
+            throw KeychainError(status: status)
         }
     }
 
-    public func delete(key: String) throws {
+    public func delete(forKey key: String) throws {
         lock.lock()
         defer { lock.unlock() }
-        try deleteLocked(key: key)
+        try deleteLocked(forKey: key)
     }
 
-    private func deleteLocked(key: String) throws {
-        inMemoryFallback.removeValue(forKey: key)
-
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: serviceName,
-            kSecAttrAccount as String: key,
-            kSecUseDataProtectionKeychain as String: true
-        ]
-
+    private func deleteLocked(forKey key: String) throws {
+        let query = baseQuery(forKey: key)
         let status = SecItemDelete(query as CFDictionary)
-        if status == errSecMissingEntitlement {
-            // Un-entitled environment: removed from inMemoryFallback, return without touching legacy keychain.
-            return
-        }
-
         if status != errSecSuccess && status != errSecItemNotFound {
-            // Ignore missing item or keychain restriction
+            throw KeychainError(status: status)
         }
     }
 }
@@ -251,28 +128,13 @@ public final class MockKeychainService: KeychainServiceProtocol, @unchecked Send
         self.storage = initialStorage
     }
 
-    public var typesafeApiKey: String? {
-        get { get(key: KeychainService.keyTypeSafeAPIKey) }
-        set { try? set(newValue, for: KeychainService.keyTypeSafeAPIKey) }
-    }
-
-    public var hostedVpcToken: String? {
-        get { get(key: KeychainService.keyHostedVPCToken) }
-        set { try? set(newValue, for: KeychainService.keyHostedVPCToken) }
-    }
-
-    public var huggingFaceToken: String? {
-        get { get(key: KeychainService.keyHuggingFaceToken) }
-        set { try? set(newValue, for: KeychainService.keyHuggingFaceToken) }
-    }
-
-    public func get(key: String) -> String? {
+    public func string(forKey key: String) -> String? {
         lock.lock()
         defer { lock.unlock() }
         return storage[key]
     }
 
-    public func set(_ value: String?, for key: String) throws {
+    public func set(_ value: String?, forKey key: String) throws {
         lock.lock()
         defer { lock.unlock() }
         if let value = value, !value.isEmpty {
@@ -282,7 +144,7 @@ public final class MockKeychainService: KeychainServiceProtocol, @unchecked Send
         }
     }
 
-    public func delete(key: String) throws {
+    public func delete(forKey key: String) throws {
         lock.lock()
         defer { lock.unlock() }
         storage.removeValue(forKey: key)

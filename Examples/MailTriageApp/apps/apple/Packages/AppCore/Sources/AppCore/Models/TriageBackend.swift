@@ -1,6 +1,6 @@
 import Foundation
 
-/// The five distinct runtime deployment topologies supported by MailTriage.
+/// The six distinct runtime deployment topologies supported by MailTriage.
 public enum TriageBackend: String, Sendable, Hashable, Codable, CaseIterable, Identifiable, CodingKeyRepresentable {
     /// Backend 1: Core ML running locally on Apple Silicon ANE/GPU (LayaOnDevice).
     case onDeviceCoreML
@@ -14,7 +14,10 @@ public enum TriageBackend: String, Sendable, Hashable, Codable, CaseIterable, Id
     /// Backend 4: Managed cloud SaaS (TypeSafe Jev Cloud API).
     case cloudAPI
 
-    /// Backend 5: Generative baseline (Apple Intelligence On-Device LLM).
+    /// Backend 5: Cloudflare Workers AI edge inference (Clef / Clef-Flash).
+    case cloudflareClef
+
+    /// Backend 6: Generative baseline (Apple Intelligence On-Device LLM).
     case generativeBaseline
 
     public var id: String { rawValue }
@@ -29,6 +32,8 @@ public enum TriageBackend: String, Sendable, Hashable, Codable, CaseIterable, Id
             return "Hosted VPC"
         case .cloudAPI:
             return "Jev Cloud API"
+        case .cloudflareClef:
+            return "Cloudflare Clef"
         case .generativeBaseline:
             return "Generative Baseline"
         }
@@ -44,6 +49,8 @@ public enum TriageBackend: String, Sendable, Hashable, Codable, CaseIterable, Id
             return "Hosted VPC"
         case .cloudAPI:
             return "Jev Cloud"
+        case .cloudflareClef:
+            return "Clef Edge"
         case .generativeBaseline:
             return "Apple LLM"
         }
@@ -59,6 +66,8 @@ public enum TriageBackend: String, Sendable, Hashable, Codable, CaseIterable, Id
             return "Private enterprise container deployment behind corporate firewall / VPC."
         case .cloudAPI:
             return "Managed TypeSafe Jev cloud endpoints with automated retries and jitter backoff."
+        case .cloudflareClef:
+            return "Cloudflare Workers AI multimodal edge decision model (9B / 27B)."
         case .generativeBaseline:
             return "Apple Intelligence on-device ~3B generative LLM baseline comparison."
         }
@@ -74,6 +83,8 @@ public enum TriageBackend: String, Sendable, Hashable, Codable, CaseIterable, Id
             return "server.rack"
         case .cloudAPI:
             return "cloud.fill"
+        case .cloudflareClef:
+            return "bolt.shield.fill"
         case .generativeBaseline:
             return "sparkles"
         }
@@ -90,8 +101,52 @@ public enum TriageBackend: String, Sendable, Hashable, Codable, CaseIterable, Id
             return "40–70 ms"
         case .cloudAPI:
             return "60–90 ms"
+        case .cloudflareClef:
+            return "< 100 ms"
         case .generativeBaseline:
             return "800–1,200 ms"
+        }
+    }
+
+    /// Relative latency tier classification.
+    public var latencyTier: String {
+        switch self {
+        case .onDeviceCoreML:
+            return "< 15ms"
+        case .localServe:
+            return "< 20ms"
+        case .hostedVPC:
+            return "< 70ms"
+        case .cloudAPI:
+            return "< 100ms"
+        case .cloudflareClef:
+            return "< 100ms"
+        case .generativeBaseline:
+            return "> 1000ms"
+        }
+    }
+
+    /// Privacy and topology classification level.
+    public enum PrivacyLevel: String, Sendable, Hashable, Codable, CaseIterable {
+        case onDevice = "On-Device"
+        case local = "Local"
+        case vpc = "VPC"
+        case edge = "Edge"
+        case cloud = "Cloud"
+    }
+
+    public var privacyLevel: PrivacyLevel {
+        switch self {
+        case .onDeviceCoreML, .generativeBaseline:
+            return .onDevice
+        case .localServe:
+            return .local
+        case .hostedVPC:
+            return .vpc
+        case .cloudflareClef:
+            return .edge
+        case .cloudAPI:
+            return .cloud
         }
     }
 
@@ -100,7 +155,7 @@ public enum TriageBackend: String, Sendable, Hashable, Codable, CaseIterable, Id
         switch self {
         case .onDeviceCoreML, .generativeBaseline:
             return true
-        case .localServe, .hostedVPC, .cloudAPI:
+        case .localServe, .hostedVPC, .cloudAPI, .cloudflareClef:
             return false
         }
     }

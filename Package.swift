@@ -15,7 +15,7 @@ let package = Package(
         ),
         .library(
             name: "SystemOneFoundationModels",
-            targets: ["SystemOneCore", "LayaFoundationModels", "LayaOnDevice", "JevFoundationModels"]
+            targets: ["SystemOneCore", "LayaFoundationModels", "LayaOnDevice", "JevFoundationModels", "ClefFoundationModels"]
         ),
         .library(
             name: "LayaFoundationModels",
@@ -28,6 +28,10 @@ let package = Package(
         .library(
             name: "JevFoundationModels",
             targets: ["JevFoundationModels"]
+        ),
+        .library(
+            name: "ClefFoundationModels",
+            targets: ["ClefFoundationModels"]
         ),
         .executable(
             name: "ticket-triage-demo",
@@ -44,6 +48,14 @@ let package = Package(
         .executable(
             name: "laya-demo",
             targets: ["LayaDemo"]
+        ),
+        .executable(
+            name: "clef-demo",
+            targets: ["ClefDemo"]
+        ),
+        .executable(
+            name: "clef-camera-scanner",
+            targets: ["ClefCameraScanner"]
         )
     ],
     traits: [
@@ -60,6 +72,10 @@ let package = Package(
             description: "Enables HTTP transport for self-hosted laya-serve instances"
         ),
         .trait(
+            name: "Clef",
+            description: "Enables Cloudflare Clef and Clef-Flash hosted and local decision models"
+        ),
+        .trait(
             name: "OnDevice",
             description: "Enables on-device decision model capabilities",
             enabledTraits: ["Laya"]
@@ -67,12 +83,12 @@ let package = Package(
         .trait(
             name: "Remote",
             description: "Enables remote hosted and self-hosted decision model clients",
-            enabledTraits: ["Jev", "LayaServe"]
+            enabledTraits: ["Jev", "LayaServe", "Clef"]
         ),
         .trait(
             name: "All",
             description: "Enables all System One model backends and transports",
-            enabledTraits: ["Jev", "Laya", "LayaServe"]
+            enabledTraits: ["Jev", "Laya", "LayaServe", "Clef"]
         ),
         .default(enabledTraits: ["Jev"])
     ],
@@ -105,6 +121,13 @@ let package = Package(
                 .enableUpcomingFeature("StrictConcurrency")
             ]
         ),
+        .target(
+            name: "ClefFoundationModels",
+            dependencies: ["SystemOneCore"],
+            swiftSettings: [
+                .enableUpcomingFeature("StrictConcurrency")
+            ]
+        ),
         .executableTarget(
             name: "TicketTriageDemo",
             dependencies: ["JevFoundationModels"],
@@ -129,6 +152,24 @@ let package = Package(
             path: "Examples/LayaDemo",
             exclude: ["README.md"]
         ),
+        .executableTarget(
+            name: "ClefDemo",
+            dependencies: ["ClefFoundationModels"],
+            path: "Examples/ClefDemo",
+            exclude: ["README.md"],
+            swiftSettings: [
+                .enableUpcomingFeature("StrictConcurrency")
+            ]
+        ),
+        .executableTarget(
+            name: "ClefCameraScanner",
+            dependencies: ["ClefFoundationModels"],
+            path: "Examples/ClefCameraScanner",
+            exclude: ["README.md"],
+            swiftSettings: [
+                .enableUpcomingFeature("StrictConcurrency")
+            ]
+        ),
         .testTarget(
             name: "SystemOneCoreTests",
             dependencies: [
@@ -145,6 +186,16 @@ let package = Package(
                 "SystemOneCore",
                 "LayaFoundationModels",
                 "LayaOnDevice"
+            ],
+            swiftSettings: [
+                .enableUpcomingFeature("StrictConcurrency")
+            ]
+        ),
+        .testTarget(
+            name: "ClefFoundationModelsTests",
+            dependencies: [
+                "ClefFoundationModels",
+                "SystemOneCore"
             ],
             swiftSettings: [
                 .enableUpcomingFeature("StrictConcurrency")

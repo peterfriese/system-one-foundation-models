@@ -102,7 +102,7 @@ struct BenchmarkOptions {
           -n, --count <N>       Number of emails to benchmark per backend (default: 25, max: 500)
           --all                 Benchmark the entire 500-message inbox dataset
           -b, --backends <list> Comma-separated backends to benchmark
-                                (options: onDeviceCoreML, localServe, hostedVPC, cloudAPI, generativeBaseline)
+                                (options: onDeviceCoreML, localServe, hostedVPC, cloudAPI, cloudflareClef, generativeBaseline)
                                 (default: all probed reachable backends)
           -o, --output <path>   Output JSON file path (default: canonical Application Support/MailTriage/benchmark-truth.json)
           -m, --mock            Offline simulation mode for headless CI environments
@@ -231,6 +231,7 @@ final class BenchmarkRunner: Sendable {
                 case .localServe: baseLatency = 10.8
                 case .hostedVPC: baseLatency = 48.0
                 case .cloudAPI: baseLatency = 68.0
+                case .cloudflareClef: baseLatency = 52.0
                 case .generativeBaseline: baseLatency = 950.0
                 }
 
@@ -322,6 +323,8 @@ final class BenchmarkRunner: Sendable {
             endpointOrModel = "https://api.impossibl.com/v1/systemone"
         case .cloudAPI:
             endpointOrModel = "https://api.typesafe.ai/v1/systemone"
+        case .cloudflareClef:
+            endpointOrModel = "Cloudflare Workers AI (@cf/cloudflare/clef-flash)"
         case .generativeBaseline:
             endpointOrModel = "SystemLanguageModel (~3B LLM)"
         }

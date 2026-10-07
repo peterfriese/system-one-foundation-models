@@ -13,6 +13,7 @@ A lightweight, native Swift 6 bridge integrating **System One decision models** 
 Evaluate strongly typed `@Generable` structs and enums against application state in **15–150ms** with zero hallucinations, calibrated probabilities, and full Apple Intelligence API compatibility across:
 - **On-Device Core ML (`LayaOnDevice`)**: Run Laya's 322M (multilingual mmBERT) and 421M (English/typed-decisions ModernBERT) parameter models locally on the Apple Neural Engine and GPU with zero network calls.
 - **Self-Hosted HTTP (`LayaFoundationModels`)**: Connect to `laya-serve` (PR #31 merged into `NandhaKishorM/laya`) speaking the Jev-compatible `POST /v1/systemone` protocol with presets for `localhost:8000`, `localhost:8770`, and hosted `api.impossibl.com`.
+- **Cloudflare Clef (`ClefFoundationModels`)**: Run open-weight multimodal decision models—**Clef (27B)** and **Clef-Flash (9B)**—running via Cloudflare Workers AI edge, Cloudflare AI Gateway, or local runner (`Tools/ClefLocalRunner`), judging camera frames and image attachments alongside text in a single feed-forward pass.
 - **TypeSafe AI Cloud (`JevFoundationModels`)**: Full backwards-compatible support for hosted TypeSafe Jev endpoints with automated HTTP retries (`RetryPolicy`), cooperative cancellation, and confidence routing (`RoutingPolicy`).
 
 > [!WARNING]
@@ -40,6 +41,13 @@ Traditional Large Language Models (LLMs) are generative text engines: coercing t
 | `@Guide(.range(...))` | **`score`** | Bounded ordinal rubric scoring |
 | `Response.metadata` | **`confidence` & `probabilities`** | Direct access to model uncertainty |
 
+### Multimodal Visual Decisions
+
+With **Cloudflare Clef (`ClefFoundationModels`)**, System One decision modeling extends natively into visual workflows:
+- **Single-Pass Evaluation**: Evaluates camera frames or image attachments (`Attachment(cgImage)`) alongside textual state in a single feed-forward pass—without generative captioning bottlenecks, hallucinations, or multi-stage prompt engineering.
+- **Native Apple Foundation Models Vision**: Fully complies with `LanguageModelCapabilities([.guidedGeneration, .vision])`, accepting standard `Prompt` attachments and returning strongly typed `@Generable` outcomes.
+- **Calibrated Visual Uncertainty**: Obtains discrete decision outputs (pass/fail, defect categories, priority tiers) alongside continuous probability distributions and confidence scores directly from visual features.
+
 ---
 
 ## 🚀 Quick Start
@@ -50,7 +58,7 @@ Add `SystemOneFoundationModels` to your `Package.swift` or via Xcode (**File > A
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/peterfriese/system-one-foundation-models.git", from: "0.2.0")
+    .package(url: "https://github.com/peterfriese/system-one-foundation-models.git", from: "0.3.0")
 ]
 ```
 
@@ -60,16 +68,16 @@ Using Swift 6.1 Package Traits ([SE-0402](https://github.com/swiftlang/swift-evo
 
 ```swift
 // Default (TypeSafe Jev hosted cloud API):
-.package(url: "https://github.com/peterfriese/system-one-foundation-models.git", from: "0.2.0")
+.package(url: "https://github.com/peterfriese/system-one-foundation-models.git", from: "0.3.0")
 
 // On-Device only (Core ML + Apple Neural Engine, zero network/cloud code):
-.package(url: "https://github.com/peterfriese/system-one-foundation-models.git", from: "0.2.0", traits: ["OnDevice"])
+.package(url: "https://github.com/peterfriese/system-one-foundation-models.git", from: "0.3.0", traits: ["OnDevice"])
 
-// Remote only (Jev cloud + self-hosted laya-serve HTTP, no Core ML binaries):
-.package(url: "https://github.com/peterfriese/system-one-foundation-models.git", from: "0.2.0", traits: ["Remote"])
+// Remote only (Jev cloud, self-hosted laya-serve HTTP, and Clef; no Core ML binaries):
+.package(url: "https://github.com/peterfriese/system-one-foundation-models.git", from: "0.3.0", traits: ["Remote"])
 
-// All backends (Core ML, Laya HTTP, and Jev cloud):
-.package(url: "https://github.com/peterfriese/system-one-foundation-models.git", from: "0.2.0", traits: ["All"])
+// All backends (Core ML, Laya HTTP, Jev cloud, and Cloudflare Clef):
+.package(url: "https://github.com/peterfriese/system-one-foundation-models.git", from: "0.3.0", traits: ["All"])
 ```
 
 | Trait | Type | Description |
@@ -77,9 +85,10 @@ Using Swift 6.1 Package Traits ([SE-0402](https://github.com/swiftlang/swift-evo
 | `Jev` *(default)* | Model Boundary | Enables TypeSafe Jev hosted cloud API client (`JevFoundationModels`) |
 | `Laya` | Model Boundary | Enables on-device Laya decision models via Core ML and Apple Neural Engine (`LayaOnDevice`) |
 | `LayaServe` | Model Boundary | Enables HTTP transport for self-hosted `laya-serve` instances (`LayaFoundationModels`) |
+| `Clef` | Model Boundary | Enables Cloudflare Clef and Clef-Flash hosted and local multimodal decision models (`ClefFoundationModels`) |
 | `OnDevice` | Persona Shorthand | Enables on-device capabilities (activates `["Laya"]`) |
-| `Remote` | Persona Shorthand | Enables remote hosted and self-hosted clients (activates `["Jev", "LayaServe"]`) |
-| `All` | Persona Shorthand | Enables all System One model backends and transports (`["Jev", "Laya", "LayaServe"]`) |
+| `Remote` | Persona Shorthand | Enables remote hosted and self-hosted decision model clients (activates `["Jev", "LayaServe", "Clef"]`) |
+| `All` | Persona Shorthand | Enables all System One model backends and transports (activates `["Jev", "Laya", "LayaServe", "Clef"]`) |
 
 ### Which Target Should I Import?
 
@@ -89,9 +98,10 @@ The package is split into focused, modular targets so you only link the code and
 | :--- | :--- | :---: | :---: | :--- |
 | `LayaOnDevice` | 100% offline inference via Core ML on Apple Neural Engine & GPU | ❌ No | ❌ No | `SystemOneCore` |
 | `LayaFoundationModels` | Connect to local (`localhost:8000`) or self-hosted `laya-serve` instances | ✅ Yes (Local/LAN) | ❌ No (Optional token) | `SystemOneCore` |
+| `ClefFoundationModels` | Multimodal decisions (Clef 27B & Clef-Flash 9B) via Cloudflare Workers AI or local runner | ✅ Yes (Workers AI or Local) | Optional (`CLOUDFLARE_API_TOKEN` for cloud) | `SystemOneCore` |
 | `JevFoundationModels` | Connect to TypeSafe AI cloud API with exponential retries | ✅ Yes (Cloud HTTPS) | ✅ Yes (`TYPESAFE_API_KEY`) | `SystemOneCore` |
 | `SystemOneCore` | Core abstractions, `@Generable` schema translation, `RoutingPolicy`, offline mocks | ❌ No | ❌ No | None |
-| `SystemOneFoundationModels` | Umbrella module bundling Core ML, Laya HTTP, and Jev Cloud backends | Varies by backend | Varies by backend | All above |
+| `SystemOneFoundationModels` | Umbrella module bundling Core ML, Laya HTTP, Clef, and Jev Cloud backends | Varies by backend | Varies by backend | All above |
 
 ### 2. Choose Your Execution Backend
 
@@ -135,7 +145,32 @@ let jev = JevLanguageModel(apiKey: ProcessInfo.processInfo.environment["TYPESAFE
 let session = LanguageModelSession(model: jev)
 ```
 
-#### Option D: Mobile Reverse Proxy with `ProxyTransport` (Zero Bundled Secrets)
+#### Option D: Cloudflare Clef & Clef-Flash Multimodal (`ClefFoundationModels`)
+```swift
+import FoundationModels
+import ClefFoundationModels
+
+// 1. Connect to Cloudflare Workers AI edge (or .gateway / .local)
+let clef = ClefLanguageModel(
+    endpoint: .workersAI(
+        accountID: ProcessInfo.processInfo.environment["CLOUDFLARE_ACCOUNT_ID"]!,
+        model: .clefFlash // or .clef (27B)
+    ),
+    apiToken: ProcessInfo.processInfo.environment["CLOUDFLARE_API_TOKEN"]
+)
+
+// 2. Initialize native Apple Foundation Models session
+let session = LanguageModelSession(model: clef)
+
+// 3. Evaluate multimodal decision with visual Attachment
+let prompt = Prompt {
+    "Inspect the item presented in this camera frame for physical condition, category, and safety compliance."
+    Attachment(cgImage)
+}
+let response = try await session.respond(to: prompt, generating: VisualInspectionDecision.self)
+```
+
+#### Option E: Mobile Reverse Proxy with `ProxyTransport` (Zero Bundled Secrets)
 ```swift
 import FoundationModels
 import JevFoundationModels
@@ -293,12 +328,13 @@ print("Probabilities: \(frustration.probabilities)")         // [0.01, 0.04, 0.1
 Explore [`Examples/MailTriageApp`](Examples/MailTriageApp/README.md), a complete native macOS and iOS reference application showcasing production-grade System One decision models in a modern Apple Mail interface:
 
 - **Intelligent Email Triage**: Automatically categorizes incoming messages, assigns color-coded urgency priority tokens (`P0 Critical`, `P1 High`, `P2 Normal`, `P3 Low`), extracts suggested follow-up actions (Reply, Forward, Compose), and drives batch triage flows.
-- **5 Selectable Backends**: Hot-swap backends on the fly in Settings:
+- **6 Selectable Backends**: Hot-swap backends on the fly in Settings:
   1. **Laya Core ML**: 100% offline inference on the Apple Neural Engine and GPU.
   2. **Laya Local**: Local `laya-serve` instance running on `http://127.0.0.1:8000`.
   3. **Laya Remote**: Hosted Laya instance on `https://api.impossibl.com`.
-  4. **Jev Cloud**: TypeSafe AI hosted service on `https://api.typesafe.ai`.
-  5. **Offline Mock**: Instant deterministic evaluation for testing and previews.
+  4. **Cloudflare Clef**: Serverless Workers AI edge or local runner with multimodal email attachment triage.
+  5. **Jev Cloud**: TypeSafe AI hosted service on `https://api.typesafe.ai`.
+  6. **Generative Baseline / Offline Mock**: On-device generative baseline or instant deterministic mock evaluation.
 - **Pure Native Architecture**: Built with Swift 6 Complete Strict Concurrency, SwiftUI `@Observable`, FactoryKit dependency injection, Liquid Glass design, and multi-window split views.
 - **Catalog of Demos**: Browse [`Examples/README.md`](Examples/README.md) for the full list of runnable CLI tools and sample projects.
 
@@ -321,6 +357,7 @@ Explore [`Examples/MailTriageApp`](Examples/MailTriageApp/README.md), a complete
 │  • SystemOneBackend (Pluggable Execution Engine):                      │
 │     ├── LayaOnDeviceBackend: Core ML on Apple Neural Engine / GPU      │
 │     ├── LayaHTTPBackend: POST http://localhost:8000/v1/systemone       │
+│     ├── ClefHTTPBackend: Cloudflare Workers AI / Gateway / Local       │
 │     └── JevBackend: POST https://api.typesafe.ai/v1/systemone          │
 │  • ResponseSynthesizer: converts answers into canonical JSON / enums   │
 └───────────────────────────────────┬────────────────────────────────────┘

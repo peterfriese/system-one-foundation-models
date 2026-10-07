@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.0] - 2026-10-07
+
+### Added
+
+- **Cloudflare Clef & Clef-Flash Multimodal Decision Models (`ClefFoundationModels`)**:
+  - Added native Apple Foundation Models integration for Cloudflare's open-weight multimodal decision models: **Clef (27B)** and **Clef-Flash (9B)**.
+  - Implements `ClefLanguageModel` conforming to `LanguageModel` with `LanguageModelCapabilities([.guidedGeneration, .vision])`, accepting Apple `Prompt` attachments (`Attachment(cgImage)`).
+  - Supports multiple deployment topologies via `ClefEndpoint`: Cloudflare Workers AI edge (`.workersAI(accountID:model:)`), Cloudflare AI Gateway (`.gateway(accountID:gatewayID:model:)`), local inference runners (`.local(port:model:)`), and custom HTTP/HTTPS endpoints (`.custom(url:model:)`).
+  - Wire protocol parity for System One decision primitives (`noul`, `choice`, `score`) evaluated in a single non-autoregressive feed-forward pass.
+  - Added dual-decoding fallback in `ClefHTTPBackend` supporting both raw JSON payloads and Cloudflare Client API v4 envelopes (`{ result, success, errors }`).
+  - Decoupled Cloudflare Workers AI routing catalog paths (`@cf/cloudflare/clef-flash`) from JSON payload model identifiers (`clef-flash`) to satisfy Cloudflare schema regex rules.
+
+- **Core Multimodal Primitives (`SystemOneCore`)**:
+  - Introduced `SystemOneImage` supporting zero-allocation binary dimension sniffing for PNG, JPEG, and WebP formats without decoding pixel buffers.
+  - Implemented RFC 2397 Data URL streaming serialization for lightweight wire transport.
+  - Enforces Clef multimodal guardrails: maximum 4 images per turn, 16.0 megapixels maximum resolution, and 13 MiB payload limit.
+  - Added visual transcript extraction supporting both `Attachment(cgImage)` and raw image data payloads.
+
+- **`ClefCameraScanner` Reference Application (`Examples/ClefCameraScanner/`)**:
+  - Added complete cross-platform SwiftUI reference application for macOS and iOS featuring live camera capture and real-time visual decision modeling.
+  - Built with modern Apple platform patterns: SwiftUI `@Observable`, Liquid Glass HUD overlays (`InspectionHUDView`), dynamic device selection, and AVFoundation capture pipelines.
+  - Evaluates strongly-typed `VisualInspectionDecision` models judging item category, physical condition, defect severity, and safety compliance directly from live camera frames.
+
+- **`ClefDemo` CLI Demonstrator (`Examples/ClefDemo/`)**:
+  - Added standalone command-line executable demonstrating multimodal visual inspection with Cloudflare Clef and Clef-Flash.
+  - Supports reading local image files (PNG, JPEG, WebP) or auto-generating synthetic CoreGraphics bitmap frames in-memory.
+  - Configurable backend targeting (`workers-ai` edge vs. `local` runner), model selection (`clef-flash` vs. `clef`), and custom endpoints.
+
+- **`MailTriageApp` 6th Backend Integration (`Examples/MailTriageApp/`)**:
+  - Integrated Cloudflare Clef as the 6th runtime deployment topology (`TriageBackend.cloudflareClef`), hot-swappable in Settings alongside Core ML, local/remote Laya, Jev Cloud, and generative baselines.
+  - Implemented multimodal email attachment triage, inspecting image attachments alongside message body text for triage classification and urgency priority scoring.
+  - Added dedicated health probe checks, latency tracking, and edge token configuration.
+
+- **Pure Apple Data Protection Keychain Architecture (`Examples/MailTriageApp/`)**:
+  - Implemented `@KeychainStorage` SwiftUI dynamic property wrapper providing reactive `@Binding` support for sensitive credentials.
+  - Introduced type-safe `KeychainKey` enum (`.cloudflareAccountId`, `.cloudflareApiToken`, `.typesafeApiKey`, `.hostedVpcToken`) enforcing isolated, keyed storage.
+  - Fully adopted `kSecUseDataProtectionKeychain` to prevent legacy macOS authorization dialogs during automated tests, CLI workflows, and development builds.
+
+- **Local Apple Silicon MPS Runner Recipe (`Tools/ClefLocalRunner/`)**:
+  - Added local Python inference runner recipe in `Tools/ClefLocalRunner/` for running quantized Clef and Clef-Flash weights on Apple Silicon Metal Performance Shaders (MPS).
+  - Compatible with standard System One wire protocols on `http://localhost:8000/v1/evaluate`.
+
+- **Technical Notes Expansion (Tech Notes 0012 through 0016)**:
+  - Documented multimodal architecture discoveries, SDK quirks, and edge integration nuances in `tech-notes/`:
+    - **Tech Note 0012** (`tech-notes/0012-clef-multimodal-decision-models.md`): Cloudflare Clef & Clef-Flash Multimodal Decision Model Architecture (Qwen-based joint routing head, single-pass feed-forward evaluation, and Workers AI vs local serving topologies).
+    - **Tech Note 0013** (`tech-notes/0013-foundationmodels-vision-capability.md`): Foundation Models Vision Capability & Multimodal Attachment Gating (`LanguageModelCapabilities.Capability.vision` requirements for `Attachment(cgImage)`).
+    - **Tech Note 0014** (`tech-notes/0014-cloudflare-workers-ai-model-schema-nuance.md`): Cloudflare Workers AI Model Schema Validation Nuance & Identifier Decoupling (resolving `AiError: Bad input` via catalog path vs body ID decoupling).
+    - **Tech Note 0015** (`tech-notes/0015-clef-multimodal-token-estimation-and-data-url-encoding.md`): Clef Multimodal Token Estimation, Data URL Wire Encoding & Camera Frame Downscaling (preventing HTTP 413 token overflow).
+    - **Tech Note 0016** (`tech-notes/0016-cloudflare-workers-ai-v4-response-envelope.md`): Cloudflare Workers AI Client API v4 Response Envelope & Dual-Decoding Fallback (handling root JSON and `{ result, success, errors }` wrappers).
+
+- **Architectural Learnings Deep-Dive Article**:
+  - Published comprehensive engineering article: `docs/learnings/2026-10-05-bridging-cloudflare-clef-to-apple-foundation-models.md` detailing the design, implementation, and lessons learned while bridging Cloudflare Clef into Apple Foundation Models.
+
+---
+
 ## [0.2.0] - 2026-09-30
 
 ### Added
@@ -96,5 +151,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI demonstration tools: `ticket-triage-demo`, `duplicate-article-demo`, and `file-organizer-demo`.
 - Technical notes 0001 (`tech-notes/0001-afm-decision-model-bridging.md`) and 0002 (`tech-notes/0002-foundationmodels-generation-quirks.md`).
 
+[0.3.0]: https://github.com/peterfriese/system-one-foundation-models/compare/0.2.0...0.3.0
 [0.2.0]: https://github.com/peterfriese/system-one-foundation-models/compare/0.1.0...0.2.0
 [0.1.0]: https://github.com/peterfriese/system-one-foundation-models/releases/tag/0.1.0

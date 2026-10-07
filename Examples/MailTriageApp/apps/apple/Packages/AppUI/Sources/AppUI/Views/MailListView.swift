@@ -1,8 +1,11 @@
 import SwiftUI
 import AppCore
+import FactoryKit
 
 public struct MailListView: View {
     @Bindable public var store: MailStore
+    @Injected(\.backendConfigurationStore) private var configStore
+    @State private var showingBenchmarkComparison: Bool = false
 
     public init(store: MailStore) {
         self.store = store
@@ -218,6 +221,14 @@ public struct MailListView: View {
 
                 Spacer()
 
+                // Benchmark Comparison Button
+                Button {
+                    showingBenchmarkComparison = true
+                } label: {
+                    Label("Benchmark Comparison", systemImage: "chart.bar.xaxis")
+                }
+                .help("Compare All Model Timings & Accuracy")
+
                 // Group 2: Filter Icon + Three-Dotted Menu
                 ControlGroup {
                     Button {
@@ -231,6 +242,12 @@ public struct MailListView: View {
                     .help(store.unreadOnly ? "Show All Messages" : "Filter by Unread Only")
 
                     Menu {
+                        Button {
+                            showingBenchmarkComparison = true
+                        } label: {
+                            Label("Benchmark Comparison...", systemImage: "chart.bar.xaxis")
+                        }
+                        Divider()
                         Toggle("Filter by Unread Only", isOn: $store.unreadOnly)
                         Divider()
                         Button("Mark All as Read") {
@@ -271,6 +288,18 @@ public struct MailListView: View {
         }
         .task {
             await store.probeActiveBackend()
+        }
+        .onChange(of: configStore.cloudflareAccountId) { _, _ in
+            Task { await store.probeActiveBackend() }
+        }
+        .onChange(of: configStore.cloudflareApiToken) { _, _ in
+            Task { await store.probeActiveBackend() }
+        }
+        .onChange(of: configStore.typesafeApiKey) { _, _ in
+            Task { await store.probeActiveBackend() }
+        }
+        .sheet(isPresented: $showingBenchmarkComparison) {
+            BenchmarkComparisonSheet()
         }
     }
 
@@ -316,8 +345,20 @@ public struct MailListView: View {
                 }
             }
 
-            HStack {
+            HStack(spacing: 8) {
                 Spacer()
+
+                Button {
+                    Task { await store.probeActiveBackend() }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.clockwise")
+                        Text("Re-check")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
                 Button("Open Settings (⌘,)") {
                     openSettings()
                 }
