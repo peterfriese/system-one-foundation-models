@@ -224,11 +224,18 @@ public final class CameraManager: NSObject {
                         kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA)
                     ]
 
-                    if self.session.canAddOutput(output) {
-                        self.session.addOutput(output)
-                        output.setSampleBufferDelegate(self, queue: self.sampleQueue)
-                        self.videoOutput = output
+                    guard self.session.canAddOutput(output) else {
+                        Task { @MainActor in
+                            self.errorMessage = "Unable to configure camera video output."
+                            self.isCameraAvailable = false
+                            continuation.resume()
+                        }
+                        return
                     }
+
+                    self.session.addOutput(output)
+                    output.setSampleBufferDelegate(self, queue: self.sampleQueue)
+                    self.videoOutput = output
 
                     Task { @MainActor in
                         self.isCameraAvailable = true

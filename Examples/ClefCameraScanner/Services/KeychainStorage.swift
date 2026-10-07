@@ -35,12 +35,12 @@ public final class KeychainHelper: @unchecked Sendable {
         return string
     }
 
-    public static func set(_ value: String?, forKey key: String) {
+    public static func set(_ value: String?, forKey key: String) throws {
         lock.lock()
         defer { lock.unlock() }
 
         guard let value, !value.isEmpty else {
-            deleteItem(forKey: key)
+            try deleteItem(forKey: key)
             return
         }
 
@@ -57,19 +57,33 @@ public final class KeychainHelper: @unchecked Sendable {
             var newQuery = query
             newQuery[kSecValueData as String] = data
             newQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-            SecItemAdd(newQuery as CFDictionary, nil)
+            let addStatus = SecItemAdd(newQuery as CFDictionary, nil)
+            guard addStatus == errSecSuccess else {
+                throw NSError(domain: NSOSStatusErrorDomain, code: Int(addStatus), userInfo: [
+                    NSLocalizedDescriptionKey: "SecItemAdd failed with status \(addStatus)"
+                ])
+            }
+        } else if status != errSecSuccess {
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(status), userInfo: [
+                NSLocalizedDescriptionKey: "SecItemUpdate failed with status \(status)"
+            ])
         }
     }
 
-    public static func delete(forKey key: String) {
+    public static func delete(forKey key: String) throws {
         lock.lock()
         defer { lock.unlock() }
-        deleteItem(forKey: key)
+        try deleteItem(forKey: key)
     }
 
-    private static func deleteItem(forKey key: String) {
+    private static func deleteItem(forKey key: String) throws {
         let query = baseQuery(forKey: key)
-        SecItemDelete(query as CFDictionary)
+        let status = SecItemDelete(query as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(status), userInfo: [
+                NSLocalizedDescriptionKey: "SecItemDelete failed with status \(status)"
+            ])
+        }
     }
 }
 
@@ -94,10 +108,14 @@ public struct KeychainStorage: DynamicProperty, Sendable {
         }
         nonmutating set {
             value = newValue
-            if newValue.isEmpty {
-                KeychainHelper.delete(forKey: key)
-            } else {
-                KeychainHelper.set(newValue, forKey: key)
+            do {
+                if newValue.isEmpty {
+                    try KeychainHelper.delete(forKey: key)
+                } else {
+                    try KeychainHelper.set(newValue, forKey: key)
+                }
+            } catch {
+                print("⚠️ [KeychainStorage] Failed to persist key '\(key)': \(error.localizedDescription)")
             }
         }
     }

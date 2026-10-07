@@ -195,73 +195,68 @@ def estimate_input_tokens(state: str, questions: Dict[str, Any], images_count: i
 # MARK: - Clef Inference Engine
 
 class ClefEngine:
-    def __init__(self, model_id_or_path: str, device: str, mock: bool = False):
+    def __init__(self, model_id_or_path: str, device: str, mock: bool = False, trust_remote_code: bool = False):
         self.model_id_or_path = model_id_or_path
         self.resolved_model = MODEL_MAPPINGS.get(model_id_or_path, model_id_or_path)
         self.device = device
         self.mock = mock
+        self.trust_remote_code = trust_remote_code
         self.model = None
         self.processor = None
         self.joint_schema_module = None
         self.tokenizer = None
 
-    def load(self):
+    @property
+    def should_trust_remote_code(self) -> bool:
+        return self.trust_remote_code or self.resolved_model.startswith("Cloudflare/clef")
+
+    def load_model(self):
         if self.mock:
             logger.info("Initializing Clef Engine in deterministic MOCK mode.")
             return
 
         logger.info(f"Targeting device: {self.device}")
 
-        # Attempt 1: Look for Cloudflare's joint_schema_model.py
+        # Look for Cloudflare's joint_schema_model.py
         joint_schema_mod = self._try_load_joint_schema_module()
-        if joint_schema_mod is not None:
-            self.joint_schema_module = joint_schema_mod
-            try:
-                logger.info(f"Loading release model using joint_schema_model.load_release_model({self.resolved_model})...")
-                load_fn = getattr(joint_schema_mod, "load_release_model", None)
-                if callable(load_fn):
-                    dtype = torch.float16 if (torch is not None and self.device in ("mps", "cuda")) else torch.float32
+        if joint_schema_mod is None:
+            raise RuntimeError(
+                f"joint_schema_model.py could not be loaded for '{self.resolved_model}'. "
+                "Clef inference requires joint_schema_model.py. Pass --mock to run in deterministic offline mock mode."
+            )
+
+        self.joint_schema_module = joint_schema_mod
+        try:
+            logger.info(f"Loading release model using joint_schema_model.load_release_model({self.resolved_model})...")
+            load_fn = getattr(joint_schema_mod, "load_release_model", None)
+            if callable(load_fn):
+                dtype = torch.float16 if (torch is not None and self.device in ("mps", "cuda")) else torch.float32
+                try:
+                    self.model, self.processor = load_fn(
+                        self.resolved_model,
+                        device=self.device,
+                        torch_dtype=dtype,
+                        trust_remote_code=self.should_trust_remote_code
+                    )
+                except TypeError:
                     self.model, self.processor = load_fn(
                         self.resolved_model,
                         device=self.device,
                         torch_dtype=dtype
                     )
-                    self.tokenizer = getattr(self.processor, "tokenizer", self.processor)
-                    logger.info("Successfully loaded model and processor via joint_schema_model.py.")
-                    return
-            except Exception as e:
-                logger.warning(f"Failed to load via joint_schema_model.load_release_model: {e}. Falling back to PyTorch/Transformers.")
-
-        # Attempt 2: Load via Transformers AutoModel / AutoProcessor
-        try:
-            logger.info(f"Loading Transformers model from {self.resolved_model}...")
-            from transformers import AutoProcessor, AutoModelForCausalLM, AutoTokenizer
-            dtype = torch.float16 if (torch is not None and self.device in ("mps", "cuda")) else torch.float32
-
-            try:
-                self.processor = AutoProcessor.from_pretrained(self.resolved_model, trust_remote_code=True)
                 self.tokenizer = getattr(self.processor, "tokenizer", self.processor)
-            except Exception as pe:
-                logger.warning(f"Could not load AutoProcessor: {pe}. Trying AutoTokenizer.")
-                self.tokenizer = AutoTokenizer.from_pretrained(self.resolved_model, trust_remote_code=True)
+                logger.info("Successfully loaded model and processor via joint_schema_model.py.")
+                return
+            else:
+                raise RuntimeError(
+                    f"joint_schema_model.py could not be loaded: missing callable 'load_release_model' in module"
+                )
+        except Exception as e:
+            logger.error(f"Failed to load via joint_schema_model.load_release_model: {e}")
+            raise RuntimeError(f"joint_schema_model.py could not be loaded: {e}")
 
-            self.model = AutoModelForCausalLM.from_pretrained(
-                self.resolved_model,
-                torch_dtype=dtype,
-                device_map=self.device,
-                trust_remote_code=True
-            )
-            self.model.eval()
-            logger.info(f"Successfully loaded {self.resolved_model} on {self.device}.")
-        except Exception as te:
-            logger.error(
-                f"Failed to load model weights for {self.resolved_model}: {te}. "
-                "Failing fast because --mock was not specified. Pass --mock to run in deterministic offline mock mode."
-            )
-            raise RuntimeError(
-                f"Failed to load model weights for '{self.resolved_model}': {te}. "
-                "Pass --mock to run in deterministic offline mock mode."
-            )
+    def load(self):
+        self.load_model()
 
     def _try_load_joint_schema_module(self):
         """Attempts to discover and import joint_schema_model.py."""
@@ -718,6 +713,12 @@ def main():
         action="store_true",
         help="Run in deterministic offline mock mode without loading large model weights"
     )
+    parser.add_argument(
+        "--trust-remote-code",
+        action="store_true",
+        default=False,
+        help="Allow executing custom code from remote Hugging Face repositories (default: False; auto-enabled for 'Cloudflare/clef' repos)"
+    )
 
     args = parser.parse_args()
 
@@ -729,7 +730,8 @@ def main():
     engine = ClefEngine(
         model_id_or_path=args.model,
         device=resolved_device,
-        mock=args.mock
+        mock=args.mock,
+        trust_remote_code=args.trust_remote_code
     )
 
     # FastAPI application

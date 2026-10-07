@@ -338,7 +338,7 @@ public final class TriageEngine: TriageEngineProtocol, @unchecked Sendable {
             }
         }
 
-        print("⏱️ [TriageEngine] Evaluated \"\(email.subject.prefix(40))\" via \(backend.displayName): \(String(format: "%.1f", latencyMs)) ms | Category: \(result.decision.category.rawValue) | Urgency: \(result.decision.urgencyScore) | Routing: \(result.routingTier.rawValue)")
+        print("⏱️ [TriageEngine] Evaluated email \(email.id.uuidString.prefix(8)) via \(backend.displayName): \(String(format: "%.1f", latencyMs)) ms | Category: \(result.decision.category.rawValue) | Urgency: \(result.decision.urgencyScore) | Routing: \(result.routingTier.rawValue)")
         return result
     }
 

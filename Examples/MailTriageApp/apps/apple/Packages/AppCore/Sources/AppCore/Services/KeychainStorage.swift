@@ -65,10 +65,14 @@ public struct KeychainStorage: DynamicProperty, Sendable {
         }
         nonmutating set {
             value = newValue
-            if newValue.isEmpty {
-                try? service.delete(forKey: key)
-            } else {
-                try? service.set(newValue, forKey: key)
+            do {
+                if newValue.isEmpty {
+                    try service.delete(forKey: key)
+                } else {
+                    try service.set(newValue, forKey: key)
+                }
+            } catch {
+                print("⚠️ [KeychainStorage] Failed to persist key '\(key)': \(error.localizedDescription)")
             }
         }
     }

@@ -90,7 +90,7 @@ let package = Package(
             description: "Enables all System One model backends and transports",
             enabledTraits: ["Jev", "Laya", "LayaServe", "Clef"]
         ),
-        .default(enabledTraits: ["Jev"])
+        .default(enabledTraits: ["All"])
     ],
     dependencies: [],
     targets: [
@@ -105,7 +105,7 @@ let package = Package(
             dependencies: [
                 "SystemOneCore",
                 .target(name: "JevFoundationModels", condition: .when(traits: ["Jev"])),
-                .target(name: "LayaFoundationModels", condition: .when(traits: ["Laya"])),
+                .target(name: "LayaFoundationModels", condition: .when(traits: ["LayaServe"])),
                 .target(name: "LayaOnDevice", condition: .when(traits: ["Laya"])),
                 .target(name: "ClefFoundationModels", condition: .when(traits: ["Clef"]))
             ],

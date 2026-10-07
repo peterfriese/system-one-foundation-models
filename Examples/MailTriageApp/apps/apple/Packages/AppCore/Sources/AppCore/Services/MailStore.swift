@@ -279,7 +279,7 @@ public final class MailStore {
             let result = try await triageEngine.triage(email: email, backend: selectedBackend)
             benchmarkSessionStore.record(email: email, result: result)
 
-            print("⏱️ [MailStore] Single triage done: \"\(email.subject.prefix(35))\" in \(String(format: "%.1f", result.latencyMs)) ms via \(selectedBackend.displayName)")
+            print("⏱️ [MailStore] Single triage done: email \(email.id.uuidString.prefix(8)) in \(String(format: "%.1f", result.latencyMs)) ms via \(selectedBackend.displayName)")
 
             // Update health and email properties with result
             activeBackendError = nil
