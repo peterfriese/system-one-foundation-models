@@ -36,6 +36,12 @@ public struct MailRowView: View {
                         .foregroundStyle(.orange)
                 }
 
+                if email.hasAttachments {
+                    Image(systemName: "paperclip")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+
                 Text(formattedDate(email.date))
                     .font(.caption2)
                     .foregroundStyle(email.isUnread ? Color.accentColor : .secondary)

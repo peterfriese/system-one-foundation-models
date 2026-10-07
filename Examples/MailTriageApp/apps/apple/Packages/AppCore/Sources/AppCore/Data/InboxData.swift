@@ -1,4 +1,9 @@
 import Foundation
+#if canImport(CoreGraphics) && canImport(ImageIO) && canImport(UniformTypeIdentifiers)
+import CoreGraphics
+import ImageIO
+import UniformTypeIdentifiers
+#endif
 
 public enum InboxData {
     public static let sampleEmails: [Email] = generateSampleEmails()
@@ -54,22 +59,25 @@ public enum InboxData {
             Template(
                 sender: "PagerDuty P0",
                 senderEmail: "alerts@pagerduty.internal",
-                subject: "[CRITICAL] P0 Alert: europe-west4-a TPU Pod Slice degraded (loss rate > 4.2%)",
-                snippet: "Incident #94820 assigned to you. Error rate spiked above 4% threshold for 5 consecutive minutes.",
+                subject: "[CRITICAL] P0 Alert: Database connection pool exhausted (timeout 30000ms)",
+                snippet: "Incident #94820 assigned to you. Database pool connection timeout on primary cluster. Screenshot attached.",
                 body: """
                 INCIDENT SUMMARY:
                 Incident ID: #94820-P0
-                Service: TPU Pod Fleet Manager (europe-west4-a)
+                Service: Core Database Cluster (europe-west4-a)
                 Severity: CRITICAL (P0)
-                Trigger: Packet loss rate > 4.2% on host-to-host RoCE interconnect
+                Trigger: Connection pool exhausted (timeout 30000ms) on postgres-primary-01
+
+                Attached screenshot: database_pool_timeout_trace.png
 
                 Metrics Snapshot:
-                - Cluster: eu-west4-tpu-slice-08
-                - Healthy hosts: 96 / 128 (32 nodes unreachable)
-                - Impact: 4 active training jobs stalled
+                - Cluster: eu-west4-db-primary
+                - Active connections: 500 / 500 (pool saturated)
+                - Waiting queries: 1,420
+                - Impact: 4 active training and inference jobs stalled
 
-                War Room: https://meet.corp.google.com/p0-tpu-emergency
-                Slack Channel: #incident-94820-tpu-roce
+                War Room: https://meet.corp.google.com/p0-db-emergency
+                Slack Channel: #incident-94820-db-pool
 
                 Reply ACK to acknowledge or ESCALATE to secondary on-call.
                 """,
@@ -278,10 +286,10 @@ public enum InboxData {
             Template(
                 sender: "Stripe Invoicing",
                 senderEmail: "invoices@stripe.com",
-                subject: "Invoice #INV-2026-9481 from TypeSafe Jev Cloud ($3,420.00)",
-                snippet: "Receipt for 85,500,000 System One inference calls. Thank you for your business.",
+                subject: "Invoice #INV-2026-8819 from TypeSafe Jev Cloud ($3,420.00)",
+                snippet: "Receipt for 85,500,000 System One inference calls. Attached: invoice_INV-2026-8819.png.",
                 body: """
-                Invoice #INV-2026-9481
+                Invoice #INV-2026-8819
                 Amount Paid: $3,420.00 USD
                 Date: September 22, 2026
 
@@ -291,6 +299,7 @@ public enum InboxData {
                 - Uptime SLA: 99.995%
 
                 Card charged: Visa ending in 8831.
+                Attachment: invoice_INV-2026-8819.png (official tax invoice scan).
                 Questions? Visit https://dashboard.typesafe.ai/billing
                 """,
                 category: .billing,
@@ -330,7 +339,7 @@ public enum InboxData {
                 sender: "Executive Payroll Office",
                 senderEmail: "executive-wire-update@sec-notice-payroll-auth.info",
                 subject: "URGENT: Confidential Executive Wire Transfer verification needed by 5 PM",
-                snippet: "Please verify the urgent wire transfer instructions for the overseas board member immediately.",
+                snippet: "Please verify the urgent wire transfer instructions for the overseas board member immediately. Attached login prompt.",
                 body: """
                 CONFIDENTIAL & TIME SENSITIVE
 
@@ -338,7 +347,7 @@ public enum InboxData {
 
                 Due to the recent quarterly audit, we need you to review and verify the revised banking wire coordinates for the senior executive board distribution ($185,000.00).
 
-                Please download the encrypted attachment below and verify your corporate credentials to confirm the SWIFT routing number before banking cutoff at 5:00 PM EST.
+                Please review the attached login prompt (swift_wire_verification.png) and verify your corporate credentials to confirm the SWIFT routing number before banking cutoff at 5:00 PM EST.
 
                 Download Link: http://sec-notice-payroll-auth.info/wire-form-oct26.exe
 
@@ -599,6 +608,22 @@ public enum InboxData {
             ("Tariq Mansoor", "tariq@neural-inference.org")
         ]
 
+        let invoiceAttachment = EmailAttachment(
+            filename: "invoice_INV-2026-8819.png",
+            mimeType: "image/png",
+            data: generateInvoicePNG()
+        )
+        let databaseAttachment = EmailAttachment(
+            filename: "database_pool_timeout_trace.png",
+            mimeType: "image/png",
+            data: generateDatabaseCrashPNG()
+        )
+        let phishingAttachment = EmailAttachment(
+            filename: "swift_wire_verification.png",
+            mimeType: "image/png",
+            data: generatePhishingWirePNG()
+        )
+
         for i in 0..<totalEmails {
             let baseTemplate = templates[i % templates.count]
             let isUnread = unreadIndices.contains(i)
@@ -665,6 +690,15 @@ public enum InboxData {
                 mailbox = .securityAlerts
             }
 
+            var emailAttachments: [EmailAttachment] = []
+            if baseTemplate.subject.contains("INV-2026-8819") {
+                emailAttachments = [invoiceAttachment]
+            } else if baseTemplate.subject.contains("Database connection pool") {
+                emailAttachments = [databaseAttachment]
+            } else if baseTemplate.subject.contains("Executive Wire Transfer") {
+                emailAttachments = [phishingAttachment]
+            }
+
             let email = Email(
                 id: UUID(),
                 sender: sender,
@@ -681,7 +715,8 @@ public enum InboxData {
                 category: baseTemplate.category,
                 urgencyScore: baseTemplate.urgencyScore,
                 requiresAction: baseTemplate.requiresAction,
-                suggestedAction: baseTemplate.suggestedAction
+                suggestedAction: baseTemplate.suggestedAction,
+                attachments: emailAttachments
             )
 
             emails.append(email)
@@ -691,5 +726,261 @@ public enum InboxData {
         emails.sort { $0.date > $1.date }
 
         return emails
+    }
+
+    // MARK: - Synthetic Attachment Image Generation
+
+    public static func generateInvoicePNG() -> Data {
+        renderSyntheticPNG(width: 480, height: 320) { ctx in
+            // Background: Light warm gray (#F8F9FA)
+            ctx.setFillColor(red: 0.97, green: 0.98, blue: 0.98, alpha: 1.0)
+            ctx.fill(CGRect(x: 0, y: 0, width: 480, height: 320))
+
+            // White invoice card
+            ctx.setFillColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 1.0)
+            let cardRect = CGRect(x: 20, y: 16, width: 440, height: 288)
+            let cardPath = CGPath(roundedRect: cardRect, cornerWidth: 8, cornerHeight: 8, transform: nil)
+            ctx.addPath(cardPath)
+            ctx.fillPath()
+
+            // Header banner (Blue #1A73E8)
+            ctx.setFillColor(red: 0.10, green: 0.45, blue: 0.91, alpha: 1.0)
+            let headerRect = CGRect(x: 20, y: 256, width: 440, height: 48)
+            let headerPath = CGPath(roundedRect: headerRect, cornerWidth: 8, cornerHeight: 8, transform: nil)
+            ctx.addPath(headerPath)
+            ctx.fillPath()
+
+            // Header accent rectangles representing company logo & INVOICE #INV-2026-8819
+            ctx.setFillColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 0.95)
+            ctx.fill(CGRect(x: 36, y: 272, width: 80, height: 16))
+            ctx.fill(CGRect(x: 310, y: 274, width: 130, height: 12))
+
+            // Metadata row
+            ctx.setFillColor(red: 0.4, green: 0.45, blue: 0.5, alpha: 1.0)
+            ctx.fill(CGRect(x: 40, y: 226, width: 100, height: 10))
+            ctx.fill(CGRect(x: 40, y: 210, width: 160, height: 8))
+            ctx.fill(CGRect(x: 320, y: 226, width: 120, height: 10))
+            ctx.fill(CGRect(x: 320, y: 210, width: 90, height: 8))
+
+            // Table header bar
+            ctx.setFillColor(red: 0.93, green: 0.94, blue: 0.96, alpha: 1.0)
+            ctx.fill(CGRect(x: 36, y: 176, width: 408, height: 22))
+
+            // Table rows & simulated text lines
+            let rows: [(itemW: CGFloat, costW: CGFloat, y: CGFloat)] = [
+                (180, 48, 148),
+                (220, 48, 122),
+                (160, 48, 96)
+            ]
+            for row in rows {
+                ctx.setFillColor(red: 0.25, green: 0.28, blue: 0.32, alpha: 1.0)
+                ctx.fill(CGRect(x: 44, y: row.y, width: row.itemW, height: 8))
+                ctx.setFillColor(red: 0.1, green: 0.1, blue: 0.1, alpha: 1.0)
+                ctx.fill(CGRect(x: 388, y: row.y, width: row.costW, height: 8))
+
+                ctx.setStrokeColor(red: 0.92, green: 0.93, blue: 0.95, alpha: 1.0)
+                ctx.setLineWidth(1)
+                ctx.strokeLineSegments(between: [CGPoint(x: 36, y: row.y - 8), CGPoint(x: 444, y: row.y - 8)])
+            }
+
+            // Total / Paid stamp box (Green #059669)
+            ctx.setFillColor(red: 0.02, green: 0.59, blue: 0.41, alpha: 0.15)
+            let paidRect = CGRect(x: 300, y: 40, width: 144, height: 36)
+            let paidPath = CGPath(roundedRect: paidRect, cornerWidth: 6, cornerHeight: 6, transform: nil)
+            ctx.addPath(paidPath)
+            ctx.fillPath()
+
+            ctx.setStrokeColor(red: 0.02, green: 0.59, blue: 0.41, alpha: 0.8)
+            ctx.setLineWidth(2)
+            ctx.addPath(paidPath)
+            ctx.strokePath()
+
+            ctx.setFillColor(red: 0.02, green: 0.59, blue: 0.41, alpha: 1.0)
+            ctx.fill(CGRect(x: 316, y: 52, width: 112, height: 12))
+        }
+    }
+
+    public static func generateDatabaseCrashPNG() -> Data {
+        renderSyntheticPNG(width: 500, height: 320) { ctx in
+            // Terminal background (#1E1E2E)
+            ctx.setFillColor(red: 0.12, green: 0.12, blue: 0.18, alpha: 1.0)
+            ctx.fill(CGRect(x: 0, y: 0, width: 500, height: 320))
+
+            // Window titlebar (#181825)
+            ctx.setFillColor(red: 0.09, green: 0.09, blue: 0.15, alpha: 1.0)
+            ctx.fill(CGRect(x: 0, y: 288, width: 500, height: 32))
+
+            // macOS window control buttons
+            ctx.setFillColor(red: 0.93, green: 0.27, blue: 0.27, alpha: 1.0)
+            ctx.fillEllipse(in: CGRect(x: 16, y: 298, width: 12, height: 12))
+            ctx.setFillColor(red: 0.95, green: 0.69, blue: 0.22, alpha: 1.0)
+            ctx.fillEllipse(in: CGRect(x: 36, y: 298, width: 12, height: 12))
+            ctx.setFillColor(red: 0.30, green: 0.76, blue: 0.47, alpha: 1.0)
+            ctx.fillEllipse(in: CGRect(x: 56, y: 298, width: 12, height: 12))
+
+            // Title bar simulated text
+            ctx.setFillColor(red: 0.5, green: 0.52, blue: 0.62, alpha: 1.0)
+            ctx.fill(CGRect(x: 160, y: 300, width: 180, height: 8))
+
+            // Error alert box (Dark crimson #450A0A)
+            ctx.setFillColor(red: 0.27, green: 0.04, blue: 0.04, alpha: 1.0)
+            let errRect = CGRect(x: 20, y: 226, width: 460, height: 48)
+            let errPath = CGPath(roundedRect: errRect, cornerWidth: 6, cornerHeight: 6, transform: nil)
+            ctx.addPath(errPath)
+            ctx.fillPath()
+
+            // Crimson border
+            ctx.setStrokeColor(red: 0.86, green: 0.15, blue: 0.15, alpha: 0.8)
+            ctx.setLineWidth(1.5)
+            ctx.addPath(errPath)
+            ctx.strokePath()
+
+            // Error pill + "FATAL: Connection pool exhausted (timeout 30000ms)"
+            ctx.setFillColor(red: 0.86, green: 0.15, blue: 0.15, alpha: 1.0)
+            ctx.fill(CGRect(x: 32, y: 250, width: 54, height: 14))
+            ctx.fill(CGRect(x: 94, y: 252, width: 280, height: 10))
+            ctx.setFillColor(red: 0.95, green: 0.6, blue: 0.6, alpha: 0.9)
+            ctx.fill(CGRect(x: 32, y: 234, width: 340, height: 8))
+
+            // Stack trace lines
+            let traceLines: [(color: (r: CGFloat, g: CGFloat, b: CGFloat), x: CGFloat, w: CGFloat, y: CGFloat)] = [
+                ((0.95, 0.65, 0.2), 24, 420, 196),
+                ((0.90, 0.25, 0.25), 24, 380, 174),
+                ((0.55, 0.70, 0.95), 44, 310, 148),
+                ((0.55, 0.70, 0.95), 44, 290, 126),
+                ((0.70, 0.72, 0.80), 44, 340, 104),
+                ((0.70, 0.72, 0.80), 44, 260, 82),
+                ((0.86, 0.15, 0.15), 24, 210, 50)
+            ]
+            for line in traceLines {
+                ctx.setFillColor(red: line.color.r, green: line.color.g, blue: line.color.b, alpha: 0.95)
+                ctx.fill(CGRect(x: line.x, y: line.y, width: line.w, height: 7))
+            }
+        }
+    }
+
+    public static func generatePhishingWirePNG() -> Data {
+        renderSyntheticPNG(width: 480, height: 320) { ctx in
+            // Background (#F1F5F9)
+            ctx.setFillColor(red: 0.95, green: 0.96, blue: 0.98, alpha: 1.0)
+            ctx.fill(CGRect(x: 0, y: 0, width: 480, height: 320))
+
+            // Urgent header banner (Red #DC2626)
+            ctx.setFillColor(red: 0.86, green: 0.15, blue: 0.15, alpha: 1.0)
+            ctx.fill(CGRect(x: 0, y: 272, width: 480, height: 48))
+
+            // Warning icon & banner text bars
+            ctx.setFillColor(red: 1.0, green: 0.9, blue: 0.2, alpha: 1.0)
+            ctx.fill(CGRect(x: 20, y: 288, width: 16, height: 16))
+            ctx.setFillColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 1.0)
+            ctx.fill(CGRect(x: 46, y: 290, width: 280, height: 12))
+
+            // Central fake auth modal card
+            ctx.setFillColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 1.0)
+            let modalRect = CGRect(x: 30, y: 24, width: 420, height: 232)
+            let modalPath = CGPath(roundedRect: modalRect, cornerWidth: 8, cornerHeight: 8, transform: nil)
+            ctx.addPath(modalPath)
+            ctx.fillPath()
+
+            // Card border
+            ctx.setStrokeColor(red: 0.88, green: 0.90, blue: 0.94, alpha: 1.0)
+            ctx.setLineWidth(1)
+            ctx.addPath(modalPath)
+            ctx.strokePath()
+
+            // Subtitle
+            ctx.setFillColor(red: 0.35, green: 0.38, blue: 0.44, alpha: 1.0)
+            ctx.fill(CGRect(x: 48, y: 224, width: 290, height: 9))
+
+            // Field 1: SWIFT / Routing Code Box
+            ctx.setFillColor(red: 0.45, green: 0.48, blue: 0.54, alpha: 1.0)
+            ctx.fill(CGRect(x: 48, y: 198, width: 140, height: 8))
+            ctx.setFillColor(red: 0.97, green: 0.98, blue: 0.99, alpha: 1.0)
+            let f1 = CGRect(x: 48, y: 164, width: 384, height: 28)
+            ctx.fill(f1)
+            ctx.setStrokeColor(red: 0.80, green: 0.84, blue: 0.90, alpha: 1.0)
+            ctx.stroke(f1)
+            ctx.setFillColor(red: 0.2, green: 0.2, blue: 0.2, alpha: 1.0)
+            ctx.fill(CGRect(x: 58, y: 174, width: 120, height: 8))
+
+            // Field 2: Token / Signature Box
+            ctx.setFillColor(red: 0.45, green: 0.48, blue: 0.54, alpha: 1.0)
+            ctx.fill(CGRect(x: 48, y: 142, width: 160, height: 8))
+            let f2 = CGRect(x: 48, y: 108, width: 384, height: 28)
+            ctx.setFillColor(red: 0.97, green: 0.98, blue: 0.99, alpha: 1.0)
+            ctx.fill(f2)
+            ctx.stroke(f2)
+            ctx.setFillColor(red: 0.2, green: 0.2, blue: 0.2, alpha: 1.0)
+            for d in 0..<8 {
+                ctx.fillEllipse(in: CGRect(x: 58 + (d * 14), y: 119, width: 6, height: 6))
+            }
+
+            // Big Urgent Authorization Button (Crimson #DC2626)
+            ctx.setFillColor(red: 0.86, green: 0.15, blue: 0.15, alpha: 1.0)
+            let btnRect = CGRect(x: 48, y: 44, width: 384, height: 36)
+            let btnPath = CGPath(roundedRect: btnRect, cornerWidth: 6, cornerHeight: 6, transform: nil)
+            ctx.addPath(btnPath)
+            ctx.fillPath()
+
+            ctx.setFillColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 1.0)
+            ctx.fill(CGRect(x: 120, y: 56, width: 240, height: 12))
+        }
+    }
+
+    #if canImport(CoreGraphics) && canImport(ImageIO) && canImport(UniformTypeIdentifiers)
+    private static func renderSyntheticPNG(width: Int, height: Int, draw: (CGContext) -> Void) -> Data {
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue)
+        guard let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: colorSpace,
+            bitmapInfo: bitmapInfo.rawValue
+        ) else {
+            return fallbackPNGData()
+        }
+
+        draw(context)
+
+        guard let image = context.makeImage() else {
+            return fallbackPNGData()
+        }
+
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            data,
+            UTType.png.identifier as CFString,
+            1,
+            nil
+        ) else {
+            return fallbackPNGData()
+        }
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else {
+            return fallbackPNGData()
+        }
+        return data as Data
+    }
+    #else
+    private static func renderSyntheticPNG(width: Int, height: Int, draw: (Any) -> Void) -> Data {
+        fallbackPNGData()
+    }
+    #endif
+
+    private static func fallbackPNGData() -> Data {
+        Data([
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+            0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+            0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+            0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+            0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41,
+            0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
+            0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00,
+            0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
+            0x42, 0x60, 0x82
+        ])
     }
 }

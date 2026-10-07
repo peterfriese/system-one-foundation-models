@@ -4,7 +4,7 @@ import Foundation
 
 // MARK: - Mock URLProtocol for Proxy Testing
 
-final class MockProxyURLProtocol: URLProtocol, @unchecked Sendable {
+final class MockProxyURLProtocol: URLProtocol {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var _responseQueue: [Result<(statusCode: Int, headers: [String: String], body: Data), any Error>] = []
     nonisolated(unsafe) private static var _recordedRequests: [URLRequest] = []

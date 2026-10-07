@@ -137,6 +137,21 @@ struct AppUITests {
         #expect(type(of: view) == SettingsView.self)
     }
 
+    @Test("SettingsView adopts KeychainStorage and loads configured credentials")
+    func testSettingsViewKeychainStorage() {
+        let mockKeychain = MockKeychainService()
+        try? mockKeychain.set("ts_key_test_123", for: .typesafeApiKey)
+        try? mockKeychain.set("vpc_token_test_456", for: .hostedVpcToken)
+        try? mockKeychain.set("cf_acc_test_789", for: .cloudflareAccountId)
+        try? mockKeychain.set("cf_tok_test_012", for: .cloudflareApiToken)
+
+        Container.shared.keychainService.register { mockKeychain }
+        defer { Container.shared.keychainService.reset() }
+
+        let view = SettingsView()
+        #expect(type(of: view) == SettingsView.self)
+    }
+
     @Test("UrgencyPriority SwiftUI colors and labels map canonically (PRD-2)")
     func testUrgencyPrioritySwiftUIMapping() {
         #expect(UrgencyPriority.p0Critical.displayName == "P0 Critical")
@@ -171,5 +186,92 @@ struct AppUITests {
         #expect(sheet.subjectText == "Re: Meeting notes")
         #expect(sheet.bodyText == "\n> Previous body")
         #expect(sheet.store === store)
+    }
+
+    @Test("MailRowView renders email with attachment correctly")
+    func testMailRowViewWithAttachment() {
+        guard let emailWithAttachment = InboxData.sampleEmails.first(where: { $0.hasAttachments }) else {
+            Issue.record("Expected sample email with attachments")
+            return
+        }
+        let rowView = MailRowView(email: emailWithAttachment)
+        #expect(rowView.email.hasAttachments)
+        #expect(!rowView.email.attachments.isEmpty)
+    }
+
+    @Test("MailDetailView renders attachments section for email with attachments")
+    func testMailDetailViewWithAttachment() {
+        guard let emailWithAttachment = InboxData.sampleEmails.first(where: { $0.hasAttachments }) else {
+            Issue.record("Expected sample email with attachments")
+            return
+        }
+        let store = MailStore(emails: [emailWithAttachment])
+        let detailView = MailDetailView(store: store)
+        #expect(detailView.store.selectedEmail?.hasAttachments == true)
+        #expect(detailView.store.selectedEmail?.attachments.count == emailWithAttachment.attachments.count)
+    }
+
+    @Test("AttachmentPreviewSheet initializes properly with attachment")
+    func testAttachmentPreviewSheet() {
+        let attachment = EmailAttachment(
+            filename: "invoice_test.png",
+            mimeType: "image/png",
+            data: InboxData.generateInvoicePNG()
+        )
+        let sheet = AttachmentPreviewSheet(attachment: attachment)
+        #expect(sheet.attachment.filename == "invoice_test.png")
+        #expect(sheet.attachment.isImage == true)
+    }
+
+    @Test("BenchmarkComparisonSheet initializes and renders properly with empty session")
+    func testBenchmarkComparisonSheetEmpty() {
+        let sessionStore = BenchmarkSessionStore()
+        Container.shared.benchmarkSessionStore.register { sessionStore }
+        defer { Container.shared.benchmarkSessionStore.reset() }
+
+        let sheet = BenchmarkComparisonSheet()
+        #expect(type(of: sheet) == BenchmarkComparisonSheet.self)
+    }
+
+    @Test("BenchmarkComparisonSheet initializes with populated session store")
+    func testBenchmarkComparisonSheetPopulated() {
+        let sessionStore = BenchmarkSessionStore()
+        let email = InboxData.sampleEmails[0]
+        let result1 = TriageResult(
+            decision: EmailTriageDecision(
+                requiresAction: true,
+                category: .work,
+                urgencyScore: 1,
+                suggestedAction: .scheduleTask
+            ),
+            confidenceScore: 0.95,
+            decisiveness: 0.95,
+            routingTier: .auto,
+            latencyMs: 5.0,
+            backendUsed: .onDeviceCoreML
+        )
+        let result2 = TriageResult(
+            decision: EmailTriageDecision(
+                requiresAction: true,
+                category: .securityAlerts,
+                urgencyScore: 0,
+                suggestedAction: .immediateAlert
+            ),
+            confidenceScore: 0.91,
+            decisiveness: 0.91,
+            routingTier: .auto,
+            latencyMs: 45.0,
+            backendUsed: .cloudflareClef
+        )
+        sessionStore.record(email: email, result: result1)
+        sessionStore.record(email: email, result: result2)
+
+        Container.shared.benchmarkSessionStore.register { sessionStore }
+        defer { Container.shared.benchmarkSessionStore.reset() }
+
+        let sheet = BenchmarkComparisonSheet()
+        #expect(type(of: sheet) == BenchmarkComparisonSheet.self)
+        #expect(sessionStore.totalEvaluations == 2)
+        #expect(sessionStore.activeBackendCount == 2)
     }
 }

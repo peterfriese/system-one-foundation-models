@@ -1,8 +1,10 @@
 import Foundation
 import FoundationModels
+import UniformTypeIdentifiers
 import SystemOneCore
 import LayaFoundationModels
 import JevFoundationModels
+import ClefFoundationModels
 import LayaOnDevice
 import FactoryKit
 
@@ -166,6 +168,10 @@ public final class TriageEngine: TriageEngineProtocol, @unchecked Sendable {
 
         try Task.checkCancellation()
 
+        return try await evaluate(email: email, backend: backend)
+    }
+
+    private func evaluate(email: Email, backend: TriageBackend) async throws -> TriageResult {
         // 2. Format input prompt
         let prompt = """
         From: \(email.sender) <\(email.senderEmail)>
@@ -181,6 +187,8 @@ public final class TriageEngine: TriageEngineProtocol, @unchecked Sendable {
         let startTime = clock.now
 
         // 3. Evaluate real Foundation Models session
+        let result: TriageResult
+        let latencyMs: Double
         switch backend {
         case .localServe:
             let endpointURL = BackendConfigurationStore.normalizeSystemOneEndpoint(
@@ -190,23 +198,23 @@ public final class TriageEngine: TriageEngineProtocol, @unchecked Sendable {
             let model = LayaLanguageModel(endpoint: .custom(endpointURL))
             let session = LanguageModelSession(model: model)
             let response = try await session.respond(to: prompt, generating: EmailTriageDecision.self)
-            let latencyMs = startTime.duration(to: clock.now).asMilliseconds
-            return makeTriageResult(response: response, backend: backend, latencyMs: latencyMs)
+            latencyMs = startTime.duration(to: clock.now).asMilliseconds
+            result = makeTriageResult(response: response, backend: backend, latencyMs: latencyMs)
 
         case .hostedVPC:
             let endpointURL = BackendConfigurationStore.normalizeSystemOneEndpoint(
                 configStore.hostedVpcURL,
                 defaultURL: BackendConfigurationStore.defaultHostedVpcURL
             )
-            let token = keychainService.hostedVpcToken
+            let token = keychainService.string(for: .hostedVpcToken)
             let model = LayaLanguageModel(endpoint: .custom(endpointURL), apiKey: token)
             let session = LanguageModelSession(model: model)
             let response = try await session.respond(to: prompt, generating: EmailTriageDecision.self)
-            let latencyMs = startTime.duration(to: clock.now).asMilliseconds
-            return makeTriageResult(response: response, backend: backend, latencyMs: latencyMs)
+            latencyMs = startTime.duration(to: clock.now).asMilliseconds
+            result = makeTriageResult(response: response, backend: backend, latencyMs: latencyMs)
 
         case .cloudAPI:
-            guard let apiKey = keychainService.typesafeApiKey, !apiKey.isEmpty else {
+            guard let apiKey = keychainService.string(for: .typesafeApiKey), !apiKey.isEmpty else {
                 throw BackendUnreachableError(
                     backend: backend,
                     reason: "Missing TypeSafe API Key",
@@ -218,8 +226,43 @@ public final class TriageEngine: TriageEngineProtocol, @unchecked Sendable {
             let model = JevLanguageModel(apiKey: apiKey, endpoint: endpointURL)
             let session = LanguageModelSession(model: model)
             let response = try await session.respond(to: prompt, generating: EmailTriageDecision.self)
-            let latencyMs = startTime.duration(to: clock.now).asMilliseconds
-            return makeTriageResult(response: response, backend: backend, latencyMs: latencyMs)
+            latencyMs = startTime.duration(to: clock.now).asMilliseconds
+            result = makeTriageResult(response: response, backend: backend, latencyMs: latencyMs)
+
+        case .cloudflareClef:
+            guard let accountID = keychainService.string(for: .cloudflareAccountId)?.trimmingCharacters(in: .whitespacesAndNewlines), !accountID.isEmpty else {
+                throw BackendUnreachableError(
+                    backend: backend,
+                    reason: "Missing Cloudflare Account ID",
+                    guidance: "Open Settings (⌘,) and paste your Cloudflare Account ID."
+                )
+            }
+            guard let token = keychainService.string(for: .cloudflareApiToken)?.trimmingCharacters(in: .whitespacesAndNewlines), !token.isEmpty else {
+                throw BackendUnreachableError(
+                    backend: backend,
+                    reason: "Missing Cloudflare API Token",
+                    guidance: "Open Settings (⌘,) and paste your Cloudflare API Token."
+                )
+            }
+            let model = ClefLanguageModel(
+                endpoint: .workersAI(accountID: accountID, model: .clefFlash),
+                apiToken: token
+            )
+            let session = LanguageModelSession(model: model)
+            let clefPrompt = Prompt {
+                "Analyze the following email and any attached documents or screenshots for triage classification, urgency scoring, and suggested response actions."
+                "Sender: \(email.sender) <\(email.senderEmail)>"
+                "Subject: \(email.subject)"
+                "Body:\n\(email.body)"
+                for attachment in email.imageAttachments {
+                    if let imageAttachment = Attachment(attachment.data, type: .png) {
+                        imageAttachment
+                    }
+                }
+            }
+            let response = try await session.respond(to: clefPrompt, generating: EmailTriageDecision.self)
+            latencyMs = startTime.duration(to: clock.now).asMilliseconds
+            result = makeTriageResult(response: response, backend: backend, latencyMs: latencyMs)
 
         case .onDeviceCoreML:
             guard let modelURL = activeCoreMLManager.resolvedModelURL else {
@@ -233,8 +276,8 @@ public final class TriageEngine: TriageEngineProtocol, @unchecked Sendable {
             let model = LayaOnDeviceLanguageModel(engine: engine)
             let session = LanguageModelSession(model: model)
             let response = try await session.respond(to: prompt, generating: EmailTriageDecision.self)
-            let latencyMs = startTime.duration(to: clock.now).asMilliseconds
-            return makeTriageResult(response: response, backend: backend, latencyMs: latencyMs)
+            latencyMs = startTime.duration(to: clock.now).asMilliseconds
+            result = makeTriageResult(response: response, backend: backend, latencyMs: latencyMs)
 
         case .generativeBaseline:
             switch SystemLanguageModel.default.availability {
@@ -277,8 +320,8 @@ public final class TriageEngine: TriageEngineProtocol, @unchecked Sendable {
             let session = LanguageModelSession()
             do {
                 let response = try await session.respond(to: prompt, generating: EmailTriageDecision.self)
-                let latencyMs = startTime.duration(to: clock.now).asMilliseconds
-                return TriageResult(
+                latencyMs = startTime.duration(to: clock.now).asMilliseconds
+                result = TriageResult(
                     decision: response.content,
                     confidenceScore: nil,
                     decisiveness: nil,
@@ -294,6 +337,9 @@ public final class TriageEngine: TriageEngineProtocol, @unchecked Sendable {
                 )
             }
         }
+
+        print("⏱️ [TriageEngine] Evaluated email \(email.id.uuidString.prefix(8)) via \(backend.displayName): \(String(format: "%.1f", latencyMs)) ms | Category: \(result.decision.category.rawValue) | Urgency: \(result.decision.urgencyScore) | Routing: \(result.routingTier.rawValue)")
+        return result
     }
 
     // MARK: - Batch Triage (Bounded Concurrency)
@@ -319,6 +365,9 @@ public final class TriageEngine: TriageEngineProtocol, @unchecked Sendable {
 
         try Task.checkCancellation()
 
+        // Report initial progress immediately before health probe and task spawning
+        progress?(0, totalCount)
+
         // Fast pre-flight check before spawning batch workers
         let health = await healthProbe.probe(backend: backend)
         switch health {
@@ -336,16 +385,29 @@ public final class TriageEngine: TriageEngineProtocol, @unchecked Sendable {
 
         try Task.checkCancellation()
 
+        // Adaptive parallelism: use maxParallelism = 4 for remote cloud backends
+        // (.cloudflareClef, .cloudAPI) to prevent rate-limit saturation, while keeping
+        // maxParallelism = 8 for local/on-device backends.
+        let effectiveParallelism: Int = {
+            switch backend {
+            case .cloudflareClef, .cloudAPI:
+                return min(self.maxParallelism, 4)
+            case .onDeviceCoreML, .localServe, .hostedVPC, .generativeBaseline:
+                return self.maxParallelism
+            }
+        }()
+
         var totalProcessed = 0
         var actionBreakdown: [TriageAction: Int] = [:]
         var routingBreakdown: [RoutingPolicy: Int] = [:]
         var latencies: [Double] = []
+        var reports: [TriageResult] = []
 
         try await withThrowingTaskGroup(of: (Email, TriageResult).self) { group in
             var submittedIndex = 0
 
-            // Fill initial pool up to maxParallelism
-            while submittedIndex < min(self.maxParallelism, totalCount) {
+            // Fill initial pool up to effectiveParallelism
+            while submittedIndex < min(effectiveParallelism, totalCount) {
                 if Task.isCancelled {
                     group.cancelAll()
                     throw CancellationError()
@@ -368,6 +430,7 @@ public final class TriageEngine: TriageEngineProtocol, @unchecked Sendable {
 
                     totalProcessed += 1
                     latencies.append(result.latencyMs)
+                    reports.append(result)
                     actionBreakdown[result.decision.suggestedAction, default: 0] += 1
                     routingBreakdown[result.routingTier, default: 0] += 1
 
@@ -395,13 +458,24 @@ public final class TriageEngine: TriageEngineProtocol, @unchecked Sendable {
         }
 
         let elapsedDuration = startTime.duration(to: .now)
-        let elapsedSeconds = Double(elapsedDuration.components.seconds) + Double(elapsedDuration.components.attoseconds) * 1e-18
-        let averageLatencyMs = latencies.isEmpty ? 0.0 : (latencies.reduce(0.0, +) / Double(latencies.count))
+        let totalDurationMs = elapsedDuration.asMilliseconds
+        let elapsedSeconds = elapsedDuration.asSeconds
+        let totalDurationSeconds = max(elapsedSeconds, 0.001)
+        let throughput = Double(reports.count) / totalDurationSeconds
+        let meanLatency = latencies.isEmpty ? 0.0 : (latencies.reduce(0.0, +) / Double(latencies.count))
+
+        let sorted = latencies.sorted()
+        let p50Index = sorted.isEmpty ? 0 : Int((Double(sorted.count - 1) * 0.50).rounded())
+        let p95Index = sorted.isEmpty ? 0 : Int((Double(sorted.count - 1) * 0.95).rounded())
+        let p50Latency = sorted.isEmpty ? 0.0 : sorted[p50Index]
+        let p95Latency = sorted.isEmpty ? 0.0 : sorted[p95Index]
+
+        print("⏱️ [TriageEngine] Batch Complete: \(reports.count) emails in \(String(format: "%.1f", totalDurationMs)) ms | Mean: \(String(format: "%.1f", meanLatency)) ms/email | P50: \(String(format: "%.1f", p50Latency)) ms | P95: \(String(format: "%.1f", p95Latency)) ms | Throughput: \(String(format: "%.1f", throughput)) emails/sec")
 
         return BatchTriageReport(
             totalProcessed: totalProcessed,
-            totalDurationSeconds: max(elapsedSeconds, 0.001),
-            averageLatencyMs: averageLatencyMs,
+            totalDurationSeconds: totalDurationSeconds,
+            averageLatencyMs: meanLatency,
             actionBreakdown: actionBreakdown,
             routingBreakdown: routingBreakdown,
             backend: backend
@@ -492,6 +566,7 @@ public final class MockTriageEngine: TriageEngineProtocol, @unchecked Sendable {
         }
 
         var processed = 0
+        progress?(0, emails.count)
         for email in emails {
             try Task.checkCancellation()
             let res = try await triage(email: email, backend: backend)

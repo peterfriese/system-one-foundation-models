@@ -7,11 +7,41 @@ public struct SystemOneRequest: Codable, Sendable, Equatable {
     public let state: String
     public let model: String
     public let questions: [String: SystemOneQuestion]
+    /// Optional collection of image attachments for multimodal models (e.g. Cloudflare Clef).
+    public let images: [SystemOneImage]?
 
-    public init(state: String, model: String = "systemone-default", questions: [String: SystemOneQuestion]) {
+    public init(
+        state: String,
+        model: String = "systemone-default",
+        questions: [String: SystemOneQuestion],
+        images: [SystemOneImage]? = nil
+    ) {
         self.state = state
         self.model = model
         self.questions = questions
+        self.images = images
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case state, model, questions, images
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(state, forKey: .state)
+        try container.encode(model, forKey: .model)
+        try container.encode(questions, forKey: .questions)
+        if let images, !images.isEmpty {
+            try container.encode(images, forKey: .images)
+        }
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.state = try container.decode(String.self, forKey: .state)
+        self.model = try container.decodeIfPresent(String.self, forKey: .model) ?? "systemone-default"
+        self.questions = try container.decode([String: SystemOneQuestion].self, forKey: .questions)
+        self.images = try container.decodeIfPresent([SystemOneImage].self, forKey: .images)
     }
 }
 

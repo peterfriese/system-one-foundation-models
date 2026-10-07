@@ -6,10 +6,14 @@ import FactoryKit
 @Observable
 public final class BackendConfigurationStore: @unchecked Sendable {
     private let userDefaults: UserDefaults
-    private let lock = NSLock()
+    private let customKeychain: (any KeychainServiceProtocol)?
 
     @ObservationIgnored
-    @Injected(\.keychainService) private var keychain
+    @Injected(\.keychainService) private var defaultKeychain
+
+    private var keychain: any KeychainServiceProtocol {
+        customKeychain ?? defaultKeychain
+    }
 
     public static let defaultJevCloudURL = "https://api.typesafe.ai/v1/systemone"
     public static let defaultLocalServeURL = "http://127.0.0.1:8000/v1/systemone"
@@ -82,22 +86,28 @@ public final class BackendConfigurationStore: @unchecked Sendable {
 
     public var typesafeApiKey: String {
         get {
+            access(keyPath: \.typesafeApiKey)
             if keychain is MockKeychainService {
-                return keychain.typesafeApiKey ?? ""
+                return keychain.string(for: .typesafeApiKey) ?? ""
             }
             if let envKey = ProcessInfo.processInfo.environment["TYPESAFE_API_KEY"], !envKey.isEmpty {
-                keychain.typesafeApiKey = envKey
+                try? keychain.set(envKey, for: .typesafeApiKey)
                 return envKey
             }
-            let key = keychain.typesafeApiKey ?? ""
+            let key = keychain.string(for: .typesafeApiKey) ?? ""
             if !key.isEmpty { return key }
             if let dotEnvKey = Self.loadKeyFromDotEnv("TYPESAFE_API_KEY"), !dotEnvKey.isEmpty {
-                keychain.typesafeApiKey = dotEnvKey
+                try? keychain.set(dotEnvKey, for: .typesafeApiKey)
                 return dotEnvKey
             }
             return ""
         }
-        set { keychain.typesafeApiKey = newValue.trimmingCharacters(in: .whitespacesAndNewlines) }
+        set {
+            withMutation(keyPath: \.typesafeApiKey) {
+                let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                try? keychain.set(trimmed.isEmpty ? nil : trimmed, for: .typesafeApiKey)
+            }
+        }
     }
 
     /// In DEBUG builds, attempts to load a key from a `.env` file located in the bundle or current working directory (SEC-2).
@@ -166,17 +176,86 @@ public final class BackendConfigurationStore: @unchecked Sendable {
     }
 
     public var hostedVpcToken: String {
-        get { keychain.hostedVpcToken ?? "" }
-        set { keychain.hostedVpcToken = newValue.trimmingCharacters(in: .whitespacesAndNewlines) }
+        get {
+            access(keyPath: \.hostedVpcToken)
+            return keychain.string(for: .hostedVpcToken) ?? ""
+        }
+        set {
+            withMutation(keyPath: \.hostedVpcToken) {
+                let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                try? keychain.set(trimmed.isEmpty ? nil : trimmed, for: .hostedVpcToken)
+            }
+        }
     }
 
     public var huggingFaceToken: String {
-        get { keychain.huggingFaceToken ?? "" }
-        set { keychain.huggingFaceToken = newValue.trimmingCharacters(in: .whitespacesAndNewlines) }
+        get {
+            access(keyPath: \.huggingFaceToken)
+            return keychain.string(for: .huggingFaceToken) ?? ""
+        }
+        set {
+            withMutation(keyPath: \.huggingFaceToken) {
+                let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                try? keychain.set(trimmed.isEmpty ? nil : trimmed, for: .huggingFaceToken)
+            }
+        }
     }
 
-    public init(userDefaults: UserDefaults = .standard) {
+    public var cloudflareAccountId: String {
+        get {
+            access(keyPath: \.cloudflareAccountId)
+            if keychain is MockKeychainService {
+                return keychain.string(for: .cloudflareAccountId) ?? ""
+            }
+            if let envKey = ProcessInfo.processInfo.environment["CLOUDFLARE_ACCOUNT_ID"], !envKey.isEmpty {
+                try? keychain.set(envKey, for: .cloudflareAccountId)
+                return envKey
+            }
+            let key = keychain.string(for: .cloudflareAccountId) ?? ""
+            if !key.isEmpty { return key }
+            if let dotEnvKey = Self.loadKeyFromDotEnv("CLOUDFLARE_ACCOUNT_ID"), !dotEnvKey.isEmpty {
+                try? keychain.set(dotEnvKey, for: .cloudflareAccountId)
+                return dotEnvKey
+            }
+            return ""
+        }
+        set {
+            withMutation(keyPath: \.cloudflareAccountId) {
+                let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                try? keychain.set(trimmed.isEmpty ? nil : trimmed, for: .cloudflareAccountId)
+            }
+        }
+    }
+
+    public var cloudflareApiToken: String {
+        get {
+            access(keyPath: \.cloudflareApiToken)
+            if keychain is MockKeychainService {
+                return keychain.string(for: .cloudflareApiToken) ?? ""
+            }
+            if let envKey = ProcessInfo.processInfo.environment["CLOUDFLARE_API_TOKEN"], !envKey.isEmpty {
+                try? keychain.set(envKey, for: .cloudflareApiToken)
+                return envKey
+            }
+            let key = keychain.string(for: .cloudflareApiToken) ?? ""
+            if !key.isEmpty { return key }
+            if let dotEnvKey = Self.loadKeyFromDotEnv("CLOUDFLARE_API_TOKEN"), !dotEnvKey.isEmpty {
+                try? keychain.set(dotEnvKey, for: .cloudflareApiToken)
+                return dotEnvKey
+            }
+            return ""
+        }
+        set {
+            withMutation(keyPath: \.cloudflareApiToken) {
+                let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                try? keychain.set(trimmed.isEmpty ? nil : trimmed, for: .cloudflareApiToken)
+            }
+        }
+    }
+
+    public init(userDefaults: UserDefaults = .standard, keychain: (any KeychainServiceProtocol)? = nil) {
         self.userDefaults = userDefaults
+        self.customKeychain = keychain
         self.jevCloudURL = userDefaults.string(forKey: Keys.jevCloudURL) ?? Self.defaultJevCloudURL
 
         // Migration and normalization for local serve URL
@@ -232,5 +311,7 @@ public final class BackendConfigurationStore: @unchecked Sendable {
         typesafeApiKey = ""
         hostedVpcToken = ""
         huggingFaceToken = ""
+        cloudflareAccountId = ""
+        cloudflareApiToken = ""
     }
 }

@@ -13,6 +13,7 @@ public struct SettingsView: View {
     @Injected(\.backendConfigurationStore) private var configStore
     @Injected(\.coreMLModelManager) private var coreMLManager
     @Injected(\.backendHealthProbeService) private var healthProbe
+    @Injected(\.mailStore) private var mailStore
 
     public enum Tab: String, CaseIterable, Identifiable {
         case backends = "Backends"
@@ -37,15 +38,27 @@ public struct SettingsView: View {
     @State private var probingBackends: Set<TriageBackend> = []
     @State private var showingFileImporter: Bool = false
 
+    @KeychainStorage(.cloudflareAccountId) private var cloudflareAccountId = ""
+    @KeychainStorage(.cloudflareApiToken) private var cloudflareApiToken = ""
+    @KeychainStorage(.typesafeApiKey) private var typesafeApiKey = ""
+    @KeychainStorage(.hostedVpcToken) private var hostedVpcToken = ""
+
     public init() {}
 
     public var body: some View {
-        #if os(macOS)
-        macOSLayout
-            .frame(minWidth: 800, idealWidth: 860, minHeight: 540, idealHeight: 580)
-        #else
-        iOSLayout
-        #endif
+        Group {
+            #if os(macOS)
+            macOSLayout
+                .frame(minWidth: 800, idealWidth: 860, minHeight: 540, idealHeight: 580)
+            #else
+            iOSLayout
+            #endif
+        }
+        .onDisappear {
+            Task { @MainActor in
+                await mailStore.probeActiveBackend()
+            }
+        }
     }
 
     // MARK: - macOS 2-Column Sidebar Layout
@@ -252,7 +265,7 @@ public struct SettingsView: View {
 
             SettingsCard {
                 SettingsRow(title: "API Key", subtitle: "Stored securely in Keychain") {
-                    SecureField("TYPESAFE_API_KEY", text: $boundConfig.typesafeApiKey)
+                    SecureField("TYPESAFE_API_KEY", text: $typesafeApiKey)
                         .textFieldStyle(.roundedBorder)
                         #if os(iOS)
                         .textContentType(.password)
@@ -322,7 +335,7 @@ public struct SettingsView: View {
                 cardDivider
 
                 SettingsRow(title: "Auth Token", subtitle: "Optional VPC bearer token") {
-                    SecureField("Bearer Token", text: $boundConfig.hostedVpcToken)
+                    SecureField("Bearer Token", text: $hostedVpcToken)
                         .textFieldStyle(.roundedBorder)
                         #if os(iOS)
                         .textContentType(.password)
@@ -338,7 +351,41 @@ public struct SettingsView: View {
             }
         }
 
-        // 4. Apple Intelligence Baseline
+        // 4. Cloudflare Clef
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Cloudflare Clef")
+                .font(.headline.weight(.bold))
+                .foregroundStyle(.primary)
+
+            SettingsCard {
+                SettingsRow(title: "Account ID", subtitle: "Cloudflare dashboard account identifier") {
+                    TextField("Account ID", text: $cloudflareAccountId)
+                        .textFieldStyle(.roundedBorder)
+                        #if os(iOS)
+                        .autocapitalization(.none)
+                        #endif
+                }
+
+                cardDivider
+
+                SettingsRow(title: "API Token", subtitle: "Workers AI API token stored securely in Keychain") {
+                    SecureField("Workers AI Token", text: $cloudflareApiToken)
+                        .textFieldStyle(.roundedBorder)
+                        #if os(iOS)
+                        .textContentType(.password)
+                        .autocapitalization(.none)
+                        #endif
+                }
+
+                cardDivider
+
+                SettingsRow(title: "Connection Status") {
+                    probeRow(for: .cloudflareClef)
+                }
+            }
+        }
+
+        // 5. Apple Intelligence Baseline
         VStack(alignment: .leading, spacing: 8) {
             Text("Apple Intelligence (Baseline)")
                 .font(.headline.weight(.bold))
@@ -381,6 +428,10 @@ public struct SettingsView: View {
 
                     Button("Reset to Defaults", role: .destructive) {
                         boundConfig.resetToDefaults()
+                        typesafeApiKey = ""
+                        hostedVpcToken = ""
+                        cloudflareAccountId = ""
+                        cloudflareApiToken = ""
                     }
                     .buttonStyle(.bordered)
                 }
@@ -772,6 +823,19 @@ public struct SettingsView: View {
         let status = await healthProbe.probe(backend: backend)
         probeStatuses[backend] = status
         probingBackends.remove(backend)
+
+        if backend == mailStore.selectedBackend {
+            mailStore.activeBackendStatus = status
+            if case .unreachable(let reason, let guidance) = status {
+                mailStore.activeBackendError = BackendUnreachableError(
+                    backend: backend,
+                    reason: reason,
+                    guidance: guidance
+                )
+            } else {
+                mailStore.activeBackendError = nil
+            }
+        }
     }
 
     private func probeAll() async {
@@ -783,6 +847,19 @@ public struct SettingsView: View {
         for (backend, status) in results {
             probeStatuses[backend] = status
             probingBackends.remove(backend)
+
+            if backend == mailStore.selectedBackend {
+                mailStore.activeBackendStatus = status
+                if case .unreachable(let reason, let guidance) = status {
+                    mailStore.activeBackendError = BackendUnreachableError(
+                        backend: backend,
+                        reason: reason,
+                        guidance: guidance
+                    )
+                } else {
+                    mailStore.activeBackendError = nil
+                }
+            }
         }
     }
 

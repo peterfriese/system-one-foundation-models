@@ -1,5 +1,10 @@
 import SwiftUI
 import AppCore
+#if os(macOS)
+import AppKit
+#elseif os(iOS)
+import UIKit
+#endif
 
 public struct MailDetailView: View {
     @Bindable public var store: MailStore
@@ -7,6 +12,7 @@ public struct MailDetailView: View {
     @State private var composeTo = ""
     @State private var composeSubject = ""
     @State private var composeBody = ""
+    @State private var previewAttachment: EmailAttachment? = nil
 
     public init(store: MailStore) {
         self.store = store
@@ -198,6 +204,9 @@ To: \(email.recipient)
             )
             .id("\(composeTo)-\(composeSubject)-\(showingComposeSheet)")
         }
+        .sheet(item: $previewAttachment) { attachment in
+            AttachmentPreviewSheet(attachment: attachment)
+        }
     }
 
     @ViewBuilder
@@ -268,9 +277,114 @@ To: \(email.recipient)
                     .foregroundStyle(.primary)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
+
+                // Attachments Section
+                if email.hasAttachments {
+                    Divider()
+                    attachmentsSection(for: email)
+                }
             }
             .padding(24)
         }
+    }
+
+    @ViewBuilder
+    private func attachmentsSection(for email: Email) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 6) {
+                Image(systemName: "paperclip")
+                    .foregroundStyle(Color.accentColor)
+                    .font(.subheadline.weight(.semibold))
+                Text("Attachments (\(email.attachments.count))")
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(.primary)
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(alignment: .top, spacing: 14) {
+                    ForEach(email.attachments) { attachment in
+                        attachmentCard(for: attachment)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func attachmentCard(for attachment: EmailAttachment) -> some View {
+        Button {
+            previewAttachment = attachment
+        } label: {
+            VStack(alignment: .leading, spacing: 0) {
+                // Thumbnail preview area
+                ZStack {
+                    Color.primary.opacity(0.04)
+
+                    #if os(macOS)
+                    if let nsImage = NSImage(data: attachment.data) {
+                        Image(nsImage: nsImage)
+                            .resizable()
+                            .scaledToFit()
+                            .padding(6)
+                    } else {
+                        Image(systemName: "doc.fill")
+                            .font(.system(size: 36))
+                            .foregroundStyle(.secondary)
+                    }
+                    #elseif os(iOS)
+                    if let uiImage = UIImage(data: attachment.data) {
+                        Image(uiImage: uiImage)
+                            .resizable()
+                            .scaledToFit()
+                            .padding(6)
+                    } else {
+                        Image(systemName: "doc.fill")
+                            .font(.system(size: 36))
+                            .foregroundStyle(.secondary)
+                    }
+                    #endif
+                }
+                .frame(width: 220, height: 130)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                Divider()
+
+                // Metadata footer
+                HStack(alignment: .center, spacing: 8) {
+                    Image(systemName: attachment.isImage ? "photo.fill" : "doc.fill")
+                        .foregroundStyle(Color.accentColor)
+                        .font(.caption)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(attachment.filename)
+                            .font(.caption.weight(.medium))
+                            .lineLimit(1)
+                            .foregroundStyle(.primary)
+
+                        Text(attachment.formattedFileSize)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+            }
+            .frame(width: 220)
+            .background(Color.primary.opacity(0.02), in: RoundedRectangle(cornerRadius: 10))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(Color.primary.opacity(0.12), lineWidth: 1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
     }
 
     @ViewBuilder
@@ -415,6 +529,80 @@ public struct ComposeMessageSheet: View {
                 }
             }
         }
+    }
+}
+
+public struct AttachmentPreviewSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    public let attachment: EmailAttachment
+
+    public init(attachment: EmailAttachment) {
+        self.attachment = attachment
+    }
+
+    public var body: some View {
+        NavigationStack {
+            VStack(spacing: 16) {
+                #if os(macOS)
+                if let nsImage = NSImage(data: attachment.data) {
+                    Image(nsImage: nsImage)
+                        .resizable()
+                        .scaledToFit()
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .shadow(color: .black.opacity(0.12), radius: 6, x: 0, y: 3)
+                        .padding()
+                } else {
+                    ContentUnavailableView(
+                        attachment.filename,
+                        systemImage: "doc.fill",
+                        description: Text("Binary Attachment (\(attachment.formattedFileSize))")
+                    )
+                }
+                #elseif os(iOS)
+                if let uiImage = UIImage(data: attachment.data) {
+                    Image(uiImage: uiImage)
+                        .resizable()
+                        .scaledToFit()
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .shadow(color: .black.opacity(0.12), radius: 6, x: 0, y: 3)
+                        .padding()
+                } else {
+                    ContentUnavailableView(
+                        attachment.filename,
+                        systemImage: "doc.fill",
+                        description: Text("Binary Attachment (\(attachment.formattedFileSize))")
+                    )
+                }
+                #endif
+
+                HStack {
+                    Image(systemName: attachment.isImage ? "photo.fill" : "doc.fill")
+                        .foregroundStyle(Color.accentColor)
+                    Text(attachment.filename)
+                        .font(.headline)
+                    Spacer()
+                    Text(attachment.formattedFileSize)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal)
+                .padding(.bottom, 12)
+            }
+            .navigationTitle(attachment.filename)
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+        #if os(macOS)
+        .frame(minWidth: 540, minHeight: 420)
+        #endif
     }
 }
 

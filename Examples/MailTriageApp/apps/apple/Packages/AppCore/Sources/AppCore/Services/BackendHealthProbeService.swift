@@ -4,6 +4,7 @@ import FoundationModels
 import FactoryKit
 import SystemOneCore
 import JevFoundationModels
+import ClefFoundationModels
 
 /// Health status of a decision model inference backend.
 public enum BackendHealthStatus: Sendable, Equatable {
@@ -73,15 +74,28 @@ public protocol BackendHealthProbeServiceProtocol: Sendable {
 /// Production implementation of `BackendHealthProbeServiceProtocol`.
 /// Executes real network probes, system capability queries, and on-device filesystem checks.
 public final class BackendHealthProbeService: BackendHealthProbeServiceProtocol, @unchecked Sendable {
-    @ObservationIgnored
-    @Injected(\.backendConfigurationStore) private var configStore
+    private let customConfigStore: BackendConfigurationStore?
+    private let customCoreMLManager: CoreMLModelManager?
 
     @ObservationIgnored
-    @Injected(\.coreMLModelManager) private var coreMLManager
+    @Injected(\.backendConfigurationStore) private var defaultStore
+
+    @ObservationIgnored
+    @Injected(\.coreMLModelManager) private var defaultCoreMLManager
+
+    private var configStore: BackendConfigurationStore {
+        customConfigStore ?? defaultStore
+    }
+
+    private var coreMLManager: CoreMLModelManager {
+        customCoreMLManager ?? defaultCoreMLManager
+    }
 
     private let session: URLSession
 
-    public init(session: URLSession? = nil) {
+    public init(session: URLSession? = nil, configStore: BackendConfigurationStore? = nil, coreMLManager: CoreMLModelManager? = nil) {
+        self.customConfigStore = configStore
+        self.customCoreMLManager = coreMLManager
         if let session {
             self.session = session
         } else {
@@ -103,6 +117,8 @@ public final class BackendHealthProbeService: BackendHealthProbeServiceProtocol,
             return await probeHostedVPC()
         case .onDeviceCoreML:
             return await probeCoreML()
+        case .cloudflareClef:
+            return await probeCloudflareClef()
         case .generativeBaseline:
             return await probeBaseline()
         }
@@ -298,9 +314,96 @@ public final class BackendHealthProbeService: BackendHealthProbeServiceProtocol,
         }
     }
 
+    private func probeCloudflareClef() async -> BackendHealthStatus {
+        let accountId = configStore.cloudflareAccountId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !accountId.isEmpty else {
+            return .unreachable(
+                reason: "Missing Cloudflare Account ID",
+                guidance: "Open Settings (⌘,) and paste your Cloudflare Account ID."
+            )
+        }
+
+        let token = configStore.cloudflareApiToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty else {
+            return .unreachable(
+                reason: "Missing Cloudflare API Token",
+                guidance: "Open Settings (⌘,) and paste your Cloudflare API Token."
+            )
+        }
+
+        let endpoint = ClefEndpoint.workersAI(accountID: accountId, model: .clefFlash)
+        let clock = ContinuousClock()
+        let start = clock.now
+
+        var request = URLRequest(url: endpoint.url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 3.0
+
+        do {
+            let probeRequest = SystemOneRequest(
+                state: "health_check",
+                model: "clef-flash",
+                questions: [
+                    "ping": .noul(instructions: "Is this endpoint responsive?")
+                ]
+            )
+            request.httpBody = try JSONEncoder().encode(probeRequest)
+
+            let (data, response) = try await session.data(for: request)
+            let elapsed = start.duration(to: clock.now).asMilliseconds
+            guard let http = response as? HTTPURLResponse else {
+                return .unreachable(
+                    reason: "Unexpected response from Cloudflare Clef",
+                    guidance: "Check your internet connection or service status."
+                )
+            }
+
+            if (200...299).contains(http.statusCode) {
+                if let envelope = try? JSONDecoder().decode(CloudflareProbeEnvelope.self, from: data) {
+                    if envelope.success == false {
+                        let errorMessage = envelope.errors?.first?.message ?? parseServerErrorMessage(from: data) ?? "Cloudflare API request failed"
+                        return .unreachable(
+                            reason: "\(errorMessage) (HTTP \(http.statusCode))",
+                            guidance: "Verify your Cloudflare Workers AI configuration."
+                        )
+                    }
+                }
+                return .healthy(latencyMs: elapsed)
+            }
+
+            let serverMessage = parseServerErrorMessage(from: data)
+            if let serverMessage, !serverMessage.isEmpty {
+                let guidance: String
+                if http.statusCode == 401 || http.statusCode == 403 {
+                    guidance = "Check your Cloudflare API Token and Account ID in Settings."
+                } else {
+                    guidance = "Verify your Cloudflare Workers AI configuration."
+                }
+                return .unreachable(
+                    reason: "\(serverMessage) (HTTP \(http.statusCode))",
+                    guidance: guidance
+                )
+            }
+
+            return evaluateHTTPStatus(http.statusCode, latencyMs: elapsed)
+        } catch {
+            return .unreachable(
+                reason: "Cannot connect to Cloudflare Workers AI",
+                guidance: "Check your internet connection and Cloudflare credentials."
+            )
+        }
+    }
+
     private func parseServerErrorMessage(from data: Data) -> String? {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return nil
+        }
+        if let errors = json["errors"] as? [[String: Any]],
+           let first = errors.first,
+           let message = first["message"] as? String, !message.isEmpty {
+            return message
         }
         if let detail = json["detail"] as? [String: Any],
            let message = detail["message"] as? String, !message.isEmpty {
@@ -442,4 +545,16 @@ public final class MockBackendHealthProbeService: BackendHealthProbeServiceProto
         }
         return results
     }
+}
+
+// MARK: - Cloudflare Probe Envelope
+
+private struct CloudflareProbeEnvelope: Decodable, Sendable {
+    let success: Bool?
+    let errors: [CloudflareProbeError]?
+}
+
+private struct CloudflareProbeError: Decodable, Sendable {
+    let code: Int?
+    let message: String?
 }

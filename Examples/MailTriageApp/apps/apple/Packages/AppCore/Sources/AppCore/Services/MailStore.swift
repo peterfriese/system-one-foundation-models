@@ -14,6 +14,9 @@ public final class MailStore {
     @ObservationIgnored
     @Injected(\.benchmarkTruthStore) private var benchmarkTruthStore
 
+    @ObservationIgnored
+    @Injected(\.benchmarkSessionStore) private var benchmarkSessionStore
+
     public var emails: [Email]
     public var selectedMailbox: Mailbox {
         didSet {
@@ -246,6 +249,7 @@ public final class MailStore {
     public func probeActiveBackend() async {
         activeBackendStatus = .checking
         let status = await healthProbe.probe(backend: selectedBackend)
+        print("⏱️ [MailStore] Active backend (\(selectedBackend.displayName)) probe status: \(status)")
         self.activeBackendStatus = status
         if case .unreachable(let reason, let guidance) = status {
             self.activeBackendError = BackendUnreachableError(
@@ -273,6 +277,9 @@ public final class MailStore {
         do {
             let email = emails[index]
             let result = try await triageEngine.triage(email: email, backend: selectedBackend)
+            benchmarkSessionStore.record(email: email, result: result)
+
+            print("⏱️ [MailStore] Single triage done: email \(email.id.uuidString.prefix(8)) in \(String(format: "%.1f", result.latencyMs)) ms via \(selectedBackend.displayName)")
 
             // Update health and email properties with result
             activeBackendError = nil
@@ -320,6 +327,7 @@ public final class MailStore {
                 onItemCompleted: { [weak self] completedEmail, result in
                     Task { @MainActor in
                         guard let self else { return }
+                        self.benchmarkSessionStore.record(email: completedEmail, result: result)
                         if let index = self.emails.firstIndex(where: { $0.id == completedEmail.id }) {
                             self.emails[index].triageResult = result
                             self.emails[index].category = result.decision.category
