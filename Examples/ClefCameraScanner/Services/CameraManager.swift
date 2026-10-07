@@ -92,17 +92,12 @@ public final class CameraManager: NSObject {
     /// Captures the most recent live frame or generates a fresh synthetic inspection frame,
     /// downsampling so its maximum dimension does not exceed 1024.
     public func captureFrame() async -> CGImage? {
-        let rawFrame: CGImage
-        if isSimulatedFeed {
-            rawFrame = generateSimulationFrame(forIndex: simulationItemIndex)
-        } else if let existing = currentFrame {
-            rawFrame = existing
-        } else {
-            // Generate synthetic fallback if no hardware frame arrived yet
-            rawFrame = generateSimulationFrame(forIndex: simulationItemIndex)
+        guard let existing = currentFrame else {
+            errorMessage = "No camera frame available. Please ensure camera permissions are granted and video capture hardware is active."
+            return nil
         }
 
-        let downsampled = Self.downsample(image: rawFrame, maxDimension: 1024)
+        let downsampled = Self.downsample(image: existing, maxDimension: 1024)
         currentFrame = downsampled
         return downsampled
     }

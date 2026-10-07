@@ -17,10 +17,11 @@ public struct RetryPolicy: Sendable, Hashable {
     public var jitter: Double
 
     /// The single source of truth for which HTTP status codes get retried.
-    ///
-    /// By default, only 429 (Too Many Requests) and 529 (Site Overloaded) are retried.
-    /// 401 (Unauthorized) and 422 (Unprocessable Content) cannot succeed on retry and are excluded.
     public var retryableStatuses: Set<Int>
+
+    /// Default retryable HTTP status codes: request timeouts (408), rate limits (429), server errors (500, 502, 503, 504, 529),
+    /// and Cloudflare origin connection timeouts (524).
+    public static let defaultRetryableStatuses: Set<Int> = [408, 429, 500, 502, 503, 504, 524, 529]
 
     /// Upper bound applied to any server-supplied `Retry-After` delay.
     public var maxRetryAfter: Duration
@@ -30,7 +31,7 @@ public struct RetryPolicy: Sendable, Hashable {
         initialDelay: Duration = .milliseconds(500),
         multiplier: Double = 2.0,
         jitter: Double = 0.2,
-        retryableStatuses: Set<Int> = [429, 529],
+        retryableStatuses: Set<Int> = defaultRetryableStatuses,
         maxRetryAfter: Duration = .seconds(60)
     ) {
         // Normalize rather than trap: assemble sane bounds from configuration.

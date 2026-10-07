@@ -255,7 +255,9 @@ public final class TriageEngine: TriageEngineProtocol, @unchecked Sendable {
                 "Subject: \(email.subject)"
                 "Body:\n\(email.body)"
                 for attachment in email.imageAttachments {
-                    Attachment(attachment.data, type: .png)
+                    if let imageAttachment = Attachment(attachment.data, type: .png) {
+                        imageAttachment
+                    }
                 }
             }
             let response = try await session.respond(to: clefPrompt, generating: EmailTriageDecision.self)

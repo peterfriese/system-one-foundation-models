@@ -361,6 +361,15 @@ public final class BackendHealthProbeService: BackendHealthProbeServiceProtocol,
             }
 
             if (200...299).contains(http.statusCode) {
+                if let envelope = try? JSONDecoder().decode(CloudflareProbeEnvelope.self, from: data) {
+                    if envelope.success == false {
+                        let errorMessage = envelope.errors?.first?.message ?? parseServerErrorMessage(from: data) ?? "Cloudflare API request failed"
+                        return .unreachable(
+                            reason: "\(errorMessage) (HTTP \(http.statusCode))",
+                            guidance: "Verify your Cloudflare Workers AI configuration."
+                        )
+                    }
+                }
                 return .healthy(latencyMs: elapsed)
             }
 
@@ -536,4 +545,16 @@ public final class MockBackendHealthProbeService: BackendHealthProbeServiceProto
         }
         return results
     }
+}
+
+// MARK: - Cloudflare Probe Envelope
+
+private struct CloudflareProbeEnvelope: Decodable, Sendable {
+    let success: Bool?
+    let errors: [CloudflareProbeError]?
+}
+
+private struct CloudflareProbeError: Decodable, Sendable {
+    let code: Int?
+    let message: String?
 }

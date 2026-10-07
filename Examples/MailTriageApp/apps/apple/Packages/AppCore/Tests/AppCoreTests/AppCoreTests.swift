@@ -1270,6 +1270,7 @@ struct CoreMLModelManagerTests {
     func testModelPaths() {
         let manager = CoreMLModelManager()
         #expect(manager.canonicalModelURL.lastPathComponent == "LayaDecisionModel.mlmodelc")
+        #expect(manager.legacyModelURL.lastPathComponent == "LayaDecisionModel.mlmodelc")
         #expect(manager.modelsDirectory.lastPathComponent == "Models")
         #expect(manager.modelsDirectory.path.contains("dev.peterfriese.mailtriageapp") || manager.modelsDirectory.path.contains(Bundle.main.bundleIdentifier ?? ""))
     }
@@ -1695,6 +1696,10 @@ struct CloudflareClefBackendTests {
 
         let pdf = EmailAttachment(filename: "document.pdf", mimeType: "application/pdf", data: Data([8, 9]))
         #expect(pdf.isImage == false)
+
+        // Invalid image data must return nil rather than generating synthetic blank pixels
+        let invalidAttachment = Attachment(Data([1, 2, 3]), type: .png)
+        #expect(invalidAttachment == nil)
     }
 
     @Test("InboxData includes synthetic PNG attachments for billing, database incident, and phishing")

@@ -33,15 +33,43 @@ public struct ClefHTTPBackend: SystemOneBackend, Sendable, Hashable {
                 return try await performSingleEvaluation(request: request)
             } catch is CancellationError {
                 throw CancellationError()
-            } catch let error as SystemOneError {
-                if case .apiError(let statusCode, _) = error,
-                   isRetryableStatusCode(statusCode),
-                   attempts < maxAttempts {
-                    let delay = retryPolicy.backoff(afterAttempt: attempts)
-                    try await Task.sleep(for: delay)
-                    continue
+            } catch let resError as HTTPResponseError {
+                let statusCode = resError.httpResponse.statusCode
+                let isLastAttempt = attempts >= maxAttempts
+
+                guard retryPolicy.retryableStatuses.contains(statusCode), !isLastAttempt else {
+                    let body = String(data: resError.data, encoding: .utf8) ?? "Unknown error"
+                    throw SystemOneError.apiError(statusCode: statusCode, message: body)
                 }
-                throw error
+
+                let delay: Duration
+                if statusCode == 429, let retryAfterDelay = retryPolicy.retryAfter(from: resError.httpResponse) {
+                    delay = retryAfterDelay
+                } else {
+                    delay = retryPolicy.backoff(afterAttempt: attempts)
+                }
+
+                try await Task.sleep(for: delay)
+                continue
+            } catch let error as SystemOneError {
+                switch error {
+                case .networkError:
+                    if attempts < maxAttempts && !Task.isCancelled {
+                        let delay = retryPolicy.backoff(afterAttempt: attempts)
+                        try await Task.sleep(for: delay)
+                        continue
+                    }
+                    throw error
+                case .apiError(let statusCode, _):
+                    if retryPolicy.retryableStatuses.contains(statusCode), attempts < maxAttempts {
+                        let delay = retryPolicy.backoff(afterAttempt: attempts)
+                        try await Task.sleep(for: delay)
+                        continue
+                    }
+                    throw error
+                default:
+                    throw error
+                }
             } catch {
                 if attempts < maxAttempts && !Task.isCancelled {
                     let delay = retryPolicy.backoff(afterAttempt: attempts)
@@ -53,9 +81,9 @@ public struct ClefHTTPBackend: SystemOneBackend, Sendable, Hashable {
         }
     }
 
-    private func isRetryableStatusCode(_ statusCode: Int) -> Bool {
-        // Retry standard retryable statuses (429, 529) plus Cloudflare gateway timeouts (504, 524)
-        retryPolicy.retryableStatuses.contains(statusCode) || statusCode == 504 || statusCode == 524
+    private struct HTTPResponseError: Error {
+        let httpResponse: HTTPURLResponse
+        let data: Data
     }
 
     private func performSingleEvaluation(request: SystemOneRequest) async throws -> SystemOneResponse {
@@ -86,7 +114,12 @@ public struct ClefHTTPBackend: SystemOneBackend, Sendable, Hashable {
             (data, response) = try await session.data(for: urlRequest)
         } catch is CancellationError {
             throw CancellationError()
+        } catch let urlError as URLError where urlError.code == .cancelled {
+            throw CancellationError()
         } catch {
+            if (error as? URLError)?.code == .cancelled || error is CancellationError {
+                throw CancellationError()
+            }
             throw SystemOneError.networkError(error.localizedDescription)
         }
 
@@ -97,8 +130,7 @@ public struct ClefHTTPBackend: SystemOneBackend, Sendable, Hashable {
         }
 
         guard (200...299).contains(httpResponse.statusCode) else {
-            let body = String(data: data, encoding: .utf8) ?? "Unknown error"
-            throw SystemOneError.apiError(statusCode: httpResponse.statusCode, message: body)
+            throw HTTPResponseError(httpResponse: httpResponse, data: data)
         }
 
         return try decodeResponse(data: data, httpResponse: httpResponse, transportDuration: transportDuration)
@@ -150,16 +182,24 @@ public struct ClefHTTPBackend: SystemOneBackend, Sendable, Hashable {
 
     private func parseServerTimingDuration(_ header: String) -> Double? {
         // e.g. "cfL4;dur=12, inference;dur=45" or "inference;dur=22.4"
+        var fallbackDuration: Double? = nil
+
         for entry in header.components(separatedBy: ",") {
             let parts = entry.components(separatedBy: ";")
+            guard let metricName = parts.first?.trimmingCharacters(in: .whitespaces) else { continue }
+
             for param in parts.dropFirst() {
                 let kv = param.trimmingCharacters(in: .whitespaces).components(separatedBy: "=")
-                if kv.count == 2 && kv[0] == "dur" {
-                    return Double(kv[1])
+                if kv.count == 2 && kv[0] == "dur", let durVal = Double(kv[1]) {
+                    if metricName.lowercased() == "inference" {
+                        return durVal
+                    } else if fallbackDuration == nil {
+                        fallbackDuration = durVal
+                    }
                 }
             }
         }
-        return nil
+        return fallbackDuration
     }
 }
 

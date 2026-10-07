@@ -106,7 +106,7 @@ public struct SystemOneImage: Codable, Sendable, Equatable {
         }
 
         if let dimensions = Self.extractDimensions(data: data, format: format) {
-            let megapixels = Double(dimensions.width * dimensions.height) / 1_000_000.0
+            let megapixels = (Double(dimensions.width) * Double(dimensions.height)) / 1_000_000.0
             if megapixels > Guardrails.maxMegapixels {
                 throw SystemOneError.modelExecutionError("Image resolution (\(String(format: "%.1f", megapixels)) MP) exceeds maximum allowed \(Guardrails.maxMegapixels) MP")
             }

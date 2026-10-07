@@ -47,22 +47,11 @@ public struct EmailAttachment: Identifiable, Sendable, Hashable, Codable {
 
 extension Attachment where Content == ImageAttachmentContent {
     /// Convenience initializer to construct a multimodal image attachment from raw image Data.
-    public init(_ data: Data, type: UTType = .png) {
-        if let source = CGImageSourceCreateWithData(data as CFData, nil),
-           let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) {
-            self.init(cgImage)
-        } else {
-            let colorSpace = CGColorSpaceCreateDeviceRGB()
-            let ctx = CGContext(
-                data: nil,
-                width: 1,
-                height: 1,
-                bitsPerComponent: 8,
-                bytesPerRow: 4,
-                space: colorSpace,
-                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-            )!
-            self.init(ctx.makeImage()!)
+    public init?(_ data: Data, type: UTType = .png) {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+            return nil
         }
+        self.init(cgImage)
     }
 }

@@ -116,7 +116,7 @@ public enum InspectionBackendSelection: String, CaseIterable, Identifiable, Send
             if let apiToken, !apiToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 return apiToken.trimmingCharacters(in: .whitespacesAndNewlines)
             }
-            if let stored = UserDefaults.standard.string(forKey: "cloudflareAPIToken"),
+            if let stored = KeychainHelper.string(forKey: "cloudflareAPIToken") ?? UserDefaults.standard.string(forKey: "cloudflareAPIToken"),
                !stored.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 return stored.trimmingCharacters(in: .whitespacesAndNewlines)
             }

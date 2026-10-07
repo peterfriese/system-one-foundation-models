@@ -5,7 +5,7 @@ import ClefFoundationModels
 
 // MARK: - Mock URLProtocol for Cloudflare Clef Backend
 
-final class MockClefBackendProtocol: URLProtocol, @unchecked Sendable {
+final class MockClefBackendProtocol: URLProtocol {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var _responseQueue: [Result<(statusCode: Int, headers: [String: String], body: Data), any Error>] = []
     nonisolated(unsafe) private static var _recordedRequests: [URLRequest] = []
@@ -284,6 +284,22 @@ struct ClefBackendTests {
         #expect(response.transportDurationMs != nil)
     }
 
+    @Test("ClefHTTPBackend server-timing prioritizes inference metric when listed after other metrics")
+    func testServerTimingPrioritizesInference() async throws {
+        MockClefBackendProtocol.reset()
+        let headers = ["server-timing": "cfL4;dur=1.2, inference;dur=45.6, cache;dur=0.1"]
+        MockClefBackendProtocol.enqueue(statusCode: 200, headers: headers, body: sampleValidClefJSON)
+
+        let backend = ClefHTTPBackend(
+            endpoint: .workersAI(accountID: "cf-acc", model: .clefFlash),
+            apiToken: "token",
+            session: makeSession()
+        )
+
+        let response = try await backend.evaluate(request: sampleRequest)
+        #expect(response.serverDurationMs == 45.6)
+    }
+
     @Test("ClefHTTPBackend parses x-envoy-upstream-service-time when server-timing is absent")
     func testEnvoyHeaderTelemetry() async throws {
         MockClefBackendProtocol.reset()
@@ -463,6 +479,64 @@ struct ClefBackendTests {
             } else {
                 Issue.record("Expected .networkError, got: \(error)")
             }
+        }
+    }
+
+    @Test("Transient network failure retries with backoff and succeeds on subsequent attempt")
+    func testNetworkErrorRetriesAndSucceeds() async throws {
+        MockClefBackendProtocol.reset()
+        MockClefBackendProtocol.enqueue(error: URLError(.timedOut))
+        MockClefBackendProtocol.enqueue(statusCode: 200, body: sampleValidClefJSON)
+
+        let fastRetry = RetryPolicy(maxAttempts: 3, initialDelay: .milliseconds(1), multiplier: 1.0, jitter: 0.0)
+        let backend = ClefHTTPBackend(
+            endpoint: .workersAI(accountID: "acc", model: .clefFlash),
+            apiToken: "token",
+            session: makeSession(),
+            retryPolicy: fastRetry
+        )
+
+        let response = try await backend.evaluate(request: sampleRequest)
+        #expect(response.model == "@cf/cloudflare/clef-flash")
+        #expect(MockClefBackendProtocol.requestCount == 2)
+    }
+
+    @Test("504 Gateway Timeout retries and succeeds")
+    func test504GatewayTimeoutRetries() async throws {
+        MockClefBackendProtocol.reset()
+        MockClefBackendProtocol.enqueue(statusCode: 504, body: Data("Gateway timeout".utf8))
+        MockClefBackendProtocol.enqueue(statusCode: 200, body: sampleValidClefJSON)
+
+        let fastRetry = RetryPolicy(maxAttempts: 3, initialDelay: .milliseconds(1), multiplier: 1.0, jitter: 0.0)
+        let backend = ClefHTTPBackend(
+            endpoint: .workersAI(accountID: "acc", model: .clefFlash),
+            apiToken: "token",
+            session: makeSession(),
+            retryPolicy: fastRetry
+        )
+
+        let response = try await backend.evaluate(request: sampleRequest)
+        #expect(response.model == "@cf/cloudflare/clef-flash")
+        #expect(MockClefBackendProtocol.requestCount == 2)
+    }
+
+    @Test("Cancelled request throws CancellationError immediately without retry or wrapping")
+    func testCancelledRequestThrowsCancellationError() async throws {
+        MockClefBackendProtocol.reset()
+        MockClefBackendProtocol.enqueue(error: URLError(.cancelled))
+
+        let backend = ClefHTTPBackend(
+            endpoint: .local(port: 8080),
+            session: makeSession()
+        )
+
+        do {
+            _ = try await backend.evaluate(request: sampleRequest)
+            Issue.record("Expected CancellationError to be thrown")
+        } catch is CancellationError {
+            // Succeeded in propagating CancellationError
+        } catch {
+            Issue.record("Expected CancellationError, got \(error)")
         }
     }
 }

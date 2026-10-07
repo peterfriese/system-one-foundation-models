@@ -15,7 +15,7 @@ let package = Package(
         ),
         .library(
             name: "SystemOneFoundationModels",
-            targets: ["SystemOneCore", "LayaFoundationModels", "LayaOnDevice", "JevFoundationModels", "ClefFoundationModels"]
+            targets: ["SystemOneFoundationModels"]
         ),
         .library(
             name: "LayaFoundationModels",
@@ -96,6 +96,19 @@ let package = Package(
     targets: [
         .target(
             name: "SystemOneCore",
+            swiftSettings: [
+                .enableUpcomingFeature("StrictConcurrency")
+            ]
+        ),
+        .target(
+            name: "SystemOneFoundationModels",
+            dependencies: [
+                "SystemOneCore",
+                .target(name: "JevFoundationModels", condition: .when(traits: ["Jev"])),
+                .target(name: "LayaFoundationModels", condition: .when(traits: ["Laya"])),
+                .target(name: "LayaOnDevice", condition: .when(traits: ["Laya"])),
+                .target(name: "ClefFoundationModels", condition: .when(traits: ["Clef"]))
+            ],
             swiftSettings: [
                 .enableUpcomingFeature("StrictConcurrency")
             ]

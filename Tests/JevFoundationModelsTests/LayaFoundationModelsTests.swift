@@ -6,7 +6,7 @@ import LayaFoundationModels
 
 // MARK: - Mock URLProtocol for HTTP Testing
 
-final class MockURLProtocol: URLProtocol, @unchecked Sendable {
+final class MockURLProtocol: URLProtocol {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var _requestHandler: (@Sendable (URLRequest) throws -> (HTTPURLResponse, Data))?
 

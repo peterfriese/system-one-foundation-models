@@ -122,6 +122,11 @@ public final class CoreMLModelManager: @unchecked Sendable {
         modelsDirectory.appendingPathComponent("LayaDecisionModel.mlmodelc")
     }
 
+    public var legacyModelURL: URL {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        return appSupport.appendingPathComponent("Models").appendingPathComponent("LayaDecisionModel.mlmodelc")
+    }
+
     /// Returns the active model URL if found on disk.
     public var resolvedModelURL: URL? {
         if let custom = customModelsDirectory {
@@ -136,8 +141,19 @@ public final class CoreMLModelManager: @unchecked Sendable {
             return nil
         }
 
+        // Auto-migrate legacy model path to canonical path if found
+        if !FileManager.default.fileExists(atPath: canonicalModelURL.path) && FileManager.default.fileExists(atPath: legacyModelURL.path) {
+            try? FileManager.default.createDirectory(at: modelsDirectory, withIntermediateDirectories: true)
+            if (try? FileManager.default.copyItem(at: legacyModelURL, to: canonicalModelURL)) != nil {
+                try? FileManager.default.removeItem(at: legacyModelURL)
+                return canonicalModelURL
+            }
+            return legacyModelURL
+        }
+
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let candidateURLs: [URL] = [
+            canonicalModelURL,
             appSupport.appendingPathComponent("dev.peterfriese.mailtriageapp").appendingPathComponent("Models").appendingPathComponent("LayaDecisionModel.mlmodelc"),
             appSupport.appendingPathComponent("dev.peterfriese.mailtriageapp").appendingPathComponent("Models").appendingPathComponent("model.safetensors"),
             appSupport.appendingPathComponent("MailTriage").appendingPathComponent("Models").appendingPathComponent("LayaDecisionModel.mlmodelc"),
@@ -145,7 +161,8 @@ public final class CoreMLModelManager: @unchecked Sendable {
             appSupport.appendingPathComponent(Bundle.main.bundleIdentifier ?? "dev.peterfriese.mailtriageapp").appendingPathComponent("Models").appendingPathComponent("LayaDecisionModel.mlmodelc"),
             appSupport.appendingPathComponent(Bundle.main.bundleIdentifier ?? "dev.peterfriese.mailtriageapp").appendingPathComponent("Models").appendingPathComponent("model.safetensors"),
             appSupport.appendingPathComponent("ai.typesafe.MailTriage").appendingPathComponent("Models").appendingPathComponent("LayaDecisionModel.mlmodelc"),
-            appSupport.appendingPathComponent("ai.typesafe.MailTriage").appendingPathComponent("Models").appendingPathComponent("model.safetensors")
+            appSupport.appendingPathComponent("ai.typesafe.MailTriage").appendingPathComponent("Models").appendingPathComponent("model.safetensors"),
+            legacyModelURL
         ]
 
         for candidate in candidateURLs {
@@ -515,6 +532,9 @@ public final class CoreMLModelManager: @unchecked Sendable {
             if FileManager.default.fileExists(atPath: canonicalModelURL.path) {
                 try FileManager.default.removeItem(at: canonicalModelURL)
             }
+            if FileManager.default.fileExists(atPath: legacyModelURL.path) {
+                try? FileManager.default.removeItem(at: legacyModelURL)
+            }
 
             // Copy to canonical location
             try FileManager.default.copyItem(at: finalCompiledURL, to: canonicalModelURL)
@@ -546,6 +566,9 @@ public final class CoreMLModelManager: @unchecked Sendable {
         }
         if FileManager.default.fileExists(atPath: canonicalModelURL.path) {
             try FileManager.default.removeItem(at: canonicalModelURL)
+        }
+        if FileManager.default.fileExists(atPath: legacyModelURL.path) {
+            try? FileManager.default.removeItem(at: legacyModelURL)
         }
         if Thread.isMainThread {
             MainActor.assumeIsolated {

@@ -15,7 +15,7 @@ public struct SettingsSheetView: View {
     @Environment(\.dismiss) private var dismiss
 
     @AppStorage("cloudflareAccountID") private var cloudflareAccountID: String = ""
-    @AppStorage("cloudflareAPIToken") private var cloudflareAPIToken: String = ""
+    @KeychainStorage("cloudflareAPIToken") private var cloudflareAPIToken: String = ""
     @AppStorage("localRunnerURL") private var localRunnerURL: String = "http://127.0.0.1:8000"
 
     @State private var isTokenVisible: Bool = false

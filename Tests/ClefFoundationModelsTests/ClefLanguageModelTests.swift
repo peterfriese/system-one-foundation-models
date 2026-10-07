@@ -30,7 +30,7 @@ struct DefectInspectionDecision: Sendable {
 
 // MARK: - Mock URLProtocol for ClefLanguageModelTests
 
-final class MockClefLanguageModelProtocol: URLProtocol, @unchecked Sendable {
+final class MockClefLanguageModelProtocol: URLProtocol {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var _responseQueue: [Result<(statusCode: Int, headers: [String: String], body: Data), any Error>] = []
 

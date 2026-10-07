@@ -254,12 +254,14 @@ class ClefEngine:
             self.model.eval()
             logger.info(f"Successfully loaded {self.resolved_model} on {self.device}.")
         except Exception as te:
-            logger.warning(
-                f"Could not load live weights for {self.resolved_model} ({te}). "
-                "Falling back to calibrated local simulation mode. "
-                "To force mock mode, pass --mock."
+            logger.error(
+                f"Failed to load model weights for {self.resolved_model}: {te}. "
+                "Failing fast because --mock was not specified. Pass --mock to run in deterministic offline mock mode."
             )
-            self.mock = True
+            raise RuntimeError(
+                f"Failed to load model weights for '{self.resolved_model}': {te}. "
+                "Pass --mock to run in deterministic offline mock mode."
+            )
 
     def _try_load_joint_schema_module(self):
         """Attempts to discover and import joint_schema_model.py."""
@@ -318,31 +320,41 @@ class ClefEngine:
         Evaluates questions over state text and optional images in a single forward pass.
         Returns a dictionary of calibrated answers conforming to SystemOneAnswer.
         """
-        # If joint_schema_module provides systemone(model, processor, payload)
-        if not self.mock and self.joint_schema_module is not None and hasattr(self.joint_schema_module, "systemone"):
+        if self.mock:
+            return self._run_mock_inference(state, questions, images)
+
+        payload = {
+            "state": state,
+            "questions": questions,
+            "images": images,
+            "model": model_name
+        }
+
+        # Live inference path: execute real model inference using systemone(self.model, self.processor, payload)
+        systemone_fn = None
+        if self.joint_schema_module is not None and hasattr(self.joint_schema_module, "systemone"):
+            systemone_fn = getattr(self.joint_schema_module, "systemone")
+        elif "systemone" in globals():
+            systemone_fn = globals()["systemone"]
+
+        if systemone_fn is not None:
             try:
-                payload = {
-                    "state": state,
-                    "questions": questions,
-                    "images": images,
-                    "model": model_name
-                }
-                res = self.joint_schema_module.systemone(self.model, self.processor, payload)
+                res = systemone_fn(self.model, self.processor, payload)
                 if isinstance(res, dict) and "answers" in res:
                     return res["answers"]
                 elif isinstance(res, dict) and "questions" in res:
                     return res["questions"]
                 elif isinstance(res, dict):
                     return res
+                raise RuntimeError(f"Unexpected response format from systemone: {type(res)}")
             except Exception as e:
-                logger.error(f"Error executing joint_schema_module.systemone: {e}. Falling back to internal inference.")
+                logger.error(f"Error executing real model inference via systemone: {e}")
+                raise
 
-        # If live PyTorch model is loaded
-        if not self.mock and self.model is not None and torch is not None:
-            return self._run_pytorch_inference(state, questions, images)
-
-        # Fallback / Mock execution
-        return self._run_mock_inference(state, questions, images)
+        raise RuntimeError(
+            "Live inference requires joint_schema_model.py with systemone(model, processor, payload). "
+            "Pass --mock to run in deterministic offline mock mode."
+        )
 
     def _run_pytorch_inference(
         self,
@@ -691,8 +703,8 @@ def main():
     parser.add_argument(
         "--host",
         type=str,
-        default="0.0.0.0",
-        help="Host interface to bind (default: 0.0.0.0)"
+        default="127.0.0.1",
+        help="Host interface to bind (default: 127.0.0.1)"
     )
     parser.add_argument(
         "--device",

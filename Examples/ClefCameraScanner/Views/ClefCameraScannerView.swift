@@ -8,7 +8,7 @@ import ClefFoundationModels
 
 public struct ClefCameraScannerView: View {
     @AppStorage("cloudflareAccountID") private var storedAccountID: String = ""
-    @AppStorage("cloudflareAPIToken") private var storedAPIToken: String = ""
+    @KeychainStorage("cloudflareAPIToken") private var storedAPIToken: String = ""
     @AppStorage("localRunnerURL") private var storedLocalRunnerURL: String = "http://127.0.0.1:8000"
 
     @State private var cameraManager = CameraManager()

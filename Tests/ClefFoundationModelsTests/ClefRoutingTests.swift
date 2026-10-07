@@ -28,7 +28,7 @@ struct VisualTriageDecision: Sendable {
 
 // MARK: - Mock URLProtocol for ClefRoutingTests
 
-final class MockClefRoutingProtocol: URLProtocol, @unchecked Sendable {
+final class MockClefRoutingProtocol: URLProtocol {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var _responseQueue: [Result<(statusCode: Int, headers: [String: String], body: Data), any Error>] = []
 
