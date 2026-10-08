@@ -42,6 +42,7 @@ public struct SettingsView: View {
     @KeychainStorage(.cloudflareApiToken) private var cloudflareApiToken = ""
     @KeychainStorage(.typesafeApiKey) private var typesafeApiKey = ""
     @KeychainStorage(.hostedVpcToken) private var hostedVpcToken = ""
+    @KeychainStorage(.openaiApiKey) private var openaiApiKey = ""
 
     public init() {}
 
@@ -385,7 +386,51 @@ public struct SettingsView: View {
             }
         }
 
-        // 5. Apple Intelligence Baseline
+        // 5. OpenAI Decisions API
+        VStack(alignment: .leading, spacing: 8) {
+            Text("OpenAI Decisions API (GPT-6 Luna)")
+                .font(.headline.weight(.bold))
+                .foregroundStyle(.primary)
+
+            SettingsCard {
+                SettingsRow(title: "API Key", subtitle: "Stored securely in Keychain") {
+                    SecureField("OPENAI_API_KEY", text: $openaiApiKey)
+                        .textFieldStyle(.roundedBorder)
+                        #if os(iOS)
+                        .textContentType(.password)
+                        .autocapitalization(.none)
+                        #endif
+                }
+
+                cardDivider
+
+                SettingsRow(title: "Organization ID", subtitle: "Optional OpenAI-Organization header") {
+                    TextField("org-...", text: $boundConfig.openaiOrganization)
+                        .textFieldStyle(.roundedBorder)
+                        #if os(iOS)
+                        .autocapitalization(.none)
+                        #endif
+                }
+
+                cardDivider
+
+                SettingsRow(title: "Project ID", subtitle: "Optional OpenAI-Project header") {
+                    TextField("proj-...", text: $boundConfig.openaiProject)
+                        .textFieldStyle(.roundedBorder)
+                        #if os(iOS)
+                        .autocapitalization(.none)
+                        #endif
+                }
+
+                cardDivider
+
+                SettingsRow(title: "Connection Status") {
+                    probeRow(for: .openaiDecisions)
+                }
+            }
+        }
+
+        // 6. Apple Intelligence Baseline
         VStack(alignment: .leading, spacing: 8) {
             Text("Apple Intelligence (Baseline)")
                 .font(.headline.weight(.bold))
@@ -432,6 +477,7 @@ public struct SettingsView: View {
                         hostedVpcToken = ""
                         cloudflareAccountId = ""
                         cloudflareApiToken = ""
+                        openaiApiKey = ""
                     }
                     .buttonStyle(.bordered)
                 }

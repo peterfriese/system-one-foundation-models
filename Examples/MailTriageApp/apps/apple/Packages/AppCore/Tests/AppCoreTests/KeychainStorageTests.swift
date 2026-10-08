@@ -88,12 +88,13 @@ struct KeychainStorageTests {
 
     @Test("KeychainKey enum defines all required credential keys with canonical rawValues")
     func testKeychainKeyEnumCases() {
-        #expect(KeychainKey.allCases.count == 5)
+        #expect(KeychainKey.allCases.count == 6)
         #expect(KeychainKey.cloudflareAccountId.rawValue == "cloudflareAccountId")
         #expect(KeychainKey.cloudflareApiToken.rawValue == "cloudflareApiToken")
         #expect(KeychainKey.typesafeApiKey.rawValue == "typesafeApiKey")
         #expect(KeychainKey.hostedVpcToken.rawValue == "hostedVpcToken")
         #expect(KeychainKey.huggingFaceToken.rawValue == "huggingFaceToken")
+        #expect(KeychainKey.openaiApiKey.rawValue == "openai_api_key")
     }
 
     @Test("KeychainServiceProtocol extension methods bridge typed KeychainKey to string operations")

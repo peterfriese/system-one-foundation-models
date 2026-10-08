@@ -619,30 +619,34 @@ struct TriageEngineTests {
         engine.clearCoreMLCache()
     }
 
-    @Test("TriageBackend enum defines all 6 architectures and their metadata")
+    @Test("TriageBackend enum defines all 7 architectures and their metadata")
     func testTriageBackendMetadata() {
-        #expect(TriageBackend.allCases.count == 6)
+        #expect(TriageBackend.allCases.count == 7)
 
         let coreML = TriageBackend.onDeviceCoreML
         #expect(coreML.iconName == "cpu.fill")
         #expect(coreML.isOffline == true)
         #expect(coreML.isDecisionModel == true)
         #expect(coreML.privacyLevel == .onDevice)
+        #expect(coreML.supportsMultimodal == false)
 
         let serve = TriageBackend.localServe
         #expect(serve.iconName == "network")
         #expect(serve.isOffline == false)
         #expect(serve.privacyLevel == .local)
+        #expect(serve.supportsMultimodal == false)
 
         let vpc = TriageBackend.hostedVPC
         #expect(vpc.iconName == "server.rack")
         #expect(vpc.isOffline == false)
         #expect(vpc.privacyLevel == .vpc)
+        #expect(vpc.supportsMultimodal == false)
 
         let cloud = TriageBackend.cloudAPI
         #expect(cloud.iconName == "cloud.fill")
         #expect(cloud.isOffline == false)
         #expect(cloud.privacyLevel == .cloud)
+        #expect(cloud.supportsMultimodal == false)
 
         let clef = TriageBackend.cloudflareClef
         #expect(clef.displayName == "Cloudflare Clef")
@@ -653,12 +657,27 @@ struct TriageEngineTests {
         #expect(clef.privacyLevel == .edge)
         #expect(clef.isOffline == false)
         #expect(clef.isDecisionModel == true)
+        #expect(clef.supportsMultimodal == true)
+        #expect(clef.pricePerMillionInputTokens == 0.05)
+
+        let openai = TriageBackend.openaiDecisions
+        #expect(openai.displayName == "OpenAI Decisions")
+        #expect(openai.shortName == "OpenAI")
+        #expect(openai.description == "OpenAI Decisions API (GPT-6 Luna) fast decision primitive at $0.10/1M tokens.")
+        #expect(openai.iconName == "sparkle.magnifyingglass")
+        #expect(openai.latencyTier == "< 100ms")
+        #expect(openai.privacyLevel == .cloud)
+        #expect(openai.isOffline == false)
+        #expect(openai.isDecisionModel == true)
+        #expect(openai.supportsMultimodal == true)
+        #expect(openai.pricePerMillionInputTokens == 0.10)
 
         let baseline = TriageBackend.generativeBaseline
         #expect(baseline.iconName == "sparkles")
         #expect(baseline.isOffline == true)
         #expect(baseline.isDecisionModel == false)
         #expect(baseline.privacyLevel == .onDevice)
+        #expect(baseline.supportsMultimodal == false)
     }
 
     @Test("TriageEngine triageBatch cooperative cancellation cancels child worker tasks (IMP-1 / IMP-3)")
@@ -1161,11 +1180,11 @@ struct HealthProbeTests {
         }
     }
 
-    @Test("probeAll probes all 6 backends concurrently")
+    @Test("probeAll probes all 7 backends concurrently")
     func testProbeAllConcurrently() async {
         let probe = BackendHealthProbeService()
         let results = await probe.probeAll()
-        #expect(results.count == 6)
+        #expect(results.count == 7)
     }
 
     @Test("BackendHealthStatus and BackendUnreachableError identify preparing state")
@@ -1238,17 +1257,93 @@ struct HealthProbeTests {
         )
         #expect(err5.errorDescription == "Cloudflare Clef Unreachable: Missing Cloudflare Account ID. Open Settings (⌘,) and paste your Cloudflare Account ID.")
         #expect(err5.recoverySuggestion == "Open Settings (⌘,) and paste your Cloudflare Account ID.")
+
+        let err6 = BackendUnreachableError(
+            backend: .openaiDecisions,
+            reason: "Missing OpenAI API Key",
+            guidance: "Open Settings (⌘,) and paste your OPENAI_API_KEY."
+        )
+        #expect(err6.errorDescription == "OpenAI Decisions Unreachable: Missing OpenAI API Key. Open Settings (⌘,) and paste your OPENAI_API_KEY.")
+        #expect(err6.recoverySuggestion == "Open Settings (⌘,) and paste your OPENAI_API_KEY.")
+    }
+
+    @Test("OpenAI decisions probe sends valid payload and maps 200, 401, 429")
+    func testOpenAIDecisionsProbeResponses() async throws {
+        let mockKeychain = MockKeychainService(initialStorage: [:])
+        try mockKeychain.set("sk-test-key-12345", for: .openaiApiKey)
+        let testConfigStore = BackendConfigurationStore(
+            userDefaults: UserDefaults(suiteName: "testOpenAIProbeResponses_\(UUID().uuidString)")!,
+            keychain: mockKeychain
+        )
+        testConfigStore.openaiOrganization = "org-test"
+        testConfigStore.openaiProject = "proj-test"
+
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockHTTPStatusURLProtocol.self]
+        let session = URLSession(configuration: config)
+        let probe = BackendHealthProbeService(session: session, configStore: testConfigStore)
+
+        MockHTTPStatusURLProtocol.mockStatusCode = 200
+        let status200 = await probe.probe(backend: .openaiDecisions)
+        #expect(status200.isHealthy == true)
+
+        MockHTTPStatusURLProtocol.mockStatusCode = 401
+        let status401 = await probe.probe(backend: .openaiDecisions)
+        #expect(status401.reason?.contains("Invalid API Key (HTTP 401)") == true || status401.guidance?.contains("Check your OpenAI API Key") == true)
+
+        MockHTTPStatusURLProtocol.mockStatusCode = 429
+        let status429 = await probe.probe(backend: .openaiDecisions)
+        #expect(status429.reason?.contains("Rate Limited (HTTP 429)") == true || status429.guidance?.contains("quota") == true)
+
+        MockHTTPStatusURLProtocol.mockError = URLError(.timedOut)
+        let statusTimeout = await probe.probe(backend: .openaiDecisions)
+        MockHTTPStatusURLProtocol.mockError = nil
+        #expect(statusTimeout.reason?.contains("Cannot connect to OpenAI Decisions API") == true)
+        #expect(statusTimeout.guidance?.contains("Check your internet connection") == true)
+    }
+
+    @Test("BackendConfigurationStore correctly manages OpenAI credentials")
+    func testBackendConfigurationStoreOpenAIProperties() {
+        let mockKeychain = MockKeychainService()
+        let suite = "testOpenAIConfig_\(UUID().uuidString)"
+        let store = BackendConfigurationStore(userDefaults: UserDefaults(suiteName: suite)!, keychain: mockKeychain)
+
+        store.openaiAPIKey = "sk-live-test"
+        store.openaiOrganization = "org-123"
+        store.openaiProject = "proj-456"
+
+        #expect(store.openaiAPIKey == "sk-live-test")
+        #expect(store.openaiOrganization == "org-123")
+        #expect(store.openaiProject == "proj-456")
+        #expect(mockKeychain.string(for: .openaiApiKey) == "sk-live-test")
+
+        // Verify Bearer stripping from setter and getter
+        store.openaiAPIKey = "Bearer sk-bearer-token"
+        #expect(store.openaiAPIKey == "sk-bearer-token")
+
+        try? mockKeychain.set("Bearer sk-keychain-raw", for: .openaiApiKey)
+        #expect(store.openaiAPIKey == "sk-keychain-raw")
+
+        store.resetToDefaults()
+        #expect(store.openaiAPIKey == "")
+        #expect(store.openaiOrganization == "")
+        #expect(store.openaiProject == "")
     }
 }
 
 private final class MockHTTPStatusURLProtocol: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var mockStatusCode: Int = 200
     nonisolated(unsafe) static var mockResponseData: Data = Data()
+    nonisolated(unsafe) static var mockError: Error?
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
+        if let error = Self.mockError {
+            client?.urlProtocol(self, didFailWithError: error)
+            return
+        }
         let response = HTTPURLResponse(
             url: request.url ?? URL(string: "http://127.0.0.1:8000")!,
             statusCode: Self.mockStatusCode,
@@ -1685,14 +1780,17 @@ struct CloudflareClefBackendTests {
     func testEmailAttachmentImageDetection() {
         let png = EmailAttachment(filename: "scan.png", mimeType: "image/png", data: Data([1, 2, 3]))
         #expect(png.isImage == true)
+        #expect(png.utType == .png)
         #expect(png.fileSizeBytes == 3)
         #expect(!png.formattedFileSize.isEmpty)
 
         let jpeg = EmailAttachment(filename: "photo.jpg", mimeType: "image/jpeg", data: Data([4, 5]))
         #expect(jpeg.isImage == true)
+        #expect(jpeg.utType == .jpeg)
 
         let webp = EmailAttachment(filename: "graphic.webp", mimeType: "image/webp", data: Data([6, 7]))
         #expect(webp.isImage == true)
+        #expect(webp.utType == .webP)
 
         let pdf = EmailAttachment(filename: "document.pdf", mimeType: "application/pdf", data: Data([8, 9]))
         #expect(pdf.isImage == false)

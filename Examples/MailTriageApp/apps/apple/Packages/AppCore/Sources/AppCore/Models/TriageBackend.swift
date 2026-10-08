@@ -17,7 +17,11 @@ public enum TriageBackend: String, Sendable, Hashable, Codable, CaseIterable, Id
     /// Backend 5: Cloudflare Workers AI edge inference (Clef / Clef-Flash).
     case cloudflareClef
 
-    /// Backend 6: Generative baseline (Apple Intelligence On-Device LLM).
+    /// Backend 6: OpenAI Decisions API (GPT-6 Luna).
+    /// See tech-notes/0017-openai-decisions-api-architecture.md
+    case openaiDecisions
+
+    /// Backend 7: Generative baseline (Apple Intelligence On-Device LLM).
     case generativeBaseline
 
     public var id: String { rawValue }
@@ -34,6 +38,8 @@ public enum TriageBackend: String, Sendable, Hashable, Codable, CaseIterable, Id
             return "Jev Cloud API"
         case .cloudflareClef:
             return "Cloudflare Clef"
+        case .openaiDecisions:
+            return "OpenAI Decisions"
         case .generativeBaseline:
             return "Generative Baseline"
         }
@@ -51,6 +57,8 @@ public enum TriageBackend: String, Sendable, Hashable, Codable, CaseIterable, Id
             return "Jev Cloud"
         case .cloudflareClef:
             return "Clef Edge"
+        case .openaiDecisions:
+            return "OpenAI"
         case .generativeBaseline:
             return "Apple LLM"
         }
@@ -68,6 +76,8 @@ public enum TriageBackend: String, Sendable, Hashable, Codable, CaseIterable, Id
             return "Managed TypeSafe Jev cloud endpoints with automated retries and jitter backoff."
         case .cloudflareClef:
             return "Cloudflare Workers AI multimodal edge decision model (9B / 27B)."
+        case .openaiDecisions:
+            return "OpenAI Decisions API (GPT-6 Luna) fast decision primitive at $0.10/1M tokens."
         case .generativeBaseline:
             return "Apple Intelligence on-device ~3B generative LLM baseline comparison."
         }
@@ -85,6 +95,8 @@ public enum TriageBackend: String, Sendable, Hashable, Codable, CaseIterable, Id
             return "cloud.fill"
         case .cloudflareClef:
             return "bolt.shield.fill"
+        case .openaiDecisions:
+            return "sparkle.magnifyingglass"
         case .generativeBaseline:
             return "sparkles"
         }
@@ -103,6 +115,8 @@ public enum TriageBackend: String, Sendable, Hashable, Codable, CaseIterable, Id
             return "60–90 ms"
         case .cloudflareClef:
             return "< 100 ms"
+        case .openaiDecisions:
+            return "40–80 ms"
         case .generativeBaseline:
             return "800–1,200 ms"
         }
@@ -120,6 +134,8 @@ public enum TriageBackend: String, Sendable, Hashable, Codable, CaseIterable, Id
         case .cloudAPI:
             return "< 100ms"
         case .cloudflareClef:
+            return "< 100ms"
+        case .openaiDecisions:
             return "< 100ms"
         case .generativeBaseline:
             return "> 1000ms"
@@ -145,7 +161,7 @@ public enum TriageBackend: String, Sendable, Hashable, Codable, CaseIterable, Id
             return .vpc
         case .cloudflareClef:
             return .edge
-        case .cloudAPI:
+        case .cloudAPI, .openaiDecisions:
             return .cloud
         }
     }
@@ -155,7 +171,7 @@ public enum TriageBackend: String, Sendable, Hashable, Codable, CaseIterable, Id
         switch self {
         case .onDeviceCoreML, .generativeBaseline:
             return true
-        case .localServe, .hostedVPC, .cloudAPI, .cloudflareClef:
+        case .localServe, .hostedVPC, .cloudAPI, .cloudflareClef, .openaiDecisions:
             return false
         }
     }
@@ -163,5 +179,29 @@ public enum TriageBackend: String, Sendable, Hashable, Codable, CaseIterable, Id
     /// Whether this backend evaluates a fast non-autoregressive decision model.
     public var isDecisionModel: Bool {
         self != .generativeBaseline
+    }
+
+    /// Price in USD per million input tokens.
+    public var pricePerMillionInputTokens: Double {
+        switch self {
+        case .onDeviceCoreML, .localServe, .hostedVPC, .generativeBaseline:
+            return 0.0
+        case .cloudAPI:
+            return 0.20
+        case .cloudflareClef:
+            return 0.05
+        case .openaiDecisions:
+            return 0.10
+        }
+    }
+
+    /// Whether this backend supports multimodal inputs (visual image attachments).
+    public var supportsMultimodal: Bool {
+        switch self {
+        case .cloudflareClef, .openaiDecisions:
+            return true
+        case .onDeviceCoreML, .localServe, .hostedVPC, .cloudAPI, .generativeBaseline:
+            return false
+        }
     }
 }

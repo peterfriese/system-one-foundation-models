@@ -6,4 +6,5 @@ public enum KeychainKey: String, Sendable, CaseIterable {
     case typesafeApiKey = "typesafeApiKey"
     case hostedVpcToken = "hostedVpcToken"
     case huggingFaceToken = "huggingFaceToken"
+    case openaiApiKey = "openai_api_key"
 }

@@ -20,6 +20,7 @@ let package = Package(
                 .product(name: "LayaFoundationModels", package: "SystemOneFoundationModels"),
                 .product(name: "JevFoundationModels", package: "SystemOneFoundationModels"),
                 .product(name: "ClefFoundationModels", package: "SystemOneFoundationModels"),
+                .product(name: "OpenAIFoundationModels", package: "SystemOneFoundationModels"),
                 .product(name: "LayaOnDevice", package: "SystemOneFoundationModels"),
                 .product(name: "FactoryKit", package: "Factory")
             ],

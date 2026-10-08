@@ -12,6 +12,12 @@ extension KeychainServiceProtocol {
     public func string(for key: KeychainKey) -> String? { string(forKey: key.rawValue) }
     public func set(_ value: String?, for key: KeychainKey) throws { try set(value, forKey: key.rawValue) }
     public func delete(for key: KeychainKey) throws { try delete(forKey: key.rawValue) }
+
+    /// Convenience access for the stored OpenAI API Key (`openai_api_key`).
+    public var openaiAPIKey: String? {
+        get { string(for: .openaiApiKey) }
+        set { try? set(newValue, for: .openaiApiKey) }
+    }
 }
 
 /// Errors thrown by Apple Security framework keychain operations.
