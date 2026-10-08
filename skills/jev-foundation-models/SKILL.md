@@ -29,7 +29,7 @@ Jev is a **System One decision model**, not a text-generating LLM. It evaluates 
 - **Prompt $\to$ Application State**: The text passed to `session.respond(to:)` represents current application context (support tickets, sensor readings, transaction logs, user inputs, or parsed documents).
 - **`@Generable` Type $\to$ Decision Questions**: The struct or enum defines the typed questions being asked over that state.
 - **Dual Signal Output**:
-  1. **The Answer**: *What* the model judged (`response.content` containing typed enum choices, booleans, or rubric scores).
+  1. **The Answer**: *What* the model judged (`response.content` containing typed enum choices, booleans, or rubric scores). For `Bool` fields this decode is a hard 0.5 cutoff — see §3; decisions must consume `response.probability(for:)` / `response.judgement(for:policy:)`.
   2. **The Calibrated Confidence / Probability**: *Whether* to automate the action (`response.judgement(...)`, `response.decision(...)`, `response.scoreValue(...)`).
 
 ---
@@ -77,6 +77,10 @@ struct TriageDecision: Sendable {
 }
 ```
 
+### Batched Questions Must Self-Identify
+
+When a single `@Generable` type emits **multiple questions in one call** (e.g. two `Bool` fields → two batched nouls), each question's `@Guide(description:)` MUST name the entity it targets ("Candidate A", "transaction #8491"). Observably **identical instruction text collapses the batch** — Jev cannot discriminate between two questions that read exactly the same, and both answers land near 0.5 (observed live in a duplicate-detection integration: 0.77/0.79 before naming the candidates, 0.94/0.01 after). The library's `Examples/DuplicateArticleDemo` sidesteps the problem by evaluating **one question per request** (a task group of separate `respond` calls), which is simpler but forfeits the single-call batching contract — prefer self-identifying guides when one call must answer many questions.
+
 ---
 
 ## 3. Canonical Call-Site, Telemetry & Confidence Routing
@@ -104,6 +108,9 @@ print("Department:", decision.department)       // .billing
 print("Is Urgent:", decision.isUrgent)           // true
 print("Frustration:", decision.frustrationLevel) // 3
 ```
+
+> [!WARNING]
+> **`response.content` is a hard 0.5 cutoff for `Bool` fields.** The synthesized decode (`ResponseSynthesizer`) maps a noul probability to a Swift `Bool` with `noul >= 0.5` — p = 0.55 decodes `true`, p = 0.45 decodes `false`, regardless of how decisive the model actually was. Treat `response.content` as display/fallback material only. All decisions must consume the **calibrated signal** — `response.probability(for:)` and `response.judgement(for:policy:)` — and route through a `RoutingPolicy`; never gate automation on a decoded content `Bool`.
 
 ### Confidence Routing with `RoutingPolicy`
 
@@ -182,6 +189,9 @@ let retryPolicy = RetryPolicy(
 let model = JevLanguageModel(apiKey: apiKey, retryPolicy: retryPolicy)
 ```
 
+> [!NOTE]
+> **The model-level `retryPolicy:` only applies to the default `URLSessionTransport`.** When you pass an explicit `transport:` to `JevLanguageModel`, the `retryPolicy:` parameter is ignored — the transport is resolved first, and the transport owns its own retry semantics. On the proxy path (`ProxyTransport`, `FirebaseAppCheckTransport`), set `RetryPolicy` on the **transport** (`ProxyTransport.retryPolicy`, default retryable statuses `[429, 529]`), or the model-level knob silently does nothing.
+
 ### Cooperative Cancellation
 In Swift 6 concurrency, task cancellation must never be swallowed or converted into a generic error:
 - **`CancellationError` is NEVER wrapped in `JevError`**: If a parent `Task` is cancelled (e.g., user navigates away in SwiftUI), `CancellationError` propagates directly.
@@ -230,6 +240,19 @@ let model = JevLanguageModel(
 )
 let session = LanguageModelSession(model: model)
 ```
+
+> [!WARNING]
+> **App Check token acquisition can crash or come up empty.** `AppCheck.appCheck().token(forcingRefresh:)` throws an **uncaught Objective-C exception** when no default `FirebaseApp` is configured — `try?` cannot catch it — and yields no token on simulators without attestation or in hosted-test launches that skip app initialization. Guard with `FirebaseApp.app() != nil` before touching App Check, and provide a Monitor-mode/dev fallback value for hosts that cannot attest. The backend proxy MUST run in **Monitor mode** (log token validity, never reject) until enforcement is deliberately flipped on for every client.
+
+### Server-Side Proxy Contract
+
+The proxy function your transport calls should follow this compact contract — a plain HTTPS POST reverse proxy, **NOT a callable**:
+
+- **POST-only** `onRequest` (405 + `Allow: POST` otherwise). Forward the client body **byte-verbatim** to `POST https://api.typesafe.ai/v1/systemone` with the server-side key injected as `Authorization: Bearer <key>` — no envelope, no transformation.
+- **App Check**: read the raw token from `X-Firebase-AppCheck` (no prefix); verify with the Admin SDK `verifyToken(token, { consume: true })` on key-spending endpoints (single-use replay protection; `consume` is a documented no-op for App Attest/DeviceCheck tokens). **Monitor mode by default** — an env-driven flip (e.g. `APP_CHECK_ENFORCE === 'true'`) switches to rejecting missing/invalid tokens with 401 before any upstream work.
+- **Cost gates BEFORE billing**: reject non-object bodies, empty `state`, empty `questions` with 400; oversized bodies with 413.
+- **Rate limiter keyed on VERIFIED identity only**: key on the verified `uid` or the verified token's stable `appId`; garbage or unverified tokens fall into a shared `anonymous` bucket so token rotation cannot reset a per-token budget. Deny with 429 + `Retry-After` so client retry loops (429/529 only) engage.
+- **Replicate upstream faithfully**: pass through upstream status + body + `content-type` + `Retry-After`; on fetch/read failure return a GENERIC 502 (detail logged server-side only, never echoed).
 
 ---
 

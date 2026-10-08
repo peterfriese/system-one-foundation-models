@@ -222,6 +222,8 @@ struct TriageDecision: Sendable {
 }
 ```
 
+**Batched question disambiguation**: when one `@Generable` type emits multiple questions in a single call, each question's `@Guide(description:)` must self-identify its subject ("Candidate A", "transaction #8491"). Observably identical instructions collapse the batch and answers land near 0.5 (live: 0.77/0.79 → 0.94/0.01 after naming). Applies to every backend (Jev, Laya, on-device): prefer one call with self-identifying guides, or fall back to one question per request.
+
 ---
 
 ## 5. Confidence Routing with `RoutingPolicy`
