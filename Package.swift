@@ -33,6 +33,10 @@ let package = Package(
             name: "ClefFoundationModels",
             targets: ["ClefFoundationModels"]
         ),
+        .library(
+            name: "OpenAIFoundationModels",
+            targets: ["OpenAIFoundationModels"]
+        ),
         .executable(
             name: "ticket-triage-demo",
             targets: ["TicketTriageDemo"]
@@ -56,6 +60,10 @@ let package = Package(
         .executable(
             name: "clef-camera-scanner",
             targets: ["ClefCameraScanner"]
+        ),
+        .executable(
+            name: "openai-demo",
+            targets: ["OpenAIDemo"]
         )
     ],
     traits: [
@@ -76,6 +84,10 @@ let package = Package(
             description: "Enables Cloudflare Clef and Clef-Flash hosted and local decision models"
         ),
         .trait(
+            name: "OpenAI",
+            description: "Enables OpenAI Decisions API hosted client"
+        ),
+        .trait(
             name: "OnDevice",
             description: "Enables on-device decision model capabilities",
             enabledTraits: ["Laya"]
@@ -83,12 +95,12 @@ let package = Package(
         .trait(
             name: "Remote",
             description: "Enables remote hosted and self-hosted decision model clients",
-            enabledTraits: ["Jev", "LayaServe", "Clef"]
+            enabledTraits: ["Jev", "LayaServe", "Clef", "OpenAI"]
         ),
         .trait(
             name: "All",
             description: "Enables all System One model backends and transports",
-            enabledTraits: ["Jev", "Laya", "LayaServe", "Clef"]
+            enabledTraits: ["Jev", "Laya", "LayaServe", "Clef", "OpenAI"]
         ),
         .default(enabledTraits: ["All"])
     ],
@@ -107,7 +119,8 @@ let package = Package(
                 .target(name: "JevFoundationModels", condition: .when(traits: ["Jev"])),
                 .target(name: "LayaFoundationModels", condition: .when(traits: ["LayaServe"])),
                 .target(name: "LayaOnDevice", condition: .when(traits: ["Laya"])),
-                .target(name: "ClefFoundationModels", condition: .when(traits: ["Clef"]))
+                .target(name: "ClefFoundationModels", condition: .when(traits: ["Clef"])),
+                .target(name: "OpenAIFoundationModels", condition: .when(traits: ["OpenAI"]))
             ],
             swiftSettings: [
                 .enableUpcomingFeature("StrictConcurrency")
@@ -136,6 +149,13 @@ let package = Package(
         ),
         .target(
             name: "ClefFoundationModels",
+            dependencies: ["SystemOneCore"],
+            swiftSettings: [
+                .enableUpcomingFeature("StrictConcurrency")
+            ]
+        ),
+        .target(
+            name: "OpenAIFoundationModels",
             dependencies: ["SystemOneCore"],
             swiftSettings: [
                 .enableUpcomingFeature("StrictConcurrency")
@@ -183,6 +203,15 @@ let package = Package(
                 .enableUpcomingFeature("StrictConcurrency")
             ]
         ),
+        .executableTarget(
+            name: "OpenAIDemo",
+            dependencies: ["OpenAIFoundationModels"],
+            path: "Examples/OpenAIDemo",
+            exclude: ["README.md"],
+            swiftSettings: [
+                .enableUpcomingFeature("StrictConcurrency")
+            ]
+        ),
         .testTarget(
             name: "SystemOneCoreTests",
             dependencies: [
@@ -208,6 +237,16 @@ let package = Package(
             name: "ClefFoundationModelsTests",
             dependencies: [
                 "ClefFoundationModels",
+                "SystemOneCore"
+            ],
+            swiftSettings: [
+                .enableUpcomingFeature("StrictConcurrency")
+            ]
+        ),
+        .testTarget(
+            name: "OpenAIFoundationModelsTests",
+            dependencies: [
+                "OpenAIFoundationModels",
                 "SystemOneCore"
             ],
             swiftSettings: [
