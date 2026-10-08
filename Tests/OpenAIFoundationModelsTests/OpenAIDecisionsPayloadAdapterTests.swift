@@ -163,7 +163,7 @@ struct OpenAIDecisionsPayloadAdapterTests {
         #expect(priorityAnswer.legend?["3"] == "High")
     }
 
-    @Test("Adapt Response: Throws error when safety refusal is present")
+    @Test("Adapt Response: Throws safetyRefusal when safety refusal is present")
     func testAdaptResponseWithRefusalThrows() throws {
         let openAIResponse = OpenAIDecisionsResponse(
             id: "dec-refusal",
@@ -178,8 +178,67 @@ struct OpenAIDecisionsPayloadAdapterTests {
             usage: .init(inputTokens: 30, outputTokens: 0)
         )
 
-        #expect(throws: SystemOneError.self) {
-            try OpenAIDecisionsPayloadAdapter.adaptResponse(openAIResponse)
+        do {
+            _ = try OpenAIDecisionsPayloadAdapter.adaptResponse(openAIResponse)
+            Issue.record("Expected safetyRefusal error")
+        } catch let error as SystemOneError {
+            if case .safetyRefusal(let reason, let questionName) = error {
+                #expect(questionName == "exploitDetection")
+                #expect(reason.contains("safety policy"))
+            } else {
+                Issue.record("Expected .safetyRefusal, got: \(error)")
+            }
+        }
+    }
+
+    @Test("Adapt Response: Throws decodingError for absent or empty answers array")
+    func testAdaptResponseWithAbsentAnswersThrows() throws {
+        let openAIResponse = OpenAIDecisionsResponse(
+            id: "dec-empty",
+            model: "gpt-6-luna",
+            answers: [],
+            usage: .init(inputTokens: 10, outputTokens: 0)
+        )
+
+        do {
+            _ = try OpenAIDecisionsPayloadAdapter.adaptResponse(openAIResponse)
+            Issue.record("Expected decodingError for empty answers array")
+        } catch let error as SystemOneError {
+            if case .decodingError(let message) = error {
+                #expect(message.contains("no answers") || message.contains("Missing answers"))
+            } else {
+                Issue.record("Expected .decodingError, got: \(error)")
+            }
+        }
+    }
+
+    @Test("Adapt Response: Throws decodingError for partial answer array when expected questions are provided")
+    func testAdaptResponseWithPartialAnswersThrows() throws {
+        let openAIResponse = OpenAIDecisionsResponse(
+            id: "dec-partial",
+            model: "gpt-6-luna",
+            answers: [
+                OpenAIDecisionsAnswer(
+                    name: "isUrgent",
+                    type: "predicate",
+                    probability: 0.95,
+                    confidence: 0.95
+                )
+            ],
+            usage: .init(inputTokens: 25, outputTokens: 0)
+        )
+
+        let expected = ["category", "isUrgent", "severity"]
+
+        do {
+            _ = try OpenAIDecisionsPayloadAdapter.adaptResponse(openAIResponse, expectedQuestionNames: expected)
+            Issue.record("Expected decodingError for missing expected answers")
+        } catch let error as SystemOneError {
+            if case .decodingError(let message) = error {
+                #expect(message == "Missing answer for expected question 'category'")
+            } else {
+                Issue.record("Expected .decodingError, got: \(error)")
+            }
         }
     }
 

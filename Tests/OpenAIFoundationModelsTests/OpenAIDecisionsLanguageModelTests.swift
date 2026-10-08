@@ -185,4 +185,62 @@ struct OpenAIDecisionsLanguageModelTests {
             Issue.record("Unexpected error: \(error)")
         }
     }
+
+    @Test("OpenAIDecisionsExecutor rejects absent answer array and throws decodingError instead of fabricating fallbacks")
+    func testLanguageModelSessionWithAbsentAnswersThrows() async throws {
+        let mockBackend = MockOpenAIDecisionsBackend { _ in
+            SystemOneResponse(
+                model: "gpt-6-luna",
+                answers: [:], // Empty/absent answers
+                usage: SystemOneUsage(inputTokens: 50, outputTokens: 0)
+            )
+        }
+
+        let model = OpenAIDecisionsLanguageModel(backend: mockBackend)
+        let session = LanguageModelSession(model: model)
+
+        do {
+            _ = try await session.respond(to: "Audit expense receipt", generating: ExpenseAuditDecision.self)
+            Issue.record("Expected decodingError for absent answers")
+        } catch let error as SystemOneError {
+            if case .decodingError(let message) = error {
+                #expect(message.contains("Missing answer for expected question"))
+            } else {
+                Issue.record("Expected .decodingError, got: \(error)")
+            }
+        }
+    }
+
+    @Test("OpenAIDecisionsExecutor rejects partial answer array and throws decodingError instead of fabricating fallbacks")
+    func testLanguageModelSessionWithPartialAnswersThrows() async throws {
+        let mockBackend = MockOpenAIDecisionsBackend { _ in
+            // Return only isApproved, missing category and riskScore
+            let partialAnswers: [String: SystemOneAnswer] = [
+                "isApproved": SystemOneAnswer(
+                    type: "noul",
+                    noul: 0.95,
+                    confidence: 0.95
+                )
+            ]
+            return SystemOneResponse(
+                model: "gpt-6-luna",
+                answers: partialAnswers,
+                usage: SystemOneUsage(inputTokens: 50, outputTokens: 0)
+            )
+        }
+
+        let model = OpenAIDecisionsLanguageModel(backend: mockBackend)
+        let session = LanguageModelSession(model: model)
+
+        do {
+            _ = try await session.respond(to: "Audit expense receipt", generating: ExpenseAuditDecision.self)
+            Issue.record("Expected decodingError for partial answers")
+        } catch let error as SystemOneError {
+            if case .decodingError(let message) = error {
+                #expect(message == "Missing answer for expected question 'category'")
+            } else {
+                Issue.record("Expected .decodingError, got: \(error)")
+            }
+        }
+    }
 }

@@ -221,17 +221,99 @@ struct OpenAIDecisionsHTTPBackendTests {
 
         do {
             _ = try await backend.evaluate(request: request)
-            Issue.record("Expected apiError for 401")
+            Issue.record("Expected authenticationFailed for 401")
         } catch let error as SystemOneError {
-            if case .apiError(let statusCode, let message) = error {
-                #expect(statusCode == 401)
+            if case .authenticationFailed(let message) = error {
                 #expect(message.contains("Invalid API key"))
             } else {
-                Issue.record("Expected .apiError, got: \(error)")
+                Issue.record("Expected .authenticationFailed, got: \(error)")
             }
         }
 
         // Should not have retried
+        #expect(MockOpenAIURLProtocol.recordedRequests.count == 1)
+    }
+
+    @Test("HTTP Backend does not retry 403 Forbidden and throws authenticationFailed")
+    func testNonRetryable403() async throws {
+        MockOpenAIURLProtocol.reset()
+        MockOpenAIURLProtocol.enqueue(
+            statusCode: 403,
+            body: """
+            {"error": {"message": "Project access forbidden", "type": "permission_denied"}}
+            """.data(using: .utf8)!
+        )
+
+        let policy = RetryPolicy(maxAttempts: 3, initialDelay: .zero)
+        let backend = OpenAIDecisionsHTTPBackend(
+            endpoint: .hosted(),
+            apiKey: "sk-forbidden",
+            session: makeSession(),
+            retryPolicy: policy
+        )
+
+        let request = SystemOneRequest(
+            state: "Test",
+            questions: ["isSafe": .noul(instructions: "Is safe?")]
+        )
+
+        do {
+            _ = try await backend.evaluate(request: request)
+            Issue.record("Expected authenticationFailed for 403")
+        } catch let error as SystemOneError {
+            if case .authenticationFailed(let message) = error {
+                #expect(message.contains("Project access forbidden"))
+            } else {
+                Issue.record("Expected .authenticationFailed, got: \(error)")
+            }
+        }
+
+        #expect(MockOpenAIURLProtocol.recordedRequests.count == 1)
+    }
+
+    @Test("HTTP Backend fails fast on 429 with insufficient_quota without retrying")
+    func testExhaustedQuotaDoesNotRetry() async throws {
+        MockOpenAIURLProtocol.reset()
+        MockOpenAIURLProtocol.enqueue(
+            statusCode: 429,
+            headers: ["Retry-After": "10"],
+            body: """
+            {
+              "error": {
+                "message": "You exceeded your current quota, please check your plan and billing details.",
+                "type": "insufficient_quota",
+                "param": null,
+                "code": "insufficient_quota"
+              }
+            }
+            """.data(using: .utf8)!
+        )
+
+        let policy = RetryPolicy(maxAttempts: 3, initialDelay: .zero)
+        let backend = OpenAIDecisionsHTTPBackend(
+            endpoint: .hosted(),
+            apiKey: "sk-quota-exhausted",
+            session: makeSession(),
+            retryPolicy: policy
+        )
+
+        let request = SystemOneRequest(
+            state: "Test",
+            questions: ["isSafe": .noul(instructions: "Is safe?")]
+        )
+
+        do {
+            _ = try await backend.evaluate(request: request)
+            Issue.record("Expected quotaExceeded for insufficient_quota 429")
+        } catch let error as SystemOneError {
+            if case .quotaExceeded(let message) = error {
+                #expect(message.contains("You exceeded your current quota"))
+            } else {
+                Issue.record("Expected .quotaExceeded, got: \(error)")
+            }
+        }
+
+        // Verify it failed fast without retrying despite retryPolicy allowing 3 attempts
         #expect(MockOpenAIURLProtocol.recordedRequests.count == 1)
     }
 }

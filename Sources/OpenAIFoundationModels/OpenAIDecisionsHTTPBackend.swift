@@ -52,6 +52,7 @@ public struct OpenAIDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
         let (openAIResponse, transportDuration, serverDuration) = try await evaluateWithTiming(request: openAIRequest)
         return try OpenAIDecisionsPayloadAdapter.adaptResponse(
             openAIResponse,
+            expectedQuestionNames: Set(request.questions.keys),
             transportDurationMs: transportDuration,
             serverDurationMs: serverDuration
         )
@@ -90,10 +91,22 @@ public struct OpenAIDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
                 throw CancellationError()
             } catch let resError as HTTPResponseError {
                 let statusCode = resError.httpResponse.statusCode
+                let errorDetail = parseErrorDetail(from: resError.data)
+                let errorMessage = errorDetail?.message ?? parseErrorMessage(from: resError.data, fallbackCode: statusCode)
+
+                // 401 Unauthorized / 403 Forbidden: fail fast with authenticationFailed
+                if statusCode == 401 || statusCode == 403 {
+                    throw SystemOneError.authenticationFailed(errorMessage)
+                }
+
+                // 429 with quota exhaustion: fail fast without retrying
+                if statusCode == 429 && isQuotaExhaustion(detail: errorDetail, rawMessage: errorMessage) {
+                    throw SystemOneError.quotaExceeded(errorMessage)
+                }
+
                 let isLastAttempt = attempts >= maxAttempts
 
                 guard retryPolicy.retryableStatuses.contains(statusCode), !isLastAttempt else {
-                    let errorMessage = parseErrorMessage(from: resError.data, fallbackCode: statusCode)
                     throw SystemOneError.apiError(statusCode: statusCode, message: errorMessage)
                 }
 
@@ -199,6 +212,27 @@ public struct OpenAIDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
             }
             throw SystemOneError.decodingError("Failed to decode OpenAIDecisionsResponse: \(error.localizedDescription)")
         }
+    }
+
+    private func parseErrorDetail(from data: Data) -> OpenAIErrorEnvelope.ErrorDetail? {
+        if let envelope = try? JSONDecoder().decode(OpenAIErrorEnvelope.self, from: data) {
+            return envelope.error
+        }
+        return nil
+    }
+
+    private func isQuotaExhaustion(detail: OpenAIErrorEnvelope.ErrorDetail?, rawMessage: String) -> Bool {
+        if let code = detail?.code?.lowercased(), code == "insufficient_quota" {
+            return true
+        }
+        if let type = detail?.type?.lowercased(), type == "insufficient_quota" {
+            return true
+        }
+        let message = (detail?.message ?? rawMessage).lowercased()
+        if message.contains("insufficient_quota") || message.contains("exceeded your current quota") || message.contains("quota exceeded") || message.contains("quota exhausted") {
+            return true
+        }
+        return false
     }
 
     private func parseErrorMessage(from data: Data, fallbackCode: Int) -> String {

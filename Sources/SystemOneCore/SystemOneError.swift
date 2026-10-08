@@ -18,6 +18,12 @@ public enum SystemOneError: LocalizedError, Sendable, Equatable, Hashable {
     case backendError(String)
     /// On-device model execution error.
     case modelExecutionError(String)
+    /// The model refused to evaluate a question due to safety policy.
+    case safetyRefusal(reason: String, questionName: String)
+    /// Authentication or authorization failure (e.g. invalid or revoked API key).
+    case authenticationFailed(String)
+    /// API quota or credit limit exhausted.
+    case quotaExceeded(String)
 
     public var errorDescription: String? {
         switch self {
@@ -37,6 +43,12 @@ public enum SystemOneError: LocalizedError, Sendable, Equatable, Hashable {
             return "Backend error: \(details)"
         case .modelExecutionError(let details):
             return "On-device model execution error: \(details)"
+        case .safetyRefusal(let reason, let questionName):
+            return "Safety policy refusal on question '\(questionName)': \(reason)"
+        case .authenticationFailed(let details):
+            return "Authentication failed: \(details)"
+        case .quotaExceeded(let details):
+            return "Quota exceeded: \(details)"
         }
     }
 }

@@ -51,6 +51,13 @@ public final class OpenAIDecisionsExecutor: LanguageModelExecutor, Sendable {
         // 5. Evaluate via backend
         let response = try await configuration.backend.evaluate(request: systemOneRequest)
 
+        // Validate that every expected question has a corresponding answer before synthesizing
+        for key in translation.questions.keys.sorted() {
+            guard response.answers[key] != nil else {
+                throw SystemOneError.decodingError("Missing answer for expected question '\(key)'")
+            }
+        }
+
         // 6. Synthesize payload for @Generable decoding
         let synthesizedText = try synthesizer.synthesize(
             answers: response.answers,

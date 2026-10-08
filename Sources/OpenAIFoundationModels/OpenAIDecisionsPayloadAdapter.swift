@@ -78,16 +78,24 @@ public enum OpenAIDecisionsPayloadAdapter {
     /// Adapts an `OpenAIDecisionsResponse` into a unified `SystemOneResponse`.
     public static func adaptResponse(
         _ openAIResponse: OpenAIDecisionsResponse,
+        expectedQuestionNames: Set<String>? = nil,
         transportDurationMs: Double? = nil,
         serverDurationMs: Double? = nil
     ) throws -> SystemOneResponse {
+        guard !openAIResponse.answers.isEmpty else {
+            if let firstExpected = expectedQuestionNames?.sorted().first {
+                throw SystemOneError.decodingError("Missing answer for expected question '\(firstExpected)'")
+            }
+            throw SystemOneError.decodingError("Missing answers in OpenAI Decisions response: answers array is empty")
+        }
+
         var answers: [String: SystemOneAnswer] = [:]
 
         for ans in openAIResponse.answers {
             // Check for safety refusal
             if ans.type == "refusal" || ans.refusal != nil {
                 let reason = ans.refusal ?? "Content blocked by safety policy"
-                throw SystemOneError.modelExecutionError("OpenAI Decisions safety refusal on question '\(ans.name)': \(reason)")
+                throw SystemOneError.safetyRefusal(reason: reason, questionName: ans.name)
             }
 
             if let prob = ans.probability {
@@ -154,6 +162,14 @@ public enum OpenAIDecisionsPayloadAdapter {
             }
         }
 
+        if let expectedQuestionNames {
+            for key in expectedQuestionNames.sorted() {
+                guard answers[key] != nil else {
+                    throw SystemOneError.decodingError("Missing answer for expected question '\(key)'")
+                }
+            }
+        }
+
         let usage = SystemOneUsage(
             inputTokens: openAIResponse.usage?.inputTokens ?? 0,
             outputTokens: openAIResponse.usage?.outputTokens ?? 0
@@ -165,6 +181,21 @@ public enum OpenAIDecisionsPayloadAdapter {
             usage: usage,
             serverDurationMs: serverDurationMs,
             transportDurationMs: transportDurationMs
+        )
+    }
+
+    /// Adapts an `OpenAIDecisionsResponse` into a unified `SystemOneResponse` with an array of expected question names.
+    public static func adaptResponse(
+        _ openAIResponse: OpenAIDecisionsResponse,
+        expectedQuestionNames: [String],
+        transportDurationMs: Double? = nil,
+        serverDurationMs: Double? = nil
+    ) throws -> SystemOneResponse {
+        try adaptResponse(
+            openAIResponse,
+            expectedQuestionNames: Set(expectedQuestionNames),
+            transportDurationMs: transportDurationMs,
+            serverDurationMs: serverDurationMs
         )
     }
 }
