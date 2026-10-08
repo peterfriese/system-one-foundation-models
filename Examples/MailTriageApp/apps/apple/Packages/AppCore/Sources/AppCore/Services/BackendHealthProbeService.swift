@@ -5,6 +5,7 @@ import FactoryKit
 import SystemOneCore
 import JevFoundationModels
 import ClefFoundationModels
+import OpenAIFoundationModels
 
 /// Health status of a decision model inference backend.
 public enum BackendHealthStatus: Sendable, Equatable {
@@ -100,8 +101,8 @@ public final class BackendHealthProbeService: BackendHealthProbeServiceProtocol,
             self.session = session
         } else {
             let config = URLSessionConfiguration.ephemeral
-            config.timeoutIntervalForRequest = 2.0
-            config.timeoutIntervalForResource = 2.0
+            config.timeoutIntervalForRequest = 10.0
+            config.timeoutIntervalForResource = 10.0
             config.waitsForConnectivity = false
             self.session = URLSession(configuration: config)
         }
@@ -119,6 +120,8 @@ public final class BackendHealthProbeService: BackendHealthProbeServiceProtocol,
             return await probeCoreML()
         case .cloudflareClef:
             return await probeCloudflareClef()
+        case .openaiDecisions:
+            return await probeOpenAIDecisions()
         case .generativeBaseline:
             return await probeBaseline()
         }
@@ -257,7 +260,7 @@ public final class BackendHealthProbeService: BackendHealthProbeServiceProtocol,
         request.httpMethod = "POST"
         request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 3.0
+        request.timeoutInterval = 10.0
 
         do {
             let probeRequest = JevRequest(
@@ -307,8 +310,9 @@ public final class BackendHealthProbeService: BackendHealthProbeServiceProtocol,
 
             return evaluateHTTPStatus(http.statusCode, latencyMs: elapsed)
         } catch {
+            print("⚠️ [probeJevCloud] Failed with error: \(error)")
             return .unreachable(
-                reason: "Cannot connect to Jev Cloud API",
+                reason: "Cannot connect to Jev Cloud API: \(error.localizedDescription)",
                 guidance: "Check your internet connection or cloud service status."
             )
         }
@@ -339,7 +343,7 @@ public final class BackendHealthProbeService: BackendHealthProbeServiceProtocol,
         request.httpMethod = "POST"
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 3.0
+        request.timeoutInterval = 10.0
 
         do {
             let probeRequest = SystemOneRequest(
@@ -389,9 +393,92 @@ public final class BackendHealthProbeService: BackendHealthProbeServiceProtocol,
 
             return evaluateHTTPStatus(http.statusCode, latencyMs: elapsed)
         } catch {
+            print("⚠️ [probeCloudflareClef] Failed with error: \(error)")
             return .unreachable(
-                reason: "Cannot connect to Cloudflare Workers AI",
+                reason: "Cannot connect to Cloudflare Workers AI: \(error.localizedDescription)",
                 guidance: "Check your internet connection and Cloudflare credentials."
+            )
+        }
+    }
+
+    private func probeOpenAIDecisions() async -> BackendHealthStatus {
+        var key = configStore.openaiAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        if key.hasPrefix("Bearer ") {
+            key = String(key.dropFirst("Bearer ".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard !key.isEmpty else {
+            return .unreachable(
+                reason: "Missing OpenAI API Key",
+                guidance: "Open Settings (⌘,) and paste your OPENAI_API_KEY."
+            )
+        }
+
+        let clock = ContinuousClock()
+        let start = clock.now
+
+        var request = URLRequest(url: OpenAIDecisionsEndpoint.defaultURL)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let org = configStore.openaiOrganization.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !org.isEmpty {
+            request.setValue(org, forHTTPHeaderField: "OpenAI-Organization")
+        }
+        let proj = configStore.openaiProject.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !proj.isEmpty {
+            request.setValue(proj, forHTTPHeaderField: "OpenAI-Project")
+        }
+        request.timeoutInterval = 10.0
+
+        do {
+            let probeRequest = OpenAIDecisionsRequest(
+                model: OpenAIDecisionsEndpoint.defaultModel,
+                input: .text("Health check probe"),
+                questions: [
+                    OpenAIDecisionsQuestion(
+                        type: "predicate",
+                        name: "ping",
+                        instructions: "Is this endpoint responsive?"
+                    )
+                ]
+            )
+            request.httpBody = try JSONEncoder().encode(probeRequest)
+
+            let (data, response) = try await session.data(for: request)
+            let elapsed = start.duration(to: clock.now).asMilliseconds
+            guard let http = response as? HTTPURLResponse else {
+                return .unreachable(
+                    reason: "Unexpected response from OpenAI Decisions API",
+                    guidance: "Check your internet connection or service status."
+                )
+            }
+
+            if (200...299).contains(http.statusCode) {
+                return .healthy(latencyMs: elapsed)
+            }
+
+            let serverMessage = parseServerErrorMessage(from: data)
+            if let serverMessage, !serverMessage.isEmpty {
+                let guidance: String
+                if http.statusCode == 401 || http.statusCode == 403 {
+                    guidance = "Check your OpenAI API Key in Settings."
+                } else if http.statusCode == 429 {
+                    guidance = "OpenAI Decisions API rate limited or quota exceeded."
+                } else {
+                    guidance = "Check OpenAI service status."
+                }
+                return .unreachable(
+                    reason: "OpenAI Error (HTTP \(http.statusCode)): \(serverMessage)",
+                    guidance: guidance
+                )
+            }
+
+            return evaluateHTTPStatus(http.statusCode, latencyMs: elapsed)
+        } catch {
+            print("⚠️ [probeOpenAIDecisions] Failed with error: \(error)")
+            return .unreachable(
+                reason: "Cannot connect to OpenAI Decisions API: \(error.localizedDescription)",
+                guidance: "Check your internet connection and OpenAI API key."
             )
         }
     }

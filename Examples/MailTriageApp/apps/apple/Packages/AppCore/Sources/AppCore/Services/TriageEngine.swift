@@ -5,6 +5,7 @@ import SystemOneCore
 import LayaFoundationModels
 import JevFoundationModels
 import ClefFoundationModels
+import OpenAIFoundationModels
 import LayaOnDevice
 import FactoryKit
 
@@ -255,7 +256,8 @@ public final class TriageEngine: TriageEngineProtocol, @unchecked Sendable {
                 "Subject: \(email.subject)"
                 "Body:\n\(email.body)"
                 for attachment in email.imageAttachments {
-                    if let imageAttachment = Attachment(attachment.data, type: .png) {
+                    let imageType = mapMimeTypeToUTType(attachment.mimeType)
+                    if let imageAttachment = Attachment(attachment.data, type: imageType) {
                         imageAttachment
                     }
                 }
@@ -263,6 +265,42 @@ public final class TriageEngine: TriageEngineProtocol, @unchecked Sendable {
             let response = try await session.respond(to: clefPrompt, generating: EmailTriageDecision.self)
             latencyMs = startTime.duration(to: clock.now).asMilliseconds
             result = makeTriageResult(response: response, backend: backend, latencyMs: latencyMs)
+
+        case .openaiDecisions:
+            guard let apiKey = (keychainService.string(for: .openaiApiKey) ?? (configStore.openaiAPIKey.isEmpty ? nil : configStore.openaiAPIKey))?.trimmingCharacters(in: .whitespacesAndNewlines), !apiKey.isEmpty else {
+                throw BackendUnreachableError(
+                    backend: backend,
+                    reason: "Missing OpenAI API Key",
+                    guidance: "Open Settings (⌘,) and paste your OPENAI_API_KEY."
+                )
+            }
+            let org = configStore.openaiOrganization.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : configStore.openaiOrganization.trimmingCharacters(in: .whitespacesAndNewlines)
+            let proj = configStore.openaiProject.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : configStore.openaiProject.trimmingCharacters(in: .whitespacesAndNewlines)
+            let model = OpenAIDecisionsLanguageModel(
+                endpoint: .hosted(model: "gpt-6-luna", organization: org, project: proj),
+                apiKey: apiKey
+            )
+            let session = LanguageModelSession(model: model)
+            let openAIPrompt = Prompt {
+                "Analyze the following email and any attached documents or screenshots for triage classification, urgency scoring, and suggested response actions."
+                "Sender: \(email.sender) <\(email.senderEmail)>"
+                "Subject: \(email.subject)"
+                "Body:\n\(email.body)"
+                for attachment in email.imageAttachments {
+                    let imageType = mapMimeTypeToUTType(attachment.mimeType)
+                    if let imageAttachment = Attachment(attachment.data, type: imageType) {
+                        imageAttachment
+                    }
+                }
+            }
+            do {
+                let response = try await session.respond(to: openAIPrompt, generating: EmailTriageDecision.self)
+                latencyMs = startTime.duration(to: clock.now).asMilliseconds
+                result = makeTriageResult(response: response, backend: backend, latencyMs: latencyMs)
+            } catch {
+                print("⚠️ [TriageEngine] OpenAI Decisions evaluation failed: \(error)")
+                throw error
+            }
 
         case .onDeviceCoreML:
             guard let modelURL = activeCoreMLManager.resolvedModelURL else {
@@ -386,11 +424,11 @@ public final class TriageEngine: TriageEngineProtocol, @unchecked Sendable {
         try Task.checkCancellation()
 
         // Adaptive parallelism: use maxParallelism = 4 for remote cloud backends
-        // (.cloudflareClef, .cloudAPI) to prevent rate-limit saturation, while keeping
+        // (.cloudflareClef, .cloudAPI, .openaiDecisions) to prevent rate-limit saturation, while keeping
         // maxParallelism = 8 for local/on-device backends.
         let effectiveParallelism: Int = {
             switch backend {
-            case .cloudflareClef, .cloudAPI:
+            case .cloudflareClef, .cloudAPI, .openaiDecisions:
                 return min(self.maxParallelism, 4)
             case .onDeviceCoreML, .localServe, .hostedVPC, .generativeBaseline:
                 return self.maxParallelism
@@ -483,6 +521,17 @@ public final class TriageEngine: TriageEngineProtocol, @unchecked Sendable {
     }
 
     // MARK: - Helpers
+
+    private func mapMimeTypeToUTType(_ mimeType: String) -> UTType {
+        let lower = mimeType.lowercased()
+        if lower.contains("jpeg") || lower.contains("jpg") {
+            return .jpeg
+        } else if lower.contains("webp") {
+            return .webP
+        } else {
+            return .png
+        }
+    }
 
     private func makeTriageResult(
         response: LanguageModelSession.Response<EmailTriageDecision>,

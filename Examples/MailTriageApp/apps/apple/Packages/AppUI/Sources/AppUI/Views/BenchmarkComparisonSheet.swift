@@ -8,6 +8,32 @@ import AppKit
 import UIKit
 #endif
 
+/// Columns available for sorting the comparative benchmark table.
+public enum BenchmarkSortColumn: String, CaseIterable, Identifiable, Sendable {
+    case backend = "Backend"
+    case mode = "Mode"
+    case samples = "Samples"
+    case meanLatency = "Mean Latency"
+    case p50 = "P50"
+    case p95 = "P95"
+    case autoRate = "Auto %"
+    case escalateRate = "Escalate %"
+
+    public var id: String { rawValue }
+    public var title: String { rawValue }
+
+    /// Default sort direction when selecting this column.
+    /// Latencies and text default to ascending; counts and rates default to descending.
+    public var defaultAscending: Bool {
+        switch self {
+        case .backend, .mode, .meanLatency, .p50, .p95:
+            return true
+        case .samples, .autoRate, .escalateRate:
+            return false
+        }
+    }
+}
+
 /// Comprehensive modal comparison sheet analyzing latency distributions, routing accuracy,
 /// and automated decision confidence across all evaluated backends in the active session.
 public struct BenchmarkComparisonSheet: View {
@@ -20,8 +46,82 @@ public struct BenchmarkComparisonSheet: View {
     @State private var copiedCSV: Bool = false
     @State private var showingClearConfirmation: Bool = false
     @State private var selectedDetailFilter: TriageBackend? = nil
+    @State private var sortColumn: BenchmarkSortColumn = .meanLatency
+    @State private var sortAscending: Bool = true
 
-    public init() {}
+    public init() {
+        self.init(sortColumn: .meanLatency, sortAscending: true)
+    }
+
+    init(sortColumn: BenchmarkSortColumn = .meanLatency, sortAscending: Bool = true) {
+        _sortColumn = State(initialValue: sortColumn)
+        _sortAscending = State(initialValue: sortAscending)
+    }
+
+    var sortedStatistics: [BackendBenchmarkStats] {
+        sessionStore.backendStatistics.sorted { a, b in
+            // Prioritize backends with recorded samples over 0-sample backends
+            if (a.sampleCount > 0) != (b.sampleCount > 0) {
+                return a.sampleCount > 0
+            }
+
+            let isOrderedBefore: Bool
+            switch sortColumn {
+            case .backend:
+                let cmp = a.backend.displayName.localizedCaseInsensitiveCompare(b.backend.displayName)
+                if cmp != .orderedSame {
+                    isOrderedBefore = cmp == .orderedAscending
+                } else {
+                    return a.backend.displayName < b.backend.displayName
+                }
+            case .mode:
+                let cmp = a.backend.privacyLevel.rawValue.localizedCaseInsensitiveCompare(b.backend.privacyLevel.rawValue)
+                if cmp != .orderedSame {
+                    isOrderedBefore = cmp == .orderedAscending
+                } else {
+                    return a.backend.displayName < b.backend.displayName
+                }
+            case .samples:
+                if a.sampleCount != b.sampleCount {
+                    isOrderedBefore = a.sampleCount < b.sampleCount
+                } else {
+                    return a.backend.displayName < b.backend.displayName
+                }
+            case .meanLatency:
+                if a.meanLatencyMs != b.meanLatencyMs {
+                    isOrderedBefore = a.meanLatencyMs < b.meanLatencyMs
+                } else {
+                    return a.backend.displayName < b.backend.displayName
+                }
+            case .p50:
+                if a.p50LatencyMs != b.p50LatencyMs {
+                    isOrderedBefore = a.p50LatencyMs < b.p50LatencyMs
+                } else {
+                    return a.backend.displayName < b.backend.displayName
+                }
+            case .p95:
+                if a.p95LatencyMs != b.p95LatencyMs {
+                    isOrderedBefore = a.p95LatencyMs < b.p95LatencyMs
+                } else {
+                    return a.backend.displayName < b.backend.displayName
+                }
+            case .autoRate:
+                if a.autoPercentage != b.autoPercentage {
+                    isOrderedBefore = a.autoPercentage < b.autoPercentage
+                } else {
+                    return a.backend.displayName < b.backend.displayName
+                }
+            case .escalateRate:
+                if a.escalatePercentage != b.escalatePercentage {
+                    isOrderedBefore = a.escalatePercentage < b.escalatePercentage
+                } else {
+                    return a.backend.displayName < b.backend.displayName
+                }
+            }
+
+            return sortAscending ? isOrderedBefore : !isOrderedBefore
+        }
+    }
 
     private var fastestBackend: TriageBackend? {
         let statsWithSamples = sessionStore.backendStatistics.filter { $0.sampleCount > 0 }
@@ -278,7 +378,7 @@ public struct BenchmarkComparisonSheet: View {
                     Divider()
 
                     // Data Rows
-                    ForEach(sessionStore.backendStatistics) { stat in
+                    ForEach(sortedStatistics) { stat in
                         comparativeTableRow(stat: stat)
                         Divider()
                     }
@@ -292,24 +392,29 @@ public struct BenchmarkComparisonSheet: View {
         }
     }
 
+    private func columnWidth(for column: BenchmarkSortColumn) -> CGFloat {
+        switch column {
+        case .backend: return 195
+        case .mode: return 75
+        case .samples: return 65
+        case .meanLatency: return 105
+        case .p50: return 70
+        case .p95: return 70
+        case .autoRate: return 65
+        case .escalateRate: return 75
+        }
+    }
+
     private var comparativeTableHeader: some View {
-        HStack(spacing: 8) {
-            Text("Backend")
-                .frame(width: 140, alignment: .leading)
-            Text("Mode")
-                .frame(width: 75, alignment: .leading)
-            Text("Samples")
-                .frame(width: 60, alignment: .trailing)
-            Text("Mean Latency")
-                .frame(width: 80, alignment: .trailing)
-            Text("P50")
-                .frame(width: 80, alignment: .trailing)
-            Text("P95")
-                .frame(width: 75, alignment: .trailing)
-            Text("Auto %")
-                .frame(width: 65, alignment: .trailing)
-            Text("Escalate %")
-                .frame(width: 70, alignment: .trailing)
+        HStack(spacing: 12) {
+            tableHeaderButton(column: .backend, width: columnWidth(for: .backend), alignment: .leading)
+            tableHeaderButton(column: .mode, width: columnWidth(for: .mode), alignment: .leading)
+            tableHeaderButton(column: .samples, width: columnWidth(for: .samples), alignment: .trailing)
+            tableHeaderButton(column: .meanLatency, width: columnWidth(for: .meanLatency), alignment: .trailing)
+            tableHeaderButton(column: .p50, width: columnWidth(for: .p50), alignment: .trailing)
+            tableHeaderButton(column: .p95, width: columnWidth(for: .p95), alignment: .trailing)
+            tableHeaderButton(column: .autoRate, width: columnWidth(for: .autoRate), alignment: .trailing)
+            tableHeaderButton(column: .escalateRate, width: columnWidth(for: .escalateRate), alignment: .trailing)
             Spacer()
         }
         .font(.caption.weight(.bold))
@@ -319,11 +424,42 @@ public struct BenchmarkComparisonSheet: View {
         .background(Color.secondary.opacity(0.06))
     }
 
+    private func tableHeaderButton(column: BenchmarkSortColumn, width: CGFloat, alignment: Alignment) -> some View {
+        Button {
+            handleColumnTap(column)
+        } label: {
+            HStack(spacing: 4) {
+                Text(column.title)
+                    .lineLimit(1)
+
+                Image(systemName: (sortColumn == column && !sortAscending) ? "chevron.down" : "chevron.up")
+                    .font(.system(size: 8, weight: .bold))
+                    .opacity(sortColumn == column ? 1 : 0)
+            }
+            .frame(width: width, alignment: alignment)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(sortColumn == column ? Color.primary : Color.secondary)
+        .help("Sort by \(column.title)")
+    }
+
+    private func handleColumnTap(_ column: BenchmarkSortColumn) {
+        withAnimation(.easeInOut(duration: 0.15)) {
+            if sortColumn == column {
+                sortAscending.toggle()
+            } else {
+                sortColumn = column
+                sortAscending = column.defaultAscending
+            }
+        }
+    }
+
     private func comparativeTableRow(stat: BackendBenchmarkStats) -> some View {
         let isFastest = stat.backend == fastestBackend && stat.sampleCount > 0
         let rowBackground = isFastest ? Color.green.opacity(0.06) : Color.clear
 
-        return HStack(spacing: 8) {
+        return HStack(spacing: 12) {
             // Backend Name + Badge
             HStack(spacing: 6) {
                 Image(systemName: stat.backend.iconName)
@@ -343,7 +479,7 @@ public struct BenchmarkComparisonSheet: View {
                         .background(Color.green.opacity(0.18), in: Capsule())
                 }
             }
-            .frame(width: 140, alignment: .leading)
+            .frame(width: columnWidth(for: .backend), alignment: .leading)
 
             // Mode / Privacy Topology
             Text(stat.backend.privacyLevel.rawValue)
@@ -351,41 +487,41 @@ public struct BenchmarkComparisonSheet: View {
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
                 .background(Color.secondary.opacity(0.12), in: Capsule())
-                .frame(width: 75, alignment: .leading)
+                .frame(width: columnWidth(for: .mode), alignment: .leading)
 
             // Samples
             Text("\(stat.sampleCount)")
                 .font(.subheadline.monospacedDigit())
-                .frame(width: 60, alignment: .trailing)
+                .frame(width: columnWidth(for: .samples), alignment: .trailing)
 
             // Mean Latency
             Text(stat.formattedMeanLatency)
                 .font(.subheadline.monospacedDigit().weight(isFastest ? .bold : .regular))
                 .foregroundStyle(isFastest ? .green : .primary)
-                .frame(width: 80, alignment: .trailing)
+                .frame(width: columnWidth(for: .meanLatency), alignment: .trailing)
 
             // P50
             Text(stat.formattedP50Latency)
                 .font(.subheadline.monospacedDigit())
                 .foregroundStyle(isFastest ? .green : .primary)
-                .frame(width: 80, alignment: .trailing)
+                .frame(width: columnWidth(for: .p50), alignment: .trailing)
 
             // P95
             Text(stat.formattedP95Latency)
                 .font(.subheadline.monospacedDigit())
-                .frame(width: 75, alignment: .trailing)
+                .frame(width: columnWidth(for: .p95), alignment: .trailing)
 
             // Auto %
             Text(stat.formattedAutoPercentage)
                 .font(.subheadline.monospacedDigit())
                 .foregroundStyle(.green)
-                .frame(width: 65, alignment: .trailing)
+                .frame(width: columnWidth(for: .autoRate), alignment: .trailing)
 
             // Escalate %
             Text(stat.formattedEscalatePercentage)
                 .font(.subheadline.monospacedDigit())
                 .foregroundStyle(stat.escalatePercentage > 15 ? .orange : .secondary)
-                .frame(width: 70, alignment: .trailing)
+                .frame(width: columnWidth(for: .escalateRate), alignment: .trailing)
 
             Spacer()
         }

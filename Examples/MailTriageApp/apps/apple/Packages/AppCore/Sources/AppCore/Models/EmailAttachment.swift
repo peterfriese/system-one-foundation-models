@@ -43,6 +43,34 @@ public struct EmailAttachment: Identifiable, Sendable, Hashable, Codable {
     public var formattedFileSize: String {
         ByteCountFormatter.string(fromByteCount: Int64(fileSizeBytes), countStyle: .file)
     }
+
+    /// Maps the attachment's MIME type or filename to a supported image `UTType` (`.png`, `.jpeg`, `.webP`), defaulting to `.png`.
+    public var utType: UTType {
+        let lowerMime = mimeType.lowercased()
+        if lowerMime.contains("jpeg") || lowerMime.contains("jpg") {
+            return .jpeg
+        } else if lowerMime.contains("webp") {
+            return .webP
+        } else if lowerMime.contains("png") {
+            return .png
+        }
+
+        let lowerFilename = filename.lowercased()
+        if lowerFilename.hasSuffix(".jpg") || lowerFilename.hasSuffix(".jpeg") {
+            return .jpeg
+        } else if lowerFilename.hasSuffix(".webp") {
+            return .webP
+        } else if lowerFilename.hasSuffix(".png") {
+            return .png
+        }
+
+        if let direct = UTType(mimeType: mimeType),
+           direct.conforms(to: .jpeg) || direct.conforms(to: .webP) || direct.conforms(to: .png) {
+            return direct
+        }
+
+        return .png
+    }
 }
 
 extension Attachment where Content == ImageAttachmentContent {

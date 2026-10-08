@@ -274,4 +274,109 @@ struct AppUITests {
         #expect(sessionStore.totalEvaluations == 2)
         #expect(sessionStore.activeBackendCount == 2)
     }
+
+    @Test("BenchmarkSortColumn cases, display titles, and default directions")
+    func testBenchmarkSortColumnProperties() {
+        #expect(BenchmarkSortColumn.allCases.count == 8)
+        #expect(BenchmarkSortColumn.backend.title == "Backend")
+        #expect(BenchmarkSortColumn.mode.title == "Mode")
+        #expect(BenchmarkSortColumn.samples.title == "Samples")
+        #expect(BenchmarkSortColumn.meanLatency.title == "Mean Latency")
+        #expect(BenchmarkSortColumn.p50.title == "P50")
+        #expect(BenchmarkSortColumn.p95.title == "P95")
+        #expect(BenchmarkSortColumn.autoRate.title == "Auto %")
+        #expect(BenchmarkSortColumn.escalateRate.title == "Escalate %")
+
+        // Latencies and text default to ascending
+        #expect(BenchmarkSortColumn.backend.defaultAscending == true)
+        #expect(BenchmarkSortColumn.mode.defaultAscending == true)
+        #expect(BenchmarkSortColumn.meanLatency.defaultAscending == true)
+        #expect(BenchmarkSortColumn.p50.defaultAscending == true)
+        #expect(BenchmarkSortColumn.p95.defaultAscending == true)
+
+        // Counts and rates default to descending
+        #expect(BenchmarkSortColumn.samples.defaultAscending == false)
+        #expect(BenchmarkSortColumn.autoRate.defaultAscending == false)
+        #expect(BenchmarkSortColumn.escalateRate.defaultAscending == false)
+    }
+
+    @Test("BenchmarkComparisonSheet sortedStatistics prioritizes active backends and respects sort column")
+    func testBenchmarkComparisonSheetSorting() {
+        let sessionStore = BenchmarkSessionStore()
+        let email = InboxData.sampleEmails[0]
+
+        // Fast backend (5.0 ms)
+        let fastResult = TriageResult(
+            decision: EmailTriageDecision(requiresAction: true, category: .work, urgencyScore: 1, suggestedAction: .scheduleTask),
+            confidenceScore: 0.95,
+            decisiveness: 0.95,
+            routingTier: .auto,
+            latencyMs: 5.0,
+            backendUsed: .onDeviceCoreML
+        )
+        // Slower backend (120.0 ms)
+        let slowResult = TriageResult(
+            decision: EmailTriageDecision(requiresAction: true, category: .newsletters, urgencyScore: 3, suggestedAction: .autoArchive),
+            confidenceScore: 0.88,
+            decisiveness: 0.88,
+            routingTier: .confirm,
+            latencyMs: 120.0,
+            backendUsed: .cloudAPI
+        )
+        // Mid backend (45.0 ms)
+        let midResult = TriageResult(
+            decision: EmailTriageDecision(requiresAction: true, category: .billing, urgencyScore: 2, suggestedAction: .moveToInbox),
+            confidenceScore: 0.92,
+            decisiveness: 0.92,
+            routingTier: .auto,
+            latencyMs: 45.0,
+            backendUsed: .cloudflareClef
+        )
+
+        sessionStore.record(email: email, result: fastResult)
+        sessionStore.record(email: email, result: slowResult)
+        sessionStore.record(email: email, result: midResult)
+
+        Container.shared.benchmarkSessionStore.register { sessionStore }
+        defer { Container.shared.benchmarkSessionStore.reset() }
+
+        // Default: meanLatency ascending (fastest first, 0-sample backends last)
+        let defaultSheet = BenchmarkComparisonSheet(sortColumn: .meanLatency, sortAscending: true)
+        let defaultSorted = defaultSheet.sortedStatistics
+
+        // The first 3 should be the sampled backends
+        #expect(defaultSorted.count == sessionStore.backendStatistics.count)
+        let sampled = defaultSorted.filter { $0.sampleCount > 0 }
+        #expect(sampled.count == 3)
+        #expect(sampled[0].backend == .onDeviceCoreML)
+        #expect(sampled[1].backend == .cloudflareClef)
+        #expect(sampled[2].backend == .cloudAPI)
+
+        // 0-sample backends must come after all sampled backends
+        let unsampled = defaultSorted.filter { $0.sampleCount == 0 }
+        #expect(unsampled.count == sessionStore.backendStatistics.count - 3)
+        for i in 0..<sampled.count {
+            #expect(defaultSorted[i].sampleCount > 0)
+        }
+
+        // Descending meanLatency: slowest first among sampled backends
+        let descendingSheet = BenchmarkComparisonSheet(sortColumn: .meanLatency, sortAscending: false)
+        let descendingSorted = descendingSheet.sortedStatistics
+        let sampledDesc = descendingSorted.filter { $0.sampleCount > 0 }
+        #expect(sampledDesc[0].backend == .cloudAPI)
+        #expect(sampledDesc[1].backend == .cloudflareClef)
+        #expect(sampledDesc[2].backend == .onDeviceCoreML)
+
+        // 0-sample backends still come after all sampled backends even when descending
+        for i in 0..<sampledDesc.count {
+            #expect(descendingSorted[i].sampleCount > 0)
+        }
+
+        // Sort by backend name ascending
+        let backendNameSheet = BenchmarkComparisonSheet(sortColumn: .backend, sortAscending: true)
+        let backendSorted = backendNameSheet.sortedStatistics
+        let sampledBackend = backendSorted.filter { $0.sampleCount > 0 }
+        #expect(sampledBackend[0].backend.displayName < sampledBackend[1].backend.displayName)
+        #expect(sampledBackend[1].backend.displayName < sampledBackend[2].backend.displayName)
+    }
 }

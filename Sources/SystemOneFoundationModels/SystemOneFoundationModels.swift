@@ -17,3 +17,7 @@ import Foundation
 #if canImport(ClefFoundationModels)
 @_exported import ClefFoundationModels
 #endif
+
+#if canImport(OpenAIFoundationModels)
+@_exported import OpenAIFoundationModels
+#endif

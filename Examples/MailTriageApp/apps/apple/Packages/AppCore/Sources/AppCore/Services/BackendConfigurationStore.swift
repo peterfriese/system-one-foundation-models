@@ -66,6 +66,59 @@ public final class BackendConfigurationStore: @unchecked Sendable {
         static let localServeURL = "ai.typesafe.mailtriage.localServeURL"
         static let hostedVpcURL = "ai.typesafe.mailtriage.hostedVpcURL"
         static let coreMLDownloadURL = "ai.typesafe.mailtriage.coreMLDownloadURL"
+        static let openaiOrganization = "ai.typesafe.mailtriage.openaiOrganization"
+        static let openaiProject = "ai.typesafe.mailtriage.openaiProject"
+    }
+
+    public var openaiOrganization: String {
+        didSet { userDefaults.set(openaiOrganization, forKey: Keys.openaiOrganization) }
+    }
+
+    public var openaiProject: String {
+        didSet { userDefaults.set(openaiProject, forKey: Keys.openaiProject) }
+    }
+
+    public var openaiAPIKey: String {
+        get {
+            access(keyPath: \.openaiAPIKey)
+            func sanitize(_ val: String) -> String {
+                if val.hasPrefix("Bearer ") {
+                    return String(val.dropFirst("Bearer ".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+                return val
+            }
+            if keychain is MockKeychainService {
+                return sanitize(keychain.string(for: .openaiApiKey) ?? "")
+            }
+            if let envKey = ProcessInfo.processInfo.environment["OPENAI_API_KEY"], !envKey.isEmpty {
+                let sanitized = sanitize(envKey)
+                try? keychain.set(sanitized, for: .openaiApiKey)
+                return sanitized
+            }
+            let key = keychain.string(for: .openaiApiKey) ?? ""
+            if !key.isEmpty {
+                let sanitized = sanitize(key)
+                if sanitized != key {
+                    try? keychain.set(sanitized, for: .openaiApiKey)
+                }
+                return sanitized
+            }
+            if let dotEnvKey = Self.loadKeyFromDotEnv("OPENAI_API_KEY"), !dotEnvKey.isEmpty {
+                let sanitized = sanitize(dotEnvKey)
+                try? keychain.set(sanitized, for: .openaiApiKey)
+                return sanitized
+            }
+            return ""
+        }
+        set {
+            withMutation(keyPath: \.openaiAPIKey) {
+                var trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmed.hasPrefix("Bearer ") {
+                    trimmed = String(trimmed.dropFirst("Bearer ".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+                try? keychain.set(trimmed.isEmpty ? nil : trimmed, for: .openaiApiKey)
+            }
+        }
     }
 
     public var jevCloudURL: String {
@@ -301,6 +354,9 @@ public final class BackendConfigurationStore: @unchecked Sendable {
         } else {
             self.coreMLDownloadURL = storedCoreML!
         }
+
+        self.openaiOrganization = userDefaults.string(forKey: Keys.openaiOrganization) ?? ""
+        self.openaiProject = userDefaults.string(forKey: Keys.openaiProject) ?? ""
     }
 
     public func resetToDefaults() {
@@ -313,5 +369,8 @@ public final class BackendConfigurationStore: @unchecked Sendable {
         huggingFaceToken = ""
         cloudflareAccountId = ""
         cloudflareApiToken = ""
+        openaiOrganization = ""
+        openaiProject = ""
+        openaiAPIKey = ""
     }
 }
