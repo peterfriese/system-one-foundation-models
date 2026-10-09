@@ -803,16 +803,16 @@ public struct ConfidenceBadge: View {
 
 // MARK: - Color Palette Extensions
 
-private extension Color {
-    static let emerald = Color(red: 0.15, green: 0.85, blue: 0.50)
-    static let amber = Color(red: 1.0, green: 0.75, blue: 0.15)
-    static let rose = Color(red: 0.95, green: 0.25, blue: 0.35)
+extension Color {
+    static let emerald = Color(red: 0.06, green: 0.73, blue: 0.51)
+    static let amber = Color(red: 0.96, green: 0.62, blue: 0.04)
+    static let rose = Color(red: 0.94, green: 0.27, blue: 0.27)
 }
 
-private extension ShapeStyle where Self == Color {
-    static var emerald: Color { .emerald }
-    static var amber: Color { .amber }
-    static var rose: Color { .rose }
+extension ShapeStyle where Self == Color {
+    static var emerald: Color { Color.emerald }
+    static var amber: Color { Color.amber }
+    static var rose: Color { Color.rose }
 }
 
 // MARK: - Previews

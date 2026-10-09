@@ -53,7 +53,6 @@ public struct FoodProduct: Identifiable, Sendable, Equatable, Hashable {
     public let ingredientsText: String
     public let facilityWarning: String?
     public let nutrition: NutritionFacts
-    public let highlightedOffendingIngredients: [String]
 
     public init(
         id: String,
@@ -64,8 +63,7 @@ public struct FoodProduct: Identifiable, Sendable, Equatable, Hashable {
         iconSystemName: String,
         ingredientsText: String,
         facilityWarning: String?,
-        nutrition: NutritionFacts,
-        highlightedOffendingIngredients: [String] = []
+        nutrition: NutritionFacts
     ) {
         self.id = id
         self.brand = brand
@@ -76,7 +74,6 @@ public struct FoodProduct: Identifiable, Sendable, Equatable, Hashable {
         self.ingredientsText = ingredientsText
         self.facilityWarning = facilityWarning
         self.nutrition = nutrition
-        self.highlightedOffendingIngredients = highlightedOffendingIngredients
     }
 
     /// Formats product state for Apple Foundation Models / Jev input.

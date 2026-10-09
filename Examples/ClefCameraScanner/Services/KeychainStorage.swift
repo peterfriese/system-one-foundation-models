@@ -5,6 +5,7 @@ import Security
 public final class KeychainHelper: @unchecked Sendable {
     private static let lock = NSLock()
     private static let serviceName = "ai.typesafe.clefcamerascanner"
+    nonisolated(unsafe) private static var cache: [String: String] = [:]
 
     private static func baseQuery(forKey key: String) -> [String: Any] {
         [
@@ -19,6 +20,10 @@ public final class KeychainHelper: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
 
+        if let cached = cache[key] {
+            return cached
+        }
+
         var query = baseQuery(forKey: key)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -32,6 +37,7 @@ public final class KeychainHelper: @unchecked Sendable {
               !string.isEmpty else {
             return nil
         }
+        cache[key] = string
         return string
     }
 
@@ -43,6 +49,8 @@ public final class KeychainHelper: @unchecked Sendable {
             try deleteItem(forKey: key)
             return
         }
+
+        cache[key] = value
 
         let data = Data(value.utf8)
         let query = baseQuery(forKey: key)
@@ -77,6 +85,7 @@ public final class KeychainHelper: @unchecked Sendable {
     }
 
     private static func deleteItem(forKey key: String) throws {
+        cache.removeValue(forKey: key)
         let query = baseQuery(forKey: key)
         let status = SecItemDelete(query as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
@@ -104,7 +113,7 @@ public struct KeychainStorage: DynamicProperty, Sendable {
 
     public var wrappedValue: String {
         get {
-            KeychainHelper.string(forKey: key) ?? defaultValue
+            value
         }
         nonmutating set {
             value = newValue

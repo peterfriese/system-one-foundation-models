@@ -98,19 +98,21 @@ public struct SafetyIndicatorBanner: View {
 
             // (d) Supporting Indicator Badges
             if let decision = decision, !isEvaluating {
+                let clampedAllergenRisk = min(max(0, decision.allergenRisk), 3)
+                let clampedProcessingTier = min(max(0, decision.processingTier), 3)
                 HStack(spacing: 8) {
                     // Allergen Level Gauge
                     IndicatorBadge(
                         label: "Allergen",
-                        value: ["Clean", "Trace", "Hidden", "Direct"][decision.allergenRisk],
-                        tint: decision.allergenRisk == 0 ? .green : (decision.allergenRisk == 1 ? .orange : .red)
+                        value: ["Clean", "Trace", "Hidden", "Direct"][clampedAllergenRisk],
+                        tint: clampedAllergenRisk == 0 ? .green : (clampedAllergenRisk == 1 ? .orange : .red)
                     )
 
                     // NOVA Classification Index
                     IndicatorBadge(
                         label: "NOVA",
-                        value: ["Whole (1)", "Culinary (2)", "Processed (3)", "Ultra-UPF (4)"][decision.processingTier],
-                        tint: decision.processingTier <= 1 ? .green : (decision.processingTier == 2 ? .orange : .red)
+                        value: ["Whole (1)", "Culinary (2)", "Processed (3)", "Ultra-UPF (4)"][clampedProcessingTier],
+                        tint: clampedProcessingTier <= 1 ? .green : (clampedProcessingTier == 2 ? .orange : .red)
                     )
 
                     // Calibrated Latency & Model
