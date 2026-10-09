@@ -78,6 +78,12 @@ public extension LanguageModelSession.Response {
         probability(for: question).map(Probability.init(clamping:))
     }
 
+    /// Returns the calibrated `Probability` domain value for a boolean (`noul`) question (alias for `typedProbability`).
+    @available(*, deprecated, renamed: "typedProbability(for:)")
+    func probabilityValue(for question: String) -> Probability? {
+        typedProbability(for: question)
+    }
+
     /// Returns the confidence score for a given categorical or scored question.
     func confidence(for question: String) -> Double? {
         confidenceScores[question]

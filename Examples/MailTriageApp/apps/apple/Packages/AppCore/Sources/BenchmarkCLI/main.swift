@@ -218,7 +218,6 @@ final class BenchmarkRunner: Sendable {
 
         for (index, email) in emails.enumerated() {
             let completed = index + 1
-            let decision: BenchmarkSampleDecision
 
             do {
                 let singleStart = clock.now
@@ -227,7 +226,7 @@ final class BenchmarkRunner: Sendable {
                 let latency = max(result.latencyMs, measuredDurationMs)
                 latencies.append(latency)
 
-                decision = BenchmarkSampleDecision(
+                let decision = BenchmarkSampleDecision(
                     emailId: email.id,
                     latencyMs: latency,
                     category: result.decision.category,
@@ -236,21 +235,17 @@ final class BenchmarkRunner: Sendable {
                     suggestedAction: result.decision.suggestedAction,
                     confidence: result.confidenceScore
                 )
+                sampleDecisions.append(decision)
             } catch {
-                print("\n⚠️  Evaluation failed on email \(email.id): \(error.localizedDescription)")
-                decision = BenchmarkSampleDecision(
-                    emailId: email.id,
-                    latencyMs: 50.0,
-                    category: .work,
-                    requiresAction: false,
-                    urgencyScore: 3,
-                    suggestedAction: .autoArchive,
-                    confidence: 0.50
-                )
-                latencies.append(50.0)
+                print("\n================================================================================")
+                print("🛑 [Benchmark Error] Evaluation failed on email \(email.id) with backend '\(backend.displayName)':")
+                print("   \(error.localizedDescription)")
+                print("================================================================================")
+                print("Per AGENTS.md Principle 7, substituting fake fallback decisions or artificial latency")
+                print("metrics is strictly prohibited. Benchmark aborted.")
+                print("================================================================================")
+                exit(1)
             }
-
-            sampleDecisions.append(decision)
 
             let elapsedSeconds = batchStart.duration(to: clock.now).asSeconds
             let currentThroughput = elapsedSeconds > 0 ? Double(completed) / elapsedSeconds : 0.0

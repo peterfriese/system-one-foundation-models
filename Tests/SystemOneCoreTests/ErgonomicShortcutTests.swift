@@ -1,7 +1,7 @@
 import Testing
 import Foundation
 import FoundationModels
-import SystemOneCore
+@testable import SystemOneCore
 
 @Suite("System One Ergonomic Shortcuts & Dynamic Decision Schemas")
 struct ErgonomicShortcutTests {
@@ -323,5 +323,129 @@ struct ErgonomicShortcutTests {
         } else {
             Issue.record("Expected score question")
         }
+    }
+
+    // MARK: - Recursive / Cyclic Schema & Deprecation Shim Tests
+
+    @Test("SchemaTranslator rejects self-referential or mutually-recursive schemas with typed error")
+    func testRecursiveSchemaReferenceDetection() throws {
+        let translator = SchemaTranslator()
+
+        // 1. Direct self-referential $defs cycle (A -> A)
+        let directSelfCycleJSON: [String: Any] = [
+            "type": "object",
+            "properties": [
+                "item": ["$ref": "#/$defs/Loop"]
+            ],
+            "$defs": [
+                "Loop": ["$ref": "#/$defs/Loop"]
+            ]
+        ]
+        #expect(throws: SystemOneError.self) {
+            try translator.translate(json: directSelfCycleJSON)
+        }
+
+        do {
+            _ = try translator.translate(json: directSelfCycleJSON)
+            Issue.record("Expected recursive schema error")
+        } catch let SystemOneError.invalidSchema(msg) {
+            #expect(msg == "Recursive or cyclic schema reference detected for 'Loop'")
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        // 2. Object containing self-referential nested property (SelfRef.next -> SelfRef)
+        let selfReferentialObjectJSON: [String: Any] = [
+            "type": "object",
+            "properties": [
+                "node": ["$ref": "#/$defs/SelfRef"]
+            ],
+            "$defs": [
+                "SelfRef": [
+                    "type": "object",
+                    "properties": [
+                        "next": ["$ref": "#/$defs/SelfRef"]
+                    ]
+                ]
+            ]
+        ]
+        do {
+            _ = try translator.translate(json: selfReferentialObjectJSON)
+            Issue.record("Expected recursive schema error")
+        } catch let SystemOneError.invalidSchema(msg) {
+            #expect(msg == "Recursive or cyclic schema reference detected for 'SelfRef'")
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        // 3. Mutually-recursive schema (NodeA.b -> NodeB, NodeB.a -> NodeA)
+        let mutuallyRecursiveJSON: [String: Any] = [
+            "type": "object",
+            "properties": [
+                "root": ["$ref": "#/$defs/NodeA"]
+            ],
+            "$defs": [
+                "NodeA": [
+                    "type": "object",
+                    "properties": [
+                        "b": ["$ref": "#/$defs/NodeB"]
+                    ]
+                ],
+                "NodeB": [
+                    "type": "object",
+                    "properties": [
+                        "a": ["$ref": "#/$defs/NodeA"]
+                    ]
+                ]
+            ]
+        ]
+        do {
+            _ = try translator.translate(json: mutuallyRecursiveJSON)
+            Issue.record("Expected mutually recursive schema error")
+        } catch let SystemOneError.invalidSchema(msg) {
+            #expect(msg == "Recursive or cyclic schema reference detected for 'NodeA'")
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+
+    @Generable
+    struct SimpleShimDecision: Sendable {
+        @Guide(description: "Is this valid?")
+        var isValid: Bool
+    }
+
+    @Test("Deprecation shims translateToQuestions and probabilityValue maintain source compatibility")
+    func testDeprecationShims() async throws {
+        let translator = SchemaTranslator()
+        let binarySchema = try DynamicDecisionSchema.makeBinarySchema(instructions: "Is this valid?")
+
+        // translateToQuestions shim
+        let questions = try translator.translateToQuestions(binarySchema)
+        #expect(questions["decision"] != nil)
+
+        // probabilityValue shim on LanguageModelSession.Response
+        let mockBackend = MockSystemOneBackend { _ in
+            SystemOneResponse(
+                model: "systemone-mock-v1",
+                answers: [
+                    "isValid": SystemOneAnswer(
+                        type: "noul",
+                        noul: 0.88,
+                        confidence: 0.76,
+                        probabilities: ["true": 0.88, "false": 0.12]
+                    )
+                ]
+            )
+        }
+        let model = SystemOneLanguageModel(backend: mockBackend, modelID: "systemone-mock-v1")
+        let session = LanguageModelSession(model: model)
+        let response = try await session.respond(to: "Test input", generating: SimpleShimDecision.self)
+
+        let typedProb = response.typedProbability(for: "isValid")
+        let shimProb = response.probabilityValue(for: "isValid")
+        #expect(typedProb != nil)
+        #expect(typedProb == shimProb)
+        #expect(shimProb?.value == 0.88)
     }
 }
