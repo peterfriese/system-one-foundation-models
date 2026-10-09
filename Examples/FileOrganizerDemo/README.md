@@ -26,11 +26,14 @@ Demonstrates Apple Foundation Models **Dynamic Profiles** (`LanguageModelSession
 
 ## 🚀 Running the Demo
 
+> ⚠️ **Strict Real Execution Mandate**: In compliance with `AGENTS.md` Principle 7, this demonstrator does not use fake mock fallbacks. A valid `TYPESAFE_API_KEY` is required for all evaluations.
+
 ### 1. Interactive Sandbox Walkthrough
 
-Runs a simulated directory reorganization demonstrating live profile switching:
+Runs directory reorganization on sample fixture files demonstrating live profile switching:
 
 ```bash
+export TYPESAFE_API_KEY="your-api-key"
 swift run file-organizer-demo --demo
 ```
 
@@ -39,10 +42,11 @@ swift run file-organizer-demo --demo
 Preview categorization for any directory in dry-run mode:
 
 ```bash
+export TYPESAFE_API_KEY="your-api-key"
 swift run file-organizer-demo --path ~/Downloads --strategy domain
 ```
 
-Or add `--apply` to execute real filesystem moves (requires `TYPESAFE_API_KEY`):
+Or add `--apply` to execute real filesystem moves:
 
 ```bash
 export TYPESAFE_API_KEY="your-api-key"

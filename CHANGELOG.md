@@ -7,6 +7,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.4.0] - 2026-10-09
+
+### Added
+
+- **OpenAI Decisions API (`gpt-6-luna`) Model Support (`OpenAIFoundationModels`)**:
+  - Added native Apple Foundation Models integration for OpenAI's non-autoregressive Decisions API (`POST https://api.openai.com/v1/decisions`) announced at DevDay 2026.
+  - Implements `OpenAIDecisionsLanguageModel` conforming to `LanguageModel` with `LanguageModelCapabilities([.guidedGeneration, .vision])` evaluating decisions in ~150ms with zero output token billing ($0.10/1M input, $0.00 output).
+  - Bidirectional schema translation in `OpenAIDecisionsPayloadAdapter`: maps System One `noul`, `choice`, and `score` to OpenAI's wire primitives (`predicate`, `choice`, `score`) and translates incoming responses and safety refusals.
+  - Multi-tenant enterprise isolation via optional `organization` and `project` headers (`OpenAI-Organization`, `OpenAI-Project`).
+  - Added `OpenAIDecisionsHTTPBackend` with RFC 9110 `Retry-After` backoff and lock-synchronized `MockOpenAIDecisionsBackend` for offline test suites.
+  - Added standalone `openai-demo` CLI executable (`Examples/OpenAIDemo/`) and `OpenAI` package trait in `Package.swift`.
+  - Integrated OpenAI Decisions as the 7th selectable backend in `MailTriageApp` with Keychain credential management.
+  - Published Technical Note 0017 (`tech-notes/0017-openai-decisions-api-architecture.md`), PRD, and ADR.
+
+- **Repository-Wide Adversarial Audit & Security Remediation Sweep (`AUDIT-SWEEP-2026-10-09`)**:
+  - Completed comprehensive repository audit documenting actionable findings across core engines, applications, integrations, and toolchains in `docs/plans/AUDIT-SWEEP-2026-10-09.md`.
+
+### Fixed & Hardened
+
+- **Multi-Turn Metadata Context Staleness (`SystemOneCore`)**:
+  - Fixed a critical multi-turn conversation bug in `ResponseExtensions.swift` where iterating forward over `transcriptEntries` leaked stale Turn 1 metadata into subsequent turns. Replaced with reverse search (`transcriptEntries.reversed()`) to ensure callers always access the active turn's probabilities, scores, and confidence metrics.
+  - Purged unreferenced legacy helper `probabilityValue(for:)` in favor of canonical `probability(for:)` and `typedProbability(for:)`.
+
+- **Recursive `$ref` Resolution for Optional Enums (`SystemOneCore`)**:
+  - Fixed schema dereferencing in `SchemaTranslator.swift` where optional enums (`MyEnum?`) wrapped in `anyOf` failed to resolve `$ref` pointers. Implemented iterative unwrapping to ensure all nested `$defs` references are recursively dereferenced.
+  - Cleaned up unused convenience method `translateToQuestions(_:)`.
+
+- **Rubric Score Probability Distribution Preservation (`OpenAIFoundationModels`)**:
+  - Fixed `OpenAIDecisionsPayloadAdapter` keying rubric score probabilities by human-readable label rather than numeric level index, which caused `ScoreValue` to drop the probability distribution. Keyed strictly by `$0.value` while preserving labels in `legendDict`.
+
+- **Fail-Closed Image Dimension Guardrails (`SystemOneCore`)**:
+  - Hardened `SystemOneImage.validate()` against adversarial image decompression bombs and truncated headers. When dimension extraction returns `nil`, the validator now fails closed by throwing `SystemOneError.modelExecutionError` instead of allowing unverified images to bypass megapixel limits.
+
+- **ModernBERT Delimiter Token Sanitization (`LayaOnDevice`)**:
+  - Hardened `LayaSequenceBuilder` against sequence boundary token injection attacks by sanitizing all reserved control tokens (`[SEP]`, `[CLS]`, `<s>`, `</s>`, `<bos>`, `<eos>`) from input text, instructions, and candidate options before tokenization.
+  - Added cached state tokenization (`pretokenizeState`) to prevent redundant state re-tokenization in multi-question requests.
+
+- **Bounded Subword Matching Eliminating $O(L^3)$ DoS (`LayaOnDevice`)**:
+  - Bounded candidate subword search length in `ModernBERTTokenizer.swift` to a maximum of 64 characters, cutting search space from $O(L^3)$ to $O(L \cdot K)$ and eliminating Catastrophic Tokenization Backtracking on continuous unspaced strings.
+
+- **Swift 6 Concurrency & Transport Security**:
+  - Offloaded synchronous Core ML inference in `LayaCoreMLEngine` to `Task.detached` to prevent cooperative thread pool starvation during heavy Neural Engine execution.
+  - Prevented caller configuration mutation by copying `MLModelConfiguration` before applying `.computeUnits = .all`.
+  - Synchronized `MockOpenAIDecisionsBackend.handler` with `NSLock.withLock` to eliminate data races.
+  - Enforced HTTPS in `ProxyTransport.swift` for all remote proxy endpoints, restricting unencrypted HTTP strictly to loopback addresses (`localhost`, `127.0.0.1`, `::1`).
+  - Restored cooperative task cancellation in `LayaHTTPBackend` by re-throwing `CancellationError` and `URLError.cancelled`.
+  - Removed duplicate unmatched `#else` / `#endif` preprocessor directives in `Integrations/FirebaseAppCheckProxy/FirebaseAppCheckTransport.swift`.
+  - Removed active console debug `print` statements in `OpenAIDecisionsHTTPBackend.swift`.
+
+- **UI Stability & Crash Fixes in Example Apps**:
+  - Eliminated infinite stack recursion in `InspectionHUDView.swift` by returning concrete `Color` instances in `ShapeStyle` properties.
+  - Resolved color token scoping errors in `CameraPreviewView.swift`.
+  - Clamped array indexing in `SafetyIndicatorBanner.swift` to `0...3` to prevent `Index out of range` panics.
+
+- **Principle 7 Strict Real Execution Compliance (`Examples/`)**:
+  - In strict compliance with `AGENTS.md` Principle 7 (no mock fallbacks or synthetic bypasses in reference apps):
+    - Removed mock bypass returning hardcoded probabilities in `Examples/TraitSamples/05-SecureAppCheckApp/backend/functions/src/index.ts`.
+    - Removed synthetic logit mock predictor on uncompiled model weights in `TriageEngine.swift`.
+    - Removed fake healthy status check in `BackendHealthProbeService.swift`.
+    - Removed `-m, --mock` CLI flag and synthetic latency generators in `BenchmarkCLI/main.swift`.
+    - Corrected documentation in `Examples/README.md`, `FileOrganizerDemo/README.md`, and `DuplicateArticleDemo/README.md` to clarify that valid API keys are required for all runs.
+
+- **Domain Model & Seed Data Alignment (`MailTriageApp`)**:
+  - Corrected inverted urgency priority seeds in `InboxData.swift` (`0` for P0 Critical outages, `3` for informational receipts).
+  - Converted `Email.suggestedAction` from loose `String?` to strongly-typed `TriageAction?`.
+  - Updated `justfile` to use `flowdeck` instead of raw `xcrun simctl`.
+
+---
+
 ## [0.3.0] - 2026-10-07
 
 ### Added
@@ -151,6 +220,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI demonstration tools: `ticket-triage-demo`, `duplicate-article-demo`, and `file-organizer-demo`.
 - Technical notes 0001 (`tech-notes/0001-afm-decision-model-bridging.md`) and 0002 (`tech-notes/0002-foundationmodels-generation-quirks.md`).
 
+[0.4.0]: https://github.com/peterfriese/system-one-foundation-models/compare/0.3.0...0.4.0
 [0.3.0]: https://github.com/peterfriese/system-one-foundation-models/compare/0.2.0...0.3.0
 [0.2.0]: https://github.com/peterfriese/system-one-foundation-models/compare/0.1.0...0.2.0
 [0.1.0]: https://github.com/peterfriese/system-one-foundation-models/releases/tag/0.1.0

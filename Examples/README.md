@@ -10,13 +10,14 @@ This directory contains reference applications, production examples, and runnabl
 
 | Demo / Application | Format | Target / Backend | Prerequisites / Credentials | Primary Concepts Demonstrated |
 | :--- | :--- | :--- | :---: | :--- |
-| [**MailTriageApp**](MailTriageApp/README.md) | Full macOS & iOS SwiftUI App | Pluggable (Core ML, Local/Remote Laya, Jev Cloud, Apple LLM) | Optional (Keychain managed) | Flagship 3-pane email triage, 5 selectable backends, FactoryKit DI, Liquid Glass UI, urgency priority tokens, batch triage with cancellation. |
+| [**MailTriageApp**](MailTriageApp/README.md) | Full macOS & iOS SwiftUI App | Pluggable (Core ML, Local/Remote Laya, Clef, OpenAI, Jev Cloud, Baseline) | Optional (Keychain managed) | Flagship 3-pane email triage, 7 selectable backends, FactoryKit DI, Liquid Glass UI, urgency priority tokens, batch triage with cancellation. |
 | [**LayaDemo**](LayaDemo/README.md) | CLI Executable | `LayaFoundationModels` (`POST /v1/systemone`) | `laya-serve` daemon | 100% free local evaluation against `laya-serve` on `localhost:8000` or custom endpoint. Zero cloud accounts required. |
 | [**TicketTriageDemo**](TicketTriageDemo/README.md) | CLI Executable | `JevFoundationModels` | ✅ Yes (`TYPESAFE_API_KEY`) | Customer support ticket routing, RFC 9110 HTTP retry resilience (`RetryPolicy`), multi-primitive `@Generable` schema, confidence routing. |
-| [**FileOrganizerDemo**](FileOrganizerDemo/README.md) | CLI Executable | `JevFoundationModels` | Optional (`--demo` offline mode) | Foundation Models **Dynamic Profiles**, runtime session adaptation (`@SessionPropertyEntry`), turn isolation (`.historyTransform`), sensitive file quarantine. |
-| [**DuplicateArticleDemo**](DuplicateArticleDemo/README.md) | CLI Executable | `JevFoundationModels` | Optional (Built-in offline mode) | Two-layer content deduplication (exact fast-path + semantic decision), calibrated Noul undecided band ($0.35\dots0.65$), cooperative Swift 6 task cancellation. |
+| [**FileOrganizerDemo**](FileOrganizerDemo/README.md) | CLI Executable | `JevFoundationModels` | ✅ Yes (`TYPESAFE_API_KEY`) | Foundation Models **Dynamic Profiles**, runtime session adaptation (`@SessionPropertyEntry`), turn isolation (`.historyTransform`), sensitive file quarantine. (Requires valid API key; `--demo` generates sample file fixtures). |
+| [**DuplicateArticleDemo**](DuplicateArticleDemo/README.md) | CLI Executable | `JevFoundationModels` | ✅ Yes (`TYPESAFE_API_KEY`) | Two-layer content deduplication (exact fast-path + semantic decision), calibrated Noul undecided band ($0.35\dots0.65$), cooperative Swift 6 task cancellation. (Requires valid API key for live semantic evaluation). |
 | [**ClefCameraScanner**](ClefCameraScanner/README.md) | Full macOS & iOS SwiftUI App | `ClefFoundationModels` (Workers AI / Local Runner) | Optional (Local runner or `CLOUDFLARE_API_TOKEN`) | Real-time camera viewfinder, `@Observable CameraManager`, `AVCaptureVideoPreviewLayer` bridge, live visual triage, Liquid Glass HUD, simulation fallback feed. |
 | [**ClefDemo**](ClefDemo/README.md) | CLI Executable | `ClefFoundationModels` (Workers AI / Local Runner) | Optional (Local runner or `CLOUDFLARE_API_TOKEN`) | Multimodal evaluation on image files or synthetic CoreGraphics visual frames, single forward-pass non-autoregressive triage, latency breakdown. |
+| [**OpenAIDemo**](OpenAIDemo/README.md) | CLI Executable | `OpenAIFoundationModels` (`POST /v1/decisions`) | ✅ Yes (`OPENAI_API_KEY`) | Frontier non-autoregressive classification with `gpt-6-luna`, ~150ms latency, zero output token pricing, multi-tenant enterprise headers (`OpenAI-Organization`, `OpenAI-Project`). |
 | [**TraitSamples/01-OfflineLayaApp**](TraitSamples/01-OfflineLayaApp/README.md) | Standalone Package | `LayaOnDevice` | ❌ No API key | Pure on-device classification via Apple Neural Engine (`traits: ["Laya"]`). Zero network code linked. |
 | [**TraitSamples/02-CloudJevWorker**](TraitSamples/02-CloudJevWorker/README.md) | Standalone Package | `JevFoundationModels` | ✅ Yes (`TYPESAFE_API_KEY`) | Ultra-lean ticket triage worker (`traits: ["Jev"]`). Sub-second build, zero ML linkage. Fails fast if API key is missing. |
 | [**TraitSamples/03-PrivateLayaServer**](TraitSamples/03-PrivateLayaServer/README.md) | Standalone Package | `LayaFoundationModels` | `laya-serve` daemon | Internal VPC cluster scoring (`traits: ["LayaServe"]`). Custom DNS, TLS, and bearer auth. Requires reachable `laya-serve`. |
@@ -29,7 +30,7 @@ This directory contains reference applications, production examples, and runnabl
 
 ### 1. MailTriageApp (Flagship Native macOS & iOS App)
 
-A complete native application with multi-window support, Liquid Glass visual hierarchy, and 5 hot-swappable backends:
+A complete native application with multi-window support, Liquid Glass visual hierarchy, and 7 hot-swappable backends:
 
 ```bash
 # Option A: Open directly in Xcode GUI
@@ -93,17 +94,19 @@ For complete documentation, see [Examples/TicketTriageDemo/README.md](TicketTria
 
 ### 4. FileOrganizerDemo (Dynamic Profiles & Session Properties)
 
-Classifies and organizes files into semantic directories using Apple Foundation Models dynamic profiles:
+Classifies and organizes files into semantic directories using Apple Foundation Models dynamic profiles. In strict compliance with Principle 7, real API credentials are required for decision evaluation:
 
 ```bash
-# 1. Run simulated sandbox walkthrough (no API key required)
+# 1. Set your TypeSafe AI API key (required)
+export TYPESAFE_API_KEY="your-api-key"
+
+# 2. Run sandbox walkthrough (creates sample directory fixtures on disk for demonstration)
 swift run file-organizer-demo --demo
 
-# 2. Preview organization of an actual folder in dry-run mode
+# 3. Preview organization of an actual folder in dry-run mode
 swift run file-organizer-demo --path ~/Downloads --strategy domain
 
-# 3. Apply changes to disk using live TypeSafe AI API
-export TYPESAFE_API_KEY="your-api-key"
+# 4. Apply changes to disk using live TypeSafe AI API
 swift run file-organizer-demo --path ~/Downloads --strategy workflow --apply
 ```
 
@@ -113,14 +116,13 @@ For complete documentation, see [Examples/FileOrganizerDemo/README.md](FileOrgan
 
 ### 5. DuplicateArticleDemo (Two-Layer Deduplication & Cancellation)
 
-Demonstrates two-layer content deduplication (deterministic exact-matching layer followed by semantic System One evaluation) and cooperative cancellation:
+Demonstrates two-layer content deduplication (deterministic exact-matching layer followed by semantic System One evaluation) and cooperative cancellation. Requires live API credentials:
 
 ```bash
-# 1. Run simulated walkthrough (no API key required)
-swift run duplicate-article-demo
-
-# 2. Run with live TypeSafe AI API evaluation
+# 1. Export your API key (required per Principle 7)
 export TYPESAFE_API_KEY="your-api-key"
+
+# 2. Run the walkthrough
 swift run duplicate-article-demo
 ```
 
@@ -165,7 +167,26 @@ For complete documentation, see [Examples/ClefDemo/README.md](ClefDemo/README.md
 
 ---
 
-### 8. Trait Samples (`Examples/TraitSamples/`)
+### 8. OpenAIDemo (OpenAI Decisions API `gpt-6-luna` Demonstrator)
+
+Demonstrates frontier non-autoregressive decision classification via OpenAI's Decisions API (`POST /v1/decisions`):
+
+```bash
+# 1. Export your OpenAI API key
+export OPENAI_API_KEY="sk-..."
+
+# 2. Run the demo against default customer ticket
+swift run openai-demo
+
+# 3. Evaluate a custom customer inquiry
+swift run openai-demo "Customer reported unauthorized charge on their Visa card ending in 4112."
+```
+
+For complete documentation, see [Examples/OpenAIDemo/README.md](OpenAIDemo/README.md).
+
+---
+
+### 9. Trait Samples (`Examples/TraitSamples/`)
 
 Five standalone SPM packages demonstrating fine-grained package traits and modularity:
 

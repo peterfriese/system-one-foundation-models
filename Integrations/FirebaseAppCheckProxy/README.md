@@ -1,4 +1,4 @@
-# Firebase App Check Proxy Example
+# Firebase App Check Proxy Integration
 
 This directory contains a ready-to-deploy reference implementation of a **Firebase Cloud Function (2nd Gen) reverse proxy** and a client-side **`FirebaseAppCheckTransport`** for Apple platforms.
 
@@ -7,8 +7,9 @@ This directory contains a ready-to-deploy reference implementation of a **Fireba
 ## Directory Structure
 
 ```
-FirebaseAppCheckProxy/
+Integrations/FirebaseAppCheckProxy/
 ├── README.md                          # Quick start instructions
+├── firebase.json                      # Firebase configuration
 ├── FirebaseAppCheckTransport.swift     # Swift transport conforming to JevTransport
 └── functions/                         # Firebase Cloud Functions v2 project
     ├── package.json                   # Dependencies
@@ -22,7 +23,7 @@ FirebaseAppCheckProxy/
 ## Deployment Instructions
 
 ### 1. Configure Secret & Deploy Function
-From `Examples/FirebaseAppCheckProxy/`:
+From `Integrations/FirebaseAppCheckProxy/`:
 
 ```bash
 # Install dependencies
@@ -31,7 +32,7 @@ npm --prefix functions install
 # Set your TypeSafe API key securely
 firebase functions:secrets:set TYPESAFE_API_KEY
 
-# Deploy to Firebase using root firebase.json
+# Deploy to Firebase using the local firebase.json
 firebase deploy --only functions
 ```
 
