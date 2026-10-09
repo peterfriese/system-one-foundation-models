@@ -6,7 +6,7 @@ import FoundationModels
 public extension LanguageModelSession.Response {
     /// The response metadata emitted by `SystemOneExecutor`, containing model ID, confidence scores, scores, and calibrated probabilities.
     var metadata: [String: GeneratedContent] {
-        for entry in transcriptEntries {
+        for entry in transcriptEntries.reversed() {
             if case .response(let r) = entry {
                 return r.metadata
             }
@@ -79,6 +79,7 @@ public extension LanguageModelSession.Response {
     }
 
     /// Returns the calibrated `Probability` domain value for a boolean (`noul`) question (alias for `typedProbability`).
+    @available(*, deprecated, renamed: "typedProbability(for:)")
     func probabilityValue(for question: String) -> Probability? {
         typedProbability(for: question)
     }

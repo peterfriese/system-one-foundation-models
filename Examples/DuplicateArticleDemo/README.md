@@ -46,13 +46,11 @@ Incoming Article
 
 ## 🚀 Running the Walkthrough
 
+> ⚠️ **Strict Real Execution Mandate**: In compliance with `AGENTS.md` Principle 7, this demonstrator does not use fake mock fallbacks. A valid `TYPESAFE_API_KEY` is required for live semantic deduplication.
+
 Run the sample application:
 
 ```bash
-# Offline demonstration mode (no API key required)
-swift run duplicate-article-demo
-
-# Or with live TypeSafe AI API evaluation
 export TYPESAFE_API_KEY="your-api-key"
 swift run duplicate-article-demo
 ```

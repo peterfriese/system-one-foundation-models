@@ -6,7 +6,7 @@ import SystemOneCore
 
 /// Standard item categories for visual inspection and item triage with Cloudflare Clef.
 @Generable
-public enum ItemCategory: String, Sendable, CaseIterable, Codable {
+public enum ItemCategory: String, Sendable, CaseIterable, Codable, Choosable {
     case snack
     case beverage
     case electronics
@@ -17,6 +17,11 @@ public enum ItemCategory: String, Sendable, CaseIterable, Codable {
     case plant
     case accessory
     case unknown
+
+    /// Natural-language description for `Choosable` enum evaluations.
+    public var optionDescription: String? {
+        displayName
+    }
 
     /// User-friendly display label.
     public var displayName: String {

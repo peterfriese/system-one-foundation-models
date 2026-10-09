@@ -31,20 +31,49 @@ public struct LayaSequenceBuilder: Sendable {
         self.headMaxLen = headMaxLen
     }
 
+    private static let reservedDelimiters = [
+        "[CLS]", "[SEP]", "[MASK]", "[PAD]", "[UNK]",
+        "<s>", "</s>", "<bos>", "<eos>", "<cls>", "<sep>",
+        "<mask>", "<pad>", "<unk>", "<mask_1>"
+    ]
+
+    private func sanitize(_ text: String) -> String {
+        var clean = text.replacingOccurrences(of: tokenizer.maskToken, with: " ")
+        for delimiter in Self.reservedDelimiters {
+            if clean.contains(delimiter) {
+                clean = clean.replacingOccurrences(of: delimiter, with: " ")
+            }
+        }
+        return clean
+    }
+
+    /// Pre-tokenizes and sanitizes application state text once for batch question evaluation.
+    public func pretokenizeState(_ state: String) -> [Int] {
+        tokenizer.encode(sanitize(state), addSpecialTokens: false)
+    }
+
     /// Formats a question and application state into an input sequence with gathered marker positions.
     public func buildSequence(
         state: String,
         question: SystemOneQuestion
     ) throws -> FormattedQuestionSequence {
-        let (qtype, typeName, instructions, options, keys) = unpackQuestion(question)
-        let maskTok = tokenizer.maskToken
+        let stateIds = pretokenizeState(state)
+        return try buildSequence(pretokenizedStateIds: stateIds, question: question)
+    }
 
-        let cleanInstructions = instructions.replacingOccurrences(of: maskTok, with: " ")
+    /// Formats a question and pre-tokenized application state into an input sequence with gathered marker positions.
+    public func buildSequence(
+        pretokenizedStateIds: [Int],
+        question: SystemOneQuestion
+    ) throws -> FormattedQuestionSequence {
+        let (qtype, typeName, instructions, options, keys) = unpackQuestion(question)
+
+        let cleanInstructions = sanitize(instructions)
         var headIds = tokenizer.encode("\(typeName) question: \(cleanInstructions)", addSpecialTokens: false)
 
         var optIds: [[Int]] = []
         for opt in options {
-            let cleanOpt = opt.replacingOccurrences(of: maskTok, with: " ")
+            let cleanOpt = sanitize(opt)
             var optTokens = tokenizer.encode(" " + cleanOpt, addSpecialTokens: false)
             if optTokens.count > 48 {
                 optTokens = Array(optTokens.prefix(48))
@@ -76,7 +105,7 @@ public struct LayaSequenceBuilder: Sendable {
         ids.append(tokenizer.sepTokenId)
 
         let room = max(0, maxLen - ids.count - 1)
-        var stateIds = tokenizer.encode(state.replacingOccurrences(of: maskTok, with: " "), addSpecialTokens: false)
+        var stateIds = pretokenizedStateIds
         if stateIds.count > room {
             stateIds = Array(stateIds.prefix(room))
         }

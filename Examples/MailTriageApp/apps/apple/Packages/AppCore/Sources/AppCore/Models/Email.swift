@@ -23,7 +23,7 @@ public struct Email: Identifiable, Sendable, Hashable, Codable {
     public var category: EmailCategory?
     public var urgencyScore: Int?
     public var requiresAction: Bool?
-    public var suggestedAction: String?
+    public var suggestedAction: TriageAction?
     public var triageResult: TriageResult?
 
     public init(
@@ -42,7 +42,7 @@ public struct Email: Identifiable, Sendable, Hashable, Codable {
         category: EmailCategory? = nil,
         urgencyScore: Int? = nil,
         requiresAction: Bool? = nil,
-        suggestedAction: String? = nil,
+        suggestedAction: TriageAction? = nil,
         triageResult: TriageResult? = nil,
         attachments: [EmailAttachment] = []
     ) {

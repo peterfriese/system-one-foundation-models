@@ -46,6 +46,18 @@ System One models evaluate decisions in a single forward pass without autoregres
 - **Best For**: Server-side Swift, macOS administrative tools, or mobile apps communicating via an authenticated proxy (see [Mobile Security Guide](mobile-security.md)).
 - **Target to Import**: `JevFoundationModels` (requires `TYPESAFE_API_KEY`)
 
+### Path D: Multimodal Visual Decisions (`ClefFoundationModels`)
+- **Engine**: Cloudflare Workers AI edge, AI Gateway, or local runner (`Tools/ClefLocalRunner`).
+- **Privacy & Security**: Evaluates images, camera frames, and text in a single forward pass.
+- **Best For**: Real-time visual inspection, camera scanner apps, and document triage.
+- **Target to Import**: `ClefFoundationModels` (optional `CLOUDFLARE_API_TOKEN`)
+
+### Path E: Frontier Non-Autoregressive Decisions (`OpenAIFoundationModels`)
+- **Engine**: OpenAI Decisions API (`POST https://api.openai.com/v1/decisions`) via `gpt-6-luna`.
+- **Privacy & Security**: Zero output token billing ($0.10/1M input, $0.00 output), enterprise isolation (`OpenAI-Organization`, `OpenAI-Project`).
+- **Best For**: High-throughput enterprise ticket routing and frontier classification.
+- **Target to Import**: `OpenAIFoundationModels` (requires `OPENAI_API_KEY`)
+
 ---
 
 ## 📦 Which Target Should I Import?
@@ -56,9 +68,11 @@ The package is split into focused, modular targets so you only link the code and
 | :--- | :--- | :---: | :---: | :--- |
 | `LayaOnDevice` | 100% offline inference via Core ML on Apple Neural Engine & GPU | ❌ No | ❌ No | `SystemOneCore` |
 | `LayaFoundationModels` | Connect to local (`localhost:8000`) or self-hosted `laya-serve` instances | ✅ Yes (Local/LAN) | ❌ No (Optional token) | `SystemOneCore` |
+| `ClefFoundationModels` | Multimodal decisions (Clef 27B & Clef-Flash 9B) via Workers AI or local runner | ✅ Yes (Workers AI or Local) | Optional (`CLOUDFLARE_API_TOKEN`) | `SystemOneCore` |
+| `OpenAIFoundationModels` | Non-autoregressive decisions via OpenAI Decisions API (`gpt-6-luna`) | ✅ Yes (Cloud HTTPS) | ✅ Yes (`OPENAI_API_KEY`) | `SystemOneCore` |
 | `JevFoundationModels` | Connect to TypeSafe AI cloud API with exponential retries | ✅ Yes (Cloud HTTPS) | ✅ Yes (`TYPESAFE_API_KEY`) | `SystemOneCore` |
 | `SystemOneCore` | Core abstractions, `@Generable` schema translation, `RoutingPolicy`, offline mocks | ❌ No | ❌ No | None |
-| `SystemOneFoundationModels` | Umbrella module bundling Core ML, Laya HTTP, and Jev Cloud backends | Varies by backend | Varies by backend | All above |
+| `SystemOneFoundationModels` | Umbrella module bundling Core ML, Laya HTTP, Clef, OpenAI, and Jev Cloud backends | Varies by backend | Varies by backend | All above |
 
 ---
 
@@ -72,7 +86,7 @@ The package is split into focused, modular targets so you only link the code and
 ### In `Package.swift`
 ```swift
 dependencies: [
-    .package(url: "https://github.com/peterfriese/system-one-foundation-models.git", from: "0.2.0")
+    .package(url: "https://github.com/peterfriese/system-one-foundation-models.git", from: "0.3.0")
 ]
 ```
 
@@ -84,6 +98,8 @@ Add the target corresponding to your chosen path:
         .product(name: "LayaOnDevice", package: "SystemOneFoundationModels") // Path A
         // or .product(name: "LayaFoundationModels", package: "SystemOneFoundationModels") // Path B
         // or .product(name: "JevFoundationModels", package: "SystemOneFoundationModels") // Path C
+        // or .product(name: "ClefFoundationModels", package: "SystemOneFoundationModels") // Path D
+        // or .product(name: "OpenAIFoundationModels", package: "SystemOneFoundationModels") // Path E
         // or .product(name: "SystemOneFoundationModels", package: "SystemOneFoundationModels") // All
     ]
 )
@@ -93,7 +109,7 @@ Add the target corresponding to your chosen path:
 1. Open your project in Xcode.
 2. Select **File > Add Package Dependencies...**
 3. Enter `https://github.com/peterfriese/system-one-foundation-models.git`.
-4. Choose version `0.2.0` or later and select your desired library target.
+4. Choose version `0.3.0` or later and select your desired library target.
 
 ---
 
@@ -282,10 +298,12 @@ if let score = response.scoreValue(for: "frustration") {
 
 ## 📚 Where to Go Next
 
-- 📱 **Flagship Reference App**: Explore [`Examples/MailTriageApp`](../Examples/MailTriageApp/README.md), a complete macOS and iOS application demonstrating 5 switchable backends and FactoryKit DI.
-- 💻 **All Runnable Demos**: Check out [`Examples/README.md`](../Examples/README.md) for CLI tools (`LayaDemo`, `TicketTriageDemo`, `FileOrganizerDemo`, `DuplicateArticleDemo`).
+- 📱 **Flagship Reference App**: Explore [`Examples/MailTriageApp`](../Examples/MailTriageApp/README.md), a complete macOS and iOS application demonstrating 7 switchable backends and FactoryKit DI.
+- 💻 **All Runnable Demos**: Check out [`Examples/README.md`](../Examples/README.md) for CLI tools and apps (`MailTriageApp`, `ClefCameraScanner`, `ClefDemo`, `OpenAIDemo`, `LayaDemo`, `TicketTriageDemo`, `FileOrganizerDemo`, `DuplicateArticleDemo`).
 - 🔒 **Mobile Security & App Attest**: Read the [Mobile Security Guide](mobile-security.md) for zero-trust proxying.
+- 👁️ **Cloudflare Clef & Multimodal Guide**: Read the [Cloudflare Workers AI & Clef Setup](cloudflare-workers-setup.md).
 - 🧠 **On-Device Core ML Guide**: Read the [Laya Mobile & On-Device Guide](laya-mobile-guide.md).
 - ⚙️ **CLI & Server Guide**: Read the [Laya CLI & Server Guide](laya-cli-guide.md).
 - 📈 **Confidence & Routing**: Read the [Confidence & Noul Routing Guide](confidence-routing.md).
 - 🔄 **Resilience & Retries**: Read the [HTTP Resilience & Retries Guide](resilience-and-retries.md).
+- 🔍 **Audit & Hardening Report**: Review the [Repository Audit Sweep Report](plans/AUDIT-SWEEP-2026-10-09.md).

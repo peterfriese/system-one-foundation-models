@@ -199,8 +199,3 @@ public final class CameraPreviewNSView: NSView {
     }
 }
 #endif
-
-// Color alias fallback
-private extension ShapeStyle where Self == Color {
-    static var amber: Color { Color(red: 1.0, green: 0.75, blue: 0.1) }
-}

@@ -68,11 +68,17 @@ public struct SchemaTranslator: Sendable {
             throw SystemOneError.invalidSchema("GenerationSchema JSON representation is not a valid dictionary.")
         }
 
-        let defs = jsonObject["$defs"] as? [String: [String: Any]] ?? [:]
-        return try parseRoot(json: jsonObject, defs: defs)
+        return try translate(json: jsonObject)
     }
 
-    /// Convenience method to translate a `GenerationSchema` directly to System One questions dictionary.
+    /// Translates raw schema JSON dictionary for package callers, tests, and custom schema representations.
+    package func translate(json: [String: Any]) throws -> SchemaTranslation {
+        let defs = json["$defs"] as? [String: [String: Any]] ?? [:]
+        return try parseRoot(json: json, defs: defs)
+    }
+
+    /// Translates a `GenerationSchema` directly to a System One questions dictionary.
+    @available(*, deprecated, message: "Use translate(_:) to obtain the full SchemaTranslation")
     public func translateToQuestions(_ schema: GenerationSchema) throws -> [String: SystemOneQuestion] {
         try translate(schema).questions
     }
@@ -145,14 +151,17 @@ public struct SchemaTranslator: Sendable {
         var questions: [String: SystemOneQuestion] = [:]
 
         for (propName, propRawValue) in properties {
-            let resolved = try resolveProperty(raw: propRawValue, defs: defs)
+            var visitedDefs: Set<String> = []
+            let resolved = try resolveProperty(raw: propRawValue, defs: defs, visitedDefs: &visitedDefs)
             let isRequired = requiredList.contains(propName)
             let (descriptor, propQuestions) = try translateProperty(
                 name: propName,
                 path: propName,
                 propertyDict: resolved,
                 isRequired: isRequired,
-                defs: defs
+                defs: defs,
+                visitedDefs: visitedDefs,
+                depth: 0
             )
             propertyDescriptors[propName] = descriptor
             for (qKey, qVal) in propQuestions {
@@ -166,33 +175,58 @@ public struct SchemaTranslator: Sendable {
         )
     }
 
-    private func resolveProperty(raw: Any, defs: [String: [String: Any]]) throws -> [String: Any] {
+    private func resolveProperty(
+        raw: Any,
+        defs: [String: [String: Any]],
+        visitedDefs: inout Set<String>
+    ) throws -> [String: Any] {
         guard var dict = raw as? [String: Any] else {
             throw SystemOneError.invalidSchema("Property definition must be a JSON object.")
         }
 
-        if let ref = dict["$ref"] as? String {
-            let refPrefix = "#/$defs/"
-            guard ref.hasPrefix(refPrefix) else {
-                throw SystemOneError.invalidSchema("Unsupported $ref format: '\(ref)'. Only internal #/$defs/ references are supported.")
-            }
-            let defName = String(ref.dropFirst(refPrefix.count))
-            guard let referenced = defs[defName] else {
-                throw SystemOneError.invalidSchema("Referenced definition '\(defName)' was not found in $defs.")
-            }
-            // Merge referenced dict with property overrides (like description)
-            for (k, v) in referenced where dict[k] == nil {
-                dict[k] = v
-            }
-        }
+        // Iteratively resolve $ref and unwrap anyOf (e.g. nullable [null, targetType] or enum choice variants)
+        var depth = 0
+        let maxDepth = 10
+        while depth < maxDepth {
+            depth += 1
+            var changed = false
 
-        // Handle anyOf unwrapping (e.g. nullable [null, targetType] or enum choice variants)
-        if let anyOf = dict["anyOf"] as? [[String: Any]] {
-            let nonNullVariants = anyOf.filter { ($0["type"] as? String) != "null" }
-            if let firstVariant = nonNullVariants.first {
-                for (k, v) in firstVariant where dict[k] == nil {
+            // Handle anyOf unwrapping (e.g. nullable [null, targetType] or enum choice variants)
+            if let anyOf = dict["anyOf"] as? [[String: Any]] {
+                dict.removeValue(forKey: "anyOf")
+                let nonNullVariants = anyOf.filter { ($0["type"] as? String) != "null" }
+                if let firstVariant = nonNullVariants.first {
+                    for (k, v) in firstVariant where dict[k] == nil {
+                        dict[k] = v
+                    }
+                    changed = true
+                }
+            }
+
+            // Handle $ref dereferencing
+            if let ref = dict["$ref"] as? String {
+                dict.removeValue(forKey: "$ref")
+                let refPrefix = "#/$defs/"
+                guard ref.hasPrefix(refPrefix) else {
+                    throw SystemOneError.invalidSchema("Unsupported $ref format: '\(ref)'. Only internal #/$defs/ references are supported.")
+                }
+                let defName = String(ref.dropFirst(refPrefix.count))
+                guard !visitedDefs.contains(defName) else {
+                    throw SystemOneError.invalidSchema("Recursive or cyclic schema reference detected for '\(defName)'")
+                }
+                visitedDefs.insert(defName)
+                guard let referenced = defs[defName] else {
+                    throw SystemOneError.invalidSchema("Referenced definition '\(defName)' was not found in $defs.")
+                }
+                // Merge referenced dict with property overrides (like description)
+                for (k, v) in referenced where dict[k] == nil {
                     dict[k] = v
                 }
+                changed = true
+            }
+
+            if !changed {
+                break
             }
         }
 
@@ -204,8 +238,14 @@ public struct SchemaTranslator: Sendable {
         path: String,
         propertyDict: [String: Any],
         isRequired: Bool,
-        defs: [String: [String: Any]]
+        defs: [String: [String: Any]],
+        visitedDefs: Set<String>,
+        depth: Int
     ) throws -> (SchemaPropertyDescriptor, [String: SystemOneQuestion]) {
+        guard depth <= 32 else {
+            throw SystemOneError.invalidSchema("Maximum schema nesting depth (32) exceeded.")
+        }
+
         let type = propertyDict["type"] as? String
         let description = propertyDict["description"] as? String
         let instructions = description ?? formatInstructions(from: name)
@@ -264,7 +304,8 @@ public struct SchemaTranslator: Sendable {
             let nestedRequired = Set((propertyDict["required"] as? [String]) ?? [])
 
             for (childName, childRaw) in nestedProperties {
-                let resolvedChild = try resolveProperty(raw: childRaw, defs: defs)
+                var childVisited = visitedDefs
+                let resolvedChild = try resolveProperty(raw: childRaw, defs: defs, visitedDefs: &childVisited)
                 let childPath = "\(path).\(childName)"
                 let childRequired = nestedRequired.contains(childName)
                 let (childDesc, childQs) = try translateProperty(
@@ -272,7 +313,9 @@ public struct SchemaTranslator: Sendable {
                     path: childPath,
                     propertyDict: resolvedChild,
                     isRequired: childRequired,
-                    defs: defs
+                    defs: defs,
+                    visitedDefs: childVisited,
+                    depth: depth + 1
                 )
                 nestedDescriptors[childName] = childDesc
                 for (qK, qV) in childQs {

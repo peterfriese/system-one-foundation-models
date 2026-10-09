@@ -64,6 +64,18 @@ public struct BackendUnreachableError: Error, LocalizedError, Sendable, Equatabl
     public var recoverySuggestion: String? {
         guidance
     }
+
+    public static var modelNotAvailable: BackendUnreachableError {
+        BackendUnreachableError(
+            backend: .onDeviceCoreML,
+            reason: "Core ML Model Load Failure: .safetensors files cannot be executed directly by Core ML",
+            guidance: ".safetensors weights must be compiled to Core ML format using coremltools or xcrun coremlc before they can run on-device. Please open Settings (⌘,) and re-download or re-import the Core ML model."
+        )
+    }
+
+    public static func modelNotAvailable(reason: String, guidance: String) -> BackendUnreachableError {
+        BackendUnreachableError(backend: .onDeviceCoreML, reason: reason, guidance: guidance)
+    }
 }
 
 /// Service protocol for pre-flight backend health checks and diagnostic probing.
@@ -566,12 +578,6 @@ public final class BackendHealthProbeService: BackendHealthProbeServiceProtocol,
             let elapsed = start.duration(to: clock.now).asMilliseconds
             return .healthy(latencyMs: elapsed)
         } catch {
-            let path = modelURL.path
-            let size = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int64) ?? 0
-            if FileManager.default.fileExists(atPath: path) && size > 0 {
-                let elapsed = start.duration(to: clock.now).asMilliseconds
-                return .healthy(latencyMs: elapsed)
-            }
             return .unreachable(
                 reason: "Failed to load Core ML model: \(error.localizedDescription)",
                 guidance: "Open Settings (⌘,) and re-download the Core ML model."

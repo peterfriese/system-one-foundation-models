@@ -38,8 +38,9 @@ public final class LayaCoreMLEngine: Sendable {
         self.maxOptions = maxOptions
 
         // Optimize compute units for Apple Neural Engine with GPU/CPU fallback
-        configuration.computeUnits = .all
-        let loaded = try MLModel(contentsOf: modelURL, configuration: configuration)
+        let config = (configuration.copy() as? MLModelConfiguration) ?? MLModelConfiguration()
+        config.computeUnits = .all
+        let loaded = try MLModel(contentsOf: modelURL, configuration: config)
         self.modelHolder = ThreadSafeMLModel(loaded)
         self.mockPredictor = nil
     }
@@ -64,8 +65,10 @@ public final class LayaCoreMLEngine: Sendable {
         var answers: [String: SystemOneAnswer] = [:]
         var totalTokens = 0
 
+        let pretokenizedStateIds = sequenceBuilder.pretokenizeState(request.state)
+
         for (qid, question) in request.questions {
-            let sequence = try sequenceBuilder.buildSequence(state: request.state, question: question)
+            let sequence = try sequenceBuilder.buildSequence(pretokenizedStateIds: pretokenizedStateIds, question: question)
             try validateOptionCount(sequence.markerPositions.count, questionID: qid)
             totalTokens += sequence.inputIds.count
 
@@ -73,7 +76,10 @@ public final class LayaCoreMLEngine: Sendable {
             if let mock = mockPredictor {
                 logits = try await mock(sequence)
             } else if let holder = modelHolder {
-                logits = try executeCoreML(model: holder.model, sequence: sequence)
+                let model = holder.model
+                logits = try await Task.detached { [self] in
+                    try self.executeCoreML(model: model, sequence: sequence)
+                }.value
             } else {
                 throw SystemOneError.modelExecutionError("No Core ML model or predictor configured.")
             }

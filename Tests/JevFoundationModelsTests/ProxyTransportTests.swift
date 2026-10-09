@@ -194,4 +194,36 @@ struct ProxyTransportTests {
         #expect(MockProxyURLProtocol.recordedRequests.count == 2)
         #expect(sleepRecorder.delays == [.seconds(1)])
     }
+
+    @Test("ProxyTransport rejects insecure HTTP proxy endpoints to remote hosts")
+    func testInsecureRemoteHTTPEndpointRejected() async throws {
+        let insecureURL = URL(string: "http://remote-proxy.example.com/api")!
+        let transport = ProxyTransport(
+            proxyEndpoint: insecureURL,
+            credential: .bearer { "token" },
+            session: makeSession()
+        )
+
+        let request = JevRequest(state: "Test", model: "jev-latest", questions: [:])
+        await #expect(throws: JevError.self) {
+            _ = try await transport.send(request: request, apiKey: nil, endpoint: insecureURL)
+        }
+    }
+
+    @Test("ProxyTransport permits HTTP proxy endpoints on localhost loopback")
+    func testLocalhostHTTPEndpointPermitted() async throws {
+        MockProxyURLProtocol.reset()
+        MockProxyURLProtocol.enqueue(statusCode: 200, body: sampleResponseData)
+
+        let localURL = URL(string: "http://localhost:8080/api")!
+        let transport = ProxyTransport(
+            proxyEndpoint: localURL,
+            credential: .bearer { "token" },
+            session: makeSession()
+        )
+
+        let request = JevRequest(state: "Test", model: "jev-latest", questions: [:])
+        let response = try await transport.send(request: request, apiKey: nil, endpoint: localURL)
+        #expect(response.answers.count == 1)
+    }
 }

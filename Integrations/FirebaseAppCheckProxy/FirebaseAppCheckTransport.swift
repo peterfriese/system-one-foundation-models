@@ -90,8 +90,5 @@ public struct FirebaseAppCheckTransport: JevTransport, Sendable {
         } catch {
             throw JevError.decodingError("Failed to decode JevResponse from proxy: \(error.localizedDescription)")
         }
-        #else
-        throw JevError.networkError("FirebaseAppCheck is not linked in this target. To use FirebaseAppCheckTransport, link the FirebaseAppCheck SDK.")
-        #endif
     }
 }

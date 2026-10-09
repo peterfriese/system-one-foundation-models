@@ -316,4 +316,13 @@ struct ClefLanguageModelTests {
         #expect(dims.width == 400)
         #expect(dims.height == 300)
     }
+
+    @Test("ItemCategory conforms to Choosable with optionIdentifier and optionDescription")
+    func testItemCategoryChoosableConformance() {
+        let category: any Choosable = ItemCategory.beverage
+        #expect(category.optionIdentifier == "beverage")
+        #expect(category.optionDescription == "Beverage")
+
+        #expect(ItemCategory.allCases.count == 10)
+    }
 }

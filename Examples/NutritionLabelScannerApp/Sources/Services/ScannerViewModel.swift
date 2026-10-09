@@ -164,10 +164,6 @@ public final class ScannerViewModel {
         }
     }
 
-    public func selectProfile(_ profile: DietaryProfile) {
-        self.selectedProfile = profile
-    }
-
     public func toggleFlashlight() {
         cameraService.toggleTorch()
     }

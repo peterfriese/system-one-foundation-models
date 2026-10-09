@@ -110,12 +110,14 @@ public struct ModernBERTTokenizer: LayaTokenizer, Sendable {
         if let direct = vocab[word] {
             return [direct]
         }
-        // Subword greedy longest matching
+        // Subword greedy longest matching with bounded prefix search
         var result: [Int] = []
         var remaining = word[...]
+        let maxSubwordLen = 64
         while !remaining.isEmpty {
             var matched = false
-            for end in stride(from: remaining.count, to: 0, by: -1) {
+            let searchLen = min(remaining.count, maxSubwordLen)
+            for end in stride(from: searchLen, to: 0, by: -1) {
                 let sub = String(remaining.prefix(end))
                 if let id = vocab[sub] {
                     result.append(id)

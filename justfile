@@ -26,6 +26,6 @@ mail-test-ui:
 
 # Simulator
 sim-boot:
-    xcrun simctl boot "iPhone 16 Pro" || true
+    flowdeck simulator boot "iPhone 16 Pro" || true
     open -a Simulator
 

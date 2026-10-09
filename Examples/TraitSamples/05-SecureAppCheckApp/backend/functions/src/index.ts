@@ -54,39 +54,20 @@ export const jevProxy = onRequest(
     // 2. Resolve Upstream API Key (from Secret Manager or Environment)
     const apiKey = process.env.TYPESAFE_API_KEY;
 
-    // 3. Fallback to offline / mock proxy if API key is not configured
+    // 3. Strict Credential Verification (Per AGENTS.md Principle 7: No Mock Bypasses in Examples)
     if (!apiKey || apiKey === "mock" || apiKey === "mock-key") {
-      console.log("[Proxy] Running in simulated mock mode (no TYPESAFE_API_KEY secret found).");
-      const startTime = Date.now();
-      
-      const incomingBody = req.body || {};
-      const questions = incomingBody.questions || {};
-      const answers: Record<string, any> = {};
-
-      for (const key of Object.keys(questions)) {
-        const q = questions[key];
-        if (q.type === "noul") {
-          answers[key] = { type: "noul", noul: 0.96, confidence: 0.98 };
-        } else if (q.type === "choice") {
-          const firstOption = q.criteria ? Object.keys(q.criteria)[0] : "default";
-          answers[key] = {
-            type: "choice",
-            choice: firstOption,
-            confidence: 0.95,
-            probabilities: { [firstOption]: 0.95 }
-          };
-        } else if (q.type === "score") {
-          answers[key] = { type: "score", score: 3.0, confidence: 0.90 };
-        }
-      }
-
-      const elapsedMs = Date.now() - startTime;
-      res.setHeader("x-envoy-upstream-service-time", `${elapsedMs}`);
-      res.status(200).json({
-        model: incomingBody.model || "jev-latest",
-        answers,
-        usage: { input_tokens: 32, output_tokens: 4 },
-        serverDurationMs: elapsedMs
+      const banner = "================================================================================\n" +
+                     "🛑 [Proxy Error] Missing TYPESAFE_API_KEY configuration!\n" +
+                     "Per AGENTS.md Principle 7, synthetic mock fallbacks in example apps are prohibited.\n" +
+                     "Please configure your API key in Firebase Secret Manager:\n" +
+                     "  firebase functions:secrets:set TYPESAFE_API_KEY\n" +
+                     "or export TYPESAFE_API_KEY in your local emulator environment.\n" +
+                     "================================================================================";
+      console.error(banner);
+      res.status(500).json({
+        error: "MissingConfiguration",
+        message: "TYPESAFE_API_KEY must be set via Firebase Secret Manager or environment.",
+        remediation: "Run `firebase functions:secrets:set TYPESAFE_API_KEY` to configure credentials, or export TYPESAFE_API_KEY in your environment."
       });
       return;
     }

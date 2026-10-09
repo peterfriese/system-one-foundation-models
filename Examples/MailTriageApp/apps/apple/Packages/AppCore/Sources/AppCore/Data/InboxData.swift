@@ -21,7 +21,7 @@ public enum InboxData {
             let isVIP: Bool
             let urgencyScore: Int
             let requiresAction: Bool
-            let suggestedAction: String
+            let suggestedAction: TriageAction
             let defaultMailbox: Mailbox
         }
 
@@ -51,9 +51,9 @@ public enum InboxData {
                 """,
                 category: .work,
                 isVIP: false,
-                urgencyScore: 3,
+                urgencyScore: 0,
                 requiresAction: true,
-                suggestedAction: "Revert commit a94f28e or patch ANE constant",
+                suggestedAction: .scheduleTask,
                 defaultMailbox: .inbox
             ),
             Template(
@@ -83,9 +83,9 @@ public enum InboxData {
                 """,
                 category: .securityAlerts,
                 isVIP: true,
-                urgencyScore: 3,
+                urgencyScore: 0,
                 requiresAction: true,
-                suggestedAction: "Join war room & acknowledge incident",
+                suggestedAction: .immediateAlert,
                 defaultMailbox: .inbox
             ),
             Template(
@@ -111,7 +111,7 @@ public enum InboxData {
                 isVIP: false,
                 urgencyScore: 2,
                 requiresAction: true,
-                suggestedAction: "Fix Swift 6 concurrency warnings",
+                suggestedAction: .scheduleTask,
                 defaultMailbox: .inbox
             ),
             // Code Reviews
@@ -141,7 +141,7 @@ public enum InboxData {
                 isVIP: true,
                 urgencyScore: 2,
                 requiresAction: true,
-                suggestedAction: "Reply to review comments & run microbenchmark",
+                suggestedAction: .draftReply,
                 defaultMailbox: .inbox
             ),
             Template(
@@ -172,7 +172,7 @@ public enum InboxData {
                 isVIP: true,
                 urgencyScore: 1,
                 requiresAction: false,
-                suggestedAction: "Schedule catch-up sync",
+                suggestedAction: .scheduleTask,
                 defaultMailbox: .inbox
             ),
             Template(
@@ -197,7 +197,7 @@ public enum InboxData {
                 isVIP: true,
                 urgencyScore: 1,
                 requiresAction: false,
-                suggestedAction: "Forward note to engineering team",
+                suggestedAction: .moveToInbox,
                 defaultMailbox: .inbox
             ),
             // Apple Purchases & Developer Program
@@ -223,9 +223,9 @@ public enum InboxData {
                 """,
                 category: .billing,
                 isVIP: false,
-                urgencyScore: 0,
+                urgencyScore: 3,
                 requiresAction: false,
-                suggestedAction: "Archive receipt",
+                suggestedAction: .autoArchive,
                 defaultMailbox: .inbox
             ),
             Template(
@@ -251,7 +251,7 @@ public enum InboxData {
                 isVIP: false,
                 urgencyScore: 1,
                 requiresAction: false,
-                suggestedAction: "Notify external test group",
+                suggestedAction: .scheduleTask,
                 defaultMailbox: .inbox
             ),
             // Cloud Invoices & Billing
@@ -280,7 +280,7 @@ public enum InboxData {
                 isVIP: false,
                 urgencyScore: 1,
                 requiresAction: true,
-                suggestedAction: "Forward invoice to accounting",
+                suggestedAction: .scheduleTask,
                 defaultMailbox: .billing
             ),
             Template(
@@ -306,7 +306,7 @@ public enum InboxData {
                 isVIP: false,
                 urgencyScore: 0,
                 requiresAction: false,
-                suggestedAction: "File receipt",
+                suggestedAction: .autoArchive,
                 defaultMailbox: .billing
             ),
             // Security notices & Phishing
@@ -332,7 +332,7 @@ public enum InboxData {
                 isVIP: false,
                 urgencyScore: 2,
                 requiresAction: true,
-                suggestedAction: "Confirm VPN session or revoke credentials",
+                suggestedAction: .immediateAlert,
                 defaultMailbox: .securityAlerts
             ),
             Template(
@@ -358,7 +358,7 @@ public enum InboxData {
                 isVIP: false,
                 urgencyScore: 3,
                 requiresAction: true,
-                suggestedAction: "Quarantine & report phishing attempt",
+                suggestedAction: .quarantineThreat,
                 defaultMailbox: .quarantine
             ),
             Template(
@@ -383,7 +383,7 @@ public enum InboxData {
                 isVIP: false,
                 urgencyScore: 1,
                 requiresAction: true,
-                suggestedAction: "Schedule 20-minute calendar block",
+                suggestedAction: .scheduleTask,
                 defaultMailbox: .inbox
             ),
             // Meetings & Calendar
@@ -411,7 +411,7 @@ public enum InboxData {
                 isVIP: true,
                 urgencyScore: 1,
                 requiresAction: false,
-                suggestedAction: "Review agenda doc before sync",
+                suggestedAction: .scheduleTask,
                 defaultMailbox: .meetings
             ),
             Template(
@@ -439,7 +439,7 @@ public enum InboxData {
                 isVIP: false,
                 urgencyScore: 1,
                 requiresAction: false,
-                suggestedAction: "Review committed tickets",
+                suggestedAction: .scheduleTask,
                 defaultMailbox: .meetings
             ),
             Template(
@@ -463,7 +463,7 @@ public enum InboxData {
                 isVIP: false,
                 urgencyScore: 2,
                 requiresAction: true,
-                suggestedAction: "Check calendar & reply to swap request",
+                suggestedAction: .draftReply,
                 defaultMailbox: .inbox
             ),
             // Newsletters & Technical Digests
@@ -490,7 +490,7 @@ public enum InboxData {
                 isVIP: false,
                 urgencyScore: 0,
                 requiresAction: false,
-                suggestedAction: "Read later in Safari Reading List",
+                suggestedAction: .autoArchive,
                 defaultMailbox: .newsletters
             ),
             Template(
@@ -517,7 +517,7 @@ public enum InboxData {
                 isVIP: false,
                 urgencyScore: 0,
                 requiresAction: false,
-                suggestedAction: "Bookmark article",
+                suggestedAction: .autoArchive,
                 defaultMailbox: .newsletters
             ),
             Template(
@@ -543,7 +543,7 @@ public enum InboxData {
                 isVIP: false,
                 urgencyScore: 0,
                 requiresAction: false,
-                suggestedAction: "Save PDF to research folder",
+                suggestedAction: .autoArchive,
                 defaultMailbox: .newsletters
             ),
             Template(
@@ -567,7 +567,7 @@ public enum InboxData {
                 isVIP: true,
                 urgencyScore: 0,
                 requiresAction: false,
-                suggestedAction: "Reply with appreciation",
+                suggestedAction: .draftReply,
                 defaultMailbox: .inbox
             )
         ]

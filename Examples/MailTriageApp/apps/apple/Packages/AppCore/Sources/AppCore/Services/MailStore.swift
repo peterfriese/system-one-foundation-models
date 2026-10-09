@@ -30,10 +30,13 @@ public final class MailStore {
     public var searchText: String = ""
     public var unreadOnly: Bool = false
 
+    private var activeProbeTask: Task<Void, Never>?
+
     // MARK: - Triage Engine State
     public var selectedBackend: TriageBackend = .onDeviceCoreML {
         didSet {
-            Task { @MainActor in
+            activeProbeTask?.cancel()
+            activeProbeTask = Task { @MainActor in
                 await probeActiveBackend()
             }
         }
@@ -247,8 +250,10 @@ public final class MailStore {
 
     /// Probes the currently selected backend and updates active diagnostic status.
     public func probeActiveBackend() async {
+        guard !Task.isCancelled else { return }
         activeBackendStatus = .checking
         let status = await healthProbe.probe(backend: selectedBackend)
+        guard !Task.isCancelled else { return }
         print("⏱️ [MailStore] Active backend (\(selectedBackend.displayName)) probe status: \(status)")
         self.activeBackendStatus = status
         if case .unreachable(let reason, let guidance) = status {
@@ -289,7 +294,7 @@ public final class MailStore {
             emails[index].category = result.decision.category
             emails[index].urgencyScore = result.decision.urgencyScore
             emails[index].requiresAction = result.decision.requiresAction
-            emails[index].suggestedAction = result.decision.suggestedAction.displayName
+            emails[index].suggestedAction = result.decision.suggestedAction
 
             // Symmetrical auto execution: automatically mutate mailbox or flags if tier is .auto
             if result.routingTier == .auto {
@@ -333,7 +338,7 @@ public final class MailStore {
                             self.emails[index].category = result.decision.category
                             self.emails[index].urgencyScore = result.decision.urgencyScore
                             self.emails[index].requiresAction = result.decision.requiresAction
-                            self.emails[index].suggestedAction = result.decision.suggestedAction.displayName
+                            self.emails[index].suggestedAction = result.decision.suggestedAction
 
                             if result.routingTier == .auto {
                                 self.executeActionSilently(action: result.decision.suggestedAction, for: completedEmail.id)
