@@ -7,6 +7,7 @@ public final class MockOpenAIDecisionsBackend: SystemOneBackend, @unchecked Send
     private var _lastRequest: SystemOneRequest?
     private var _lastOpenAIRequest: OpenAIDecisionsRequest?
     private var _evaluationCount: Int = 0
+    private var _handler: (@Sendable (SystemOneRequest) async throws -> SystemOneResponse)?
 
     /// The most recent `SystemOneRequest` dispatched to this mock backend.
     public var lastRequest: SystemOneRequest? {
@@ -24,12 +25,15 @@ public final class MockOpenAIDecisionsBackend: SystemOneBackend, @unchecked Send
     }
 
     /// Custom response handler to override default evaluation behavior.
-    public var handler: (@Sendable (SystemOneRequest) async throws -> SystemOneResponse)?
+    public var handler: (@Sendable (SystemOneRequest) async throws -> SystemOneResponse)? {
+        get { lock.withLock { _handler } }
+        set { lock.withLock { _handler = newValue } }
+    }
 
     public init(
         handler: (@Sendable (SystemOneRequest) async throws -> SystemOneResponse)? = nil
     ) {
-        self.handler = handler
+        self._handler = handler
     }
 
     public func evaluate(request: SystemOneRequest) async throws -> SystemOneResponse {
@@ -40,8 +44,9 @@ public final class MockOpenAIDecisionsBackend: SystemOneBackend, @unchecked Send
             _evaluationCount += 1
         }
 
-        if let handler = self.handler {
-            return try await handler(request)
+        let currentHandler = lock.withLock { _handler }
+        if let currentHandler {
+            return try await currentHandler(request)
         }
 
         // Generate deterministic, sensible default answers for all questions

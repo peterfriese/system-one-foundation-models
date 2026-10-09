@@ -284,7 +284,7 @@ struct OpenAIDecisionsPayloadAdapterTests {
 
         let adapted = try OpenAIDecisionsPayloadAdapter.adaptResponse(openAIResponse)
         #expect(adapted.answers["category"]?.probabilities?["support"] == 0.8)
-        #expect(adapted.answers["rating"]?.probabilities?["Good"] == 0.85)
+        #expect(adapted.answers["rating"]?.probabilities?["4"] == 0.85)
         #expect(adapted.answers["rating"]?.legend?["4"] == "Good")
     }
 }

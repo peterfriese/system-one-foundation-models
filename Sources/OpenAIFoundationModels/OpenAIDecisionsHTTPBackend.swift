@@ -206,10 +206,6 @@ public struct OpenAIDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
             let serverDuration = parseServerDuration(from: httpResponse)
             return (decoded, transportDuration, serverDuration)
         } catch {
-            print("⚠️ [OpenAIDecisionsHTTPBackend] JSON decoding error: \(error)")
-            if let raw = String(data: data, encoding: .utf8) {
-                print("⚠️ [OpenAIDecisionsHTTPBackend] Raw response body:\n\(raw)")
-            }
             throw SystemOneError.decodingError("Failed to decode OpenAIDecisionsResponse: \(error.localizedDescription)")
         }
     }

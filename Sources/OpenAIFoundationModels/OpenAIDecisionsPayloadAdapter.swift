@@ -139,7 +139,7 @@ public enum OpenAIDecisionsPayloadAdapter {
                 var legendDict: [String: String]? = nil
                 if let probsList = ans.probabilities {
                     probsDict = Dictionary(
-                        probsList.map { ($0.label ?? $0.value, $0.probability) },
+                        probsList.map { ($0.value, $0.probability) },
                         uniquingKeysWith: { current, _ in current }
                     )
                     legendDict = Dictionary(
@@ -205,11 +205,6 @@ public enum OpenAIDecisionsAttachmentValidator {
     /// Validates an array of image attachments against OpenAI Decisions constraints.
     public static func validate(attachments: [SystemOneImage]) throws {
         for image in attachments {
-            guard image.format == .png || image.format == .jpeg || image.format == .webp else {
-                throw SystemOneError.modelExecutionError(
-                    "Unsupported image format '\(image.format.rawValue)'. OpenAI Decisions API only accepts PNG, JPEG, and WebP."
-                )
-            }
             guard image.dataURL.hasPrefix("data:") && image.dataURL.contains(";base64,") else {
                 throw SystemOneError.modelExecutionError(
                     "OpenAI Decisions API requires inline RFC 2397 base64 Data URLs. Hosted URLs and file_ids are unsupported."

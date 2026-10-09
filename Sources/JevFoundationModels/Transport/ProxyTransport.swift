@@ -79,6 +79,8 @@ public struct ProxyTransport: JevTransport, Sendable {
     }
 
     public func send(request: JevRequest, apiKey: String?, endpoint: URL) async throws -> JevResponse {
+        try validateProxyEndpointSecurity()
+
         let requestData: Data
         do {
             requestData = try JSONEncoder().encode(request)
@@ -136,6 +138,20 @@ public struct ProxyTransport: JevTransport, Sendable {
             try await sleep(delay)
             attempt += 1
         }
+    }
+
+    private func validateProxyEndpointSecurity() throws {
+        let scheme = proxyEndpoint.scheme?.lowercased()
+        if scheme == "https" {
+            return
+        }
+        if scheme == "http" {
+            let host = proxyEndpoint.host?.lowercased()
+            if host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "[::1]" {
+                return
+            }
+        }
+        throw JevError.networkError("Insecure proxy endpoint: HTTPS is required for remote proxy connections.")
     }
 
     private func applyCredential(to request: inout URLRequest) async throws {
