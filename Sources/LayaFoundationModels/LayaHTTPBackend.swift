@@ -45,7 +45,14 @@ public struct LayaHTTPBackend: SystemOneBackend, Hashable, Sendable {
         let response: URLResponse
         do {
             (data, response) = try await session.data(for: urlRequest)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let urlError as URLError where urlError.code == .cancelled {
+            throw CancellationError()
         } catch {
+            if (error as? URLError)?.code == .cancelled || error is CancellationError {
+                throw CancellationError()
+            }
             throw SystemOneError.networkError(error.localizedDescription)
         }
         let transportDuration = (CFAbsoluteTimeGetCurrent() - networkStartTime) * 1000.0
