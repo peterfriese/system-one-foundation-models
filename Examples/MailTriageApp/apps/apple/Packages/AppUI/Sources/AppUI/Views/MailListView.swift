@@ -6,6 +6,7 @@ public struct MailListView: View {
     @Bindable public var store: MailStore
     @Injected(\.backendConfigurationStore) private var configStore
     @State private var showingBenchmarkComparison: Bool = false
+    @State private var hasAppeared: Bool = false
 
     public init(store: MailStore) {
         self.store = store
@@ -286,17 +287,18 @@ public struct MailListView: View {
                 #endif
             }
         }
-        .task {
-            await store.probeActiveBackend()
-        }
-        .onChange(of: configStore.cloudflareAccountId) { _, _ in
-            Task { await store.probeActiveBackend() }
-        }
-        .onChange(of: configStore.cloudflareApiToken) { _, _ in
-            Task { await store.probeActiveBackend() }
-        }
-        .onChange(of: configStore.typesafeApiKey) { _, _ in
-            Task { await store.probeActiveBackend() }
+        .task(id: "\(configStore.cloudflareAccountId)|\(configStore.cloudflareApiToken)|\(configStore.typesafeApiKey)") {
+            guard hasAppeared else {
+                hasAppeared = true
+                await store.probeActiveBackend()
+                return
+            }
+            do {
+                try await Task.sleep(for: .milliseconds(500))
+                await store.probeActiveBackend()
+            } catch {
+                // Cancelled by subsequent keystrokes
+            }
         }
         .sheet(isPresented: $showingBenchmarkComparison) {
             BenchmarkComparisonSheet()

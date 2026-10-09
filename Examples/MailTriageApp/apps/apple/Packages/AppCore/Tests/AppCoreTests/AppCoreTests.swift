@@ -523,8 +523,10 @@ struct TriageEngineTests {
         let emptyDir = FileManager.default.temporaryDirectory.appendingPathComponent("EmptyModels_\(UUID().uuidString)")
         emptyManager.customModelsDirectory = emptyDir
         Container.shared.coreMLModelManager.register { emptyManager }
+        Container.shared.backendHealthProbeService.register { BackendHealthProbeService(coreMLManager: emptyManager) }
         defer {
             Container.shared.coreMLModelManager.reset()
+            Container.shared.backendHealthProbeService.reset()
             try? FileManager.default.removeItem(at: emptyDir)
         }
 
@@ -981,8 +983,8 @@ struct HealthProbeTests {
         }
     }
 
-    @Test("Probe returns healthy when non-empty safetensors model file is installed")
-    func testCoreMLProbeSafetensorsHealthy() async throws {
+    @Test("Probe returns unreachable when non-CoreML safetensors model file is installed")
+    func testCoreMLProbeSafetensorsUnreachable() async throws {
         let manager = CoreMLModelManager()
         let isolatedDir = FileManager.default.temporaryDirectory.appendingPathComponent("SafetensorsProbe_\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: isolatedDir, withIntermediateDirectories: true)
@@ -1001,10 +1003,11 @@ struct HealthProbeTests {
         let status = await probe.probe(backend: .onDeviceCoreML)
 
         switch status {
-        case .healthy:
-            break
+        case .unreachable(let reason, let guidance):
+            #expect(reason.contains("Failed to load Core ML model"))
+            #expect(guidance.contains("re-download the Core ML model"))
         default:
-            Issue.record("Expected .healthy for installed safetensors model, got \(status)")
+            Issue.record("Expected .unreachable for uncompiled safetensors file, got \(status)")
         }
     }
 
@@ -1468,8 +1471,8 @@ struct CoreMLModelManagerTests {
         }
     }
 
-    @Test("Triage on safetensors model evaluates dynamically without error")
-    func testTriageOnSafetensorsModel() async throws {
+    @Test("Triage on safetensors model throws BackendUnreachableError.modelNotAvailable")
+    func testTriageOnSafetensorsModelThrowsError() async throws {
         let manager = CoreMLModelManager()
         let isolatedDir = FileManager.default.temporaryDirectory.appendingPathComponent("SafetensorsTriage_\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: isolatedDir, withIntermediateDirectories: true)
@@ -1487,9 +1490,16 @@ struct CoreMLModelManagerTests {
         let engine = TriageEngine(coreMLManager: manager)
         let sample = InboxData.sampleEmails[0]
 
-        let result = try await engine.triage(email: sample, backend: .onDeviceCoreML, skipProbe: true)
-        #expect(result.backendUsed == .onDeviceCoreML)
-        #expect(!result.decision.category.displayName.isEmpty)
+        do {
+            _ = try await engine.triage(email: sample, backend: .onDeviceCoreML, skipProbe: true)
+            Issue.record("Expected BackendUnreachableError when trying to execute safetensors model directly")
+        } catch let error as BackendUnreachableError {
+            #expect(error == BackendUnreachableError.modelNotAvailable)
+            #expect(error.reason.contains(".safetensors files cannot be executed directly by Core ML"))
+            #expect(error.guidance.contains("coremltools or xcrun coremlc"))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
     }
 
     @Test("CoreMLModelManager importLocalModel extracts valid .zip archive containing .mlmodelc (SIM-2)")
@@ -1632,7 +1642,7 @@ struct MailStoreTriageTests {
         #expect(updated?.triageResult != nil)
         #expect(updated?.triageResult?.routingTier == .auto)
         #expect(updated?.category == .work)
-        #expect(updated?.suggestedAction == "Schedule Task")
+        #expect(updated?.suggestedAction == .scheduleTask)
     }
 
     @Test("MailStore executeSuggestedAction modifies email state correctly")

@@ -107,28 +107,7 @@ public final class TriageEngine: TriageEngineProtocol, @unchecked Sendable {
             }()
 
             if isSafetensors && FileManager.default.fileExists(atPath: path) {
-                let engine = LayaCoreMLEngine(tokenizer: tokenizer) { sequence in
-                    let k = sequence.markerPositions.count
-                    guard k > 0 else { return [] }
-                    var logits = [Double](repeating: -1.0, count: k)
-                    switch sequence.qtype {
-                    case 2: // noul: [false, true]
-                        if k >= 2 {
-                            logits[0] = -1.2
-                            logits[1] = 2.8
-                        } else {
-                            logits[0] = 2.0
-                        }
-                    case 1: // score
-                        let selected = min(1, k - 1)
-                        logits[selected] = 3.0
-                    default: // choice
-                        logits[0] = 3.0
-                    }
-                    return logits
-                }
-                cachedCoreMLEngine = (url: modelURL, engine: engine)
-                return engine
+                throw BackendUnreachableError.modelNotAvailable
             }
 
             throw BackendUnreachableError(

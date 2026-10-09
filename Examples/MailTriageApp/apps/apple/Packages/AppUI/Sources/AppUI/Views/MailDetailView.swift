@@ -450,7 +450,7 @@ To: \(email.recipient)
                     Image(systemName: "sparkles")
                         .foregroundStyle(.tint)
                         .font(.caption)
-                    Text("Suggested: \(action)")
+                    Text("Suggested: \(action.displayName)")
                         .font(.caption.weight(.medium))
                         .foregroundStyle(.primary.opacity(0.85))
                 }

@@ -18,7 +18,6 @@ struct BenchmarkOptions {
     var targetBackends: [TriageBackend]? = nil
     var outputPath: String? = nil
     var showHelp: Bool = false
-    var mockMode: Bool = false
 
     static func parse(arguments: [String]) throws -> BenchmarkOptions {
         var options = BenchmarkOptions()
@@ -30,8 +29,6 @@ struct BenchmarkOptions {
                 options.showHelp = true
             case "--all":
                 options.sampleCount = 500
-            case "-m", "--mock":
-                options.mockMode = true
             case "-n", "--count":
                 i += 1
                 guard i < arguments.count, let val = Int(arguments[i]) else {
@@ -105,7 +102,6 @@ struct BenchmarkOptions {
                                 (options: onDeviceCoreML, localServe, hostedVPC, cloudAPI, cloudflareClef, openaiDecisions, generativeBaseline)
                                 (default: all probed reachable backends)
           -o, --output <path>   Output JSON file path (default: canonical Application Support/MailTriage/benchmark-truth.json)
-          -m, --mock            Offline simulation mode for headless CI environments
           -h, --help            Show this help message
 
         EXAMPLES:
@@ -140,12 +136,17 @@ final class BenchmarkRunner: Sendable {
         // 1. Determine backends to run
         let backendsToRun = await resolveBackends()
         guard !backendsToRun.isEmpty else {
-            print("⚠️  No reachable backends found to benchmark.")
-            print("   - Ensure local laya-serve is running at http://127.0.0.1:8000")
-            print("   - Or install Core ML model in MailTriage Settings")
-            print("   - Or configure TYPESAFE_API_KEY for cloudAPI")
-            print("   - Or run with --mock for offline simulation")
-            return
+            print("================================================================================")
+            print("🛑 [Benchmark Error] No Reachable Backends Available!")
+            print("================================================================================")
+            print("Per AGENTS.md Principle 7, synthetic offline mock benchmarks are prohibited.")
+            print("Please ensure at least one real backend is reachable before benchmarking:")
+            print("  1. Start local laya-serve:   laya-serve --port 8000")
+            print("  2. Or configure TypeSafe:    export TYPESAFE_API_KEY=\"...\"")
+            print("  3. Or configure Cloudflare:  export CLOUDFLARE_API_TOKEN=\"...\" CLOUDFLARE_ACCOUNT_ID=\"...\"")
+            print("  4. Or compile Core ML model: xcrun coremlc compile LayaDecisionModel.mlmodelc")
+            print("================================================================================")
+            exit(1)
         }
 
         let allEmails = InboxData.sampleEmails
@@ -166,7 +167,7 @@ final class BenchmarkRunner: Sendable {
             hardwareInfo: hardware,
             sampleCount: options.sampleCount,
             results: results,
-            isSyntheticReference: options.mockMode
+            isSyntheticReference: false
         )
 
         // 4. Save to disk
@@ -181,10 +182,6 @@ final class BenchmarkRunner: Sendable {
     private func resolveBackends() async -> [TriageBackend] {
         if let explicit = options.targetBackends {
             return explicit
-        }
-
-        if options.mockMode {
-            return [.onDeviceCoreML, .localServe, .generativeBaseline]
         }
 
         let probe = Container.shared.backendHealthProbeService()
@@ -223,73 +220,39 @@ final class BenchmarkRunner: Sendable {
             let completed = index + 1
             let decision: BenchmarkSampleDecision
 
-            if options.mockMode {
-                // Realistic synthetic distribution for headless CI testing
-                let baseLatency: Double
-                switch backend {
-                case .onDeviceCoreML: baseLatency = 8.8
-                case .localServe: baseLatency = 10.8
-                case .hostedVPC: baseLatency = 48.0
-                case .cloudAPI: baseLatency = 68.0
-                case .cloudflareClef: baseLatency = 52.0
-                case .openaiDecisions: baseLatency = 45.0
-                case .generativeBaseline: baseLatency = 950.0
-                }
-
-                // Add slight jitter [0.95...1.15]
-                let jitter = 0.95 + Double((index * 7) % 20) / 100.0
-                let latencyMs = baseLatency * jitter
-                latencies.append(latencyMs)
-
-                // Brief yield to exercise concurrency
-                try? await Task.sleep(for: .microseconds(100))
+            do {
+                let singleStart = clock.now
+                let result = try await triageEngine.triage(email: email, backend: backend, skipProbe: true)
+                let measuredDurationMs = singleStart.duration(to: clock.now).asMilliseconds
+                let latency = max(result.latencyMs, measuredDurationMs)
+                latencies.append(latency)
 
                 decision = BenchmarkSampleDecision(
                     emailId: email.id,
-                    latencyMs: latencyMs,
-                    category: .work,
-                    requiresAction: true,
-                    urgencyScore: 1,
-                    suggestedAction: .scheduleTask,
-                    confidence: 0.92
+                    latencyMs: latency,
+                    category: result.decision.category,
+                    requiresAction: result.decision.requiresAction,
+                    urgencyScore: result.decision.urgencyScore,
+                    suggestedAction: result.decision.suggestedAction,
+                    confidence: result.confidenceScore
                 )
-            } else {
-                do {
-                    let singleStart = clock.now
-                    let result = try await triageEngine.triage(email: email, backend: backend, skipProbe: true)
-                    let measuredDurationMs = singleStart.duration(to: clock.now).asMilliseconds
-                    let latency = max(result.latencyMs, measuredDurationMs)
-                    latencies.append(latency)
-
-                    decision = BenchmarkSampleDecision(
-                        emailId: email.id,
-                        latencyMs: latency,
-                        category: result.decision.category,
-                        requiresAction: result.decision.requiresAction,
-                        urgencyScore: result.decision.urgencyScore,
-                        suggestedAction: result.decision.suggestedAction,
-                        confidence: result.confidenceScore
-                    )
-                } catch {
-                    print("\n⚠️  Evaluation failed on email \(email.id): \(error.localizedDescription)")
-                    decision = BenchmarkSampleDecision(
-                        emailId: email.id,
-                        latencyMs: 50.0,
-                        category: .work,
-                        requiresAction: false,
-                        urgencyScore: 3,
-                        suggestedAction: .autoArchive,
-                        confidence: 0.50
-                    )
-                    latencies.append(50.0)
-                }
+            } catch {
+                print("\n⚠️  Evaluation failed on email \(email.id): \(error.localizedDescription)")
+                decision = BenchmarkSampleDecision(
+                    emailId: email.id,
+                    latencyMs: 50.0,
+                    category: .work,
+                    requiresAction: false,
+                    urgencyScore: 3,
+                    suggestedAction: .autoArchive,
+                    confidence: 0.50
+                )
+                latencies.append(50.0)
             }
 
             sampleDecisions.append(decision)
 
-            let elapsedSeconds = options.mockMode
-                ? (latencies.reduce(0.0, +) / 1000.0)
-                : batchStart.duration(to: clock.now).asSeconds
+            let elapsedSeconds = batchStart.duration(to: clock.now).asSeconds
             let currentThroughput = elapsedSeconds > 0 ? Double(completed) / elapsedSeconds : 0.0
             renderProgressBar(
                 completed: completed,
@@ -300,9 +263,7 @@ final class BenchmarkRunner: Sendable {
             )
         }
 
-        let measuredTotalDuration = max(batchStart.duration(to: clock.now).asSeconds, 0.001)
-        let simulatedTotalDuration = max(latencies.reduce(0.0, +) / 1000.0, 0.001)
-        let totalDuration = options.mockMode ? simulatedTotalDuration : measuredTotalDuration
+        let totalDuration = max(batchStart.duration(to: clock.now).asSeconds, 0.001)
         let throughput = Double(emails.count) / totalDuration
         let meanLatency = latencies.isEmpty ? 0.0 : (latencies.reduce(0.0, +) / Double(latencies.count))
 
