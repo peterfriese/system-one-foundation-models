@@ -69,6 +69,12 @@ struct TestDecision {
 }
 
 @Generable
+struct TestOptionalDecision {
+    @Guide(description: "Optional department category")
+    var optionalDepartment: TestDepartment?
+}
+
+@Generable
 struct InvalidProseStruct {
     var freeformNotes: String
 }
@@ -211,6 +217,21 @@ struct JevFoundationModelsTests {
         }
         #expect(options == ["billing", "engineering", "sales"])
         #expect(translation.questions[questionKey] != nil)
+    }
+
+    @Test("SchemaTranslator correctly dereferences $ref inside anyOf for optional enums")
+    func testSchemaTranslatorOptionalEnum() throws {
+        let translator = SchemaTranslator()
+        let translation = try translator.translate(TestOptionalDecision.generationSchema)
+
+        guard case .choice(let optInstructions, let criteria) = translation.questions["optionalDepartment"] else {
+            Issue.record("Expected optionalDepartment to be translated to .choice")
+            return
+        }
+        #expect(optInstructions == "Optional department category")
+        #expect(criteria["billing"] != nil)
+        #expect(criteria["engineering"] != nil)
+        #expect(criteria["sales"] != nil)
     }
 
     // MARK: - ResponseSynthesizer Tests

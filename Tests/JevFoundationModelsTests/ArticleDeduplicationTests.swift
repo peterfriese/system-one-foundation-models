@@ -88,6 +88,44 @@ struct ArticleDeduplicationTests {
         #expect(conf == 0.88)
     }
 
+    @Test("Multi-turn conversation metadata returns active turn metadata instead of turn 1")
+    func testMultiTurnMetadataReturnsLatestTurn() async throws {
+        actor TurnCounter {
+            var count = 0
+            func next() -> Int {
+                count += 1
+                return count
+            }
+        }
+
+        let counter = TurnCounter()
+        let mockTransport = MockJevTransport { _ in
+            let turn = await counter.next()
+            let prob = turn == 1 ? 0.20 : 0.95
+            return JevResponse(
+                model: "turn-\(turn)",
+                answers: [
+                    "isDuplicate": JevAnswer(
+                        type: "noul",
+                        noul: prob,
+                        confidence: prob,
+                        probabilities: ["true": prob, "false": 1.0 - prob]
+                    )
+                ],
+                usage: JevUsage(inputTokens: 100, outputTokens: 10)
+            )
+        }
+
+        let model = JevLanguageModel(apiKey: "mock-key", transport: mockTransport)
+        let session = LanguageModelSession(model: model)
+
+        let turn1 = try await session.respond(to: "Turn 1", generating: TestArticleDuplicateDecision.self)
+        #expect(turn1.probability(for: "isDuplicate") == 0.20)
+
+        let turn2 = try await session.respond(to: "Turn 2", generating: TestArticleDuplicateDecision.self)
+        #expect(turn2.probability(for: "isDuplicate") == 0.95)
+    }
+
     // MARK: - Calibrated Threshold Evaluation
 
     @Test("Calibrated threshold logic distinguishes true duplicates from borderline cases")

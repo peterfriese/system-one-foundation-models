@@ -105,11 +105,13 @@ public struct SystemOneImage: Codable, Sendable, Equatable {
             throw SystemOneError.modelExecutionError("Invalid or corrupted base64 image data")
         }
 
-        if let dimensions = Self.extractDimensions(data: data, format: format) {
-            let megapixels = (Double(dimensions.width) * Double(dimensions.height)) / 1_000_000.0
-            if megapixels > Guardrails.maxMegapixels {
-                throw SystemOneError.modelExecutionError("Image resolution (\(String(format: "%.1f", megapixels)) MP) exceeds maximum allowed \(Guardrails.maxMegapixels) MP")
-            }
+        guard let dimensions = Self.extractDimensions(data: data, format: format) else {
+            throw SystemOneError.modelExecutionError("Unable to verify image dimensions for format \(format.rawValue)")
+        }
+
+        let megapixels = (Double(dimensions.width) * Double(dimensions.height)) / 1_000_000.0
+        if megapixels > Guardrails.maxMegapixels {
+            throw SystemOneError.modelExecutionError("Image resolution (\(String(format: "%.1f", megapixels)) MP) exceeds maximum allowed \(Guardrails.maxMegapixels) MP")
         }
     }
 

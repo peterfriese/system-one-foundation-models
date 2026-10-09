@@ -57,7 +57,14 @@ struct OpenAIDecisionsPayloadAdapterTests {
 
     @Test("Adapt Request: Encodes images as multimodal base64 Data URLs")
     func testAdaptRequestWithImages() throws {
-        let samplePNG = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+        var samplePNG = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+        samplePNG.append(contentsOf: [0x00, 0x00, 0x00, 0x0D]) // IHDR length
+        samplePNG.append(contentsOf: [0x49, 0x48, 0x44, 0x52]) // "IHDR"
+        let width: UInt32 = 100
+        let height: UInt32 = 100
+        withUnsafeBytes(of: width.bigEndian) { samplePNG.append(contentsOf: $0) }
+        withUnsafeBytes(of: height.bigEndian) { samplePNG.append(contentsOf: $0) }
+        samplePNG.append(contentsOf: [0x08, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
         let image = SystemOneImage(data: samplePNG, format: .png)
 
         let request = SystemOneRequest(

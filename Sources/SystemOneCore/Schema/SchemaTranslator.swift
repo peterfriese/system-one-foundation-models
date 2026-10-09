@@ -72,11 +72,6 @@ public struct SchemaTranslator: Sendable {
         return try parseRoot(json: jsonObject, defs: defs)
     }
 
-    /// Convenience method to translate a `GenerationSchema` directly to System One questions dictionary.
-    public func translateToQuestions(_ schema: GenerationSchema) throws -> [String: SystemOneQuestion] {
-        try translate(schema).questions
-    }
-
     // MARK: - Internal Parsing
 
     private func parseRoot(json: [String: Any], defs: [String: [String: Any]]) throws -> SchemaTranslation {
@@ -171,28 +166,45 @@ public struct SchemaTranslator: Sendable {
             throw SystemOneError.invalidSchema("Property definition must be a JSON object.")
         }
 
-        if let ref = dict["$ref"] as? String {
-            let refPrefix = "#/$defs/"
-            guard ref.hasPrefix(refPrefix) else {
-                throw SystemOneError.invalidSchema("Unsupported $ref format: '\(ref)'. Only internal #/$defs/ references are supported.")
-            }
-            let defName = String(ref.dropFirst(refPrefix.count))
-            guard let referenced = defs[defName] else {
-                throw SystemOneError.invalidSchema("Referenced definition '\(defName)' was not found in $defs.")
-            }
-            // Merge referenced dict with property overrides (like description)
-            for (k, v) in referenced where dict[k] == nil {
-                dict[k] = v
-            }
-        }
+        // Iteratively resolve $ref and unwrap anyOf (e.g. nullable [null, targetType] or enum choice variants)
+        var depth = 0
+        let maxDepth = 10
+        while depth < maxDepth {
+            depth += 1
+            var changed = false
 
-        // Handle anyOf unwrapping (e.g. nullable [null, targetType] or enum choice variants)
-        if let anyOf = dict["anyOf"] as? [[String: Any]] {
-            let nonNullVariants = anyOf.filter { ($0["type"] as? String) != "null" }
-            if let firstVariant = nonNullVariants.first {
-                for (k, v) in firstVariant where dict[k] == nil {
+            // Handle anyOf unwrapping (e.g. nullable [null, targetType] or enum choice variants)
+            if let anyOf = dict["anyOf"] as? [[String: Any]] {
+                dict.removeValue(forKey: "anyOf")
+                let nonNullVariants = anyOf.filter { ($0["type"] as? String) != "null" }
+                if let firstVariant = nonNullVariants.first {
+                    for (k, v) in firstVariant where dict[k] == nil {
+                        dict[k] = v
+                    }
+                    changed = true
+                }
+            }
+
+            // Handle $ref dereferencing
+            if let ref = dict["$ref"] as? String {
+                dict.removeValue(forKey: "$ref")
+                let refPrefix = "#/$defs/"
+                guard ref.hasPrefix(refPrefix) else {
+                    throw SystemOneError.invalidSchema("Unsupported $ref format: '\(ref)'. Only internal #/$defs/ references are supported.")
+                }
+                let defName = String(ref.dropFirst(refPrefix.count))
+                guard let referenced = defs[defName] else {
+                    throw SystemOneError.invalidSchema("Referenced definition '\(defName)' was not found in $defs.")
+                }
+                // Merge referenced dict with property overrides (like description)
+                for (k, v) in referenced where dict[k] == nil {
                     dict[k] = v
                 }
+                changed = true
+            }
+
+            if !changed {
+                break
             }
         }
 

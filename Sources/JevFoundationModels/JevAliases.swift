@@ -8,5 +8,3 @@ public typealias JevResponse = SystemOneResponse
 public typealias JevUsage = SystemOneUsage
 public typealias JevAnswer = SystemOneAnswer
 public typealias JevError = SystemOneError
-public typealias SchemaTranslator = SystemOneCore.SchemaTranslator
-public typealias ResponseSynthesizer = SystemOneCore.ResponseSynthesizer
