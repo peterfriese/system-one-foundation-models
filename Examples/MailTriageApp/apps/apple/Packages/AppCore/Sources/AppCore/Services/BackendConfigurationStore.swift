@@ -121,6 +121,54 @@ public final class BackendConfigurationStore: @unchecked Sendable {
         }
     }
 
+    public var geminiAPIKey: String {
+        get {
+            access(keyPath: \.geminiAPIKey)
+            func sanitize(_ val: String) -> String {
+                if val.hasPrefix("Bearer ") {
+                    return String(val.dropFirst("Bearer ".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+                return val
+            }
+            if keychain is MockKeychainService {
+                return sanitize(keychain.string(for: .geminiApiKey) ?? "")
+            }
+            if let envKey = ProcessInfo.processInfo.environment["GEMINI_API_KEY"], !envKey.isEmpty {
+                let sanitized = sanitize(envKey)
+                try? keychain.set(sanitized, for: .geminiApiKey)
+                return sanitized
+            }
+            if let envKey = ProcessInfo.processInfo.environment["GOOGLE_API_KEY"], !envKey.isEmpty {
+                let sanitized = sanitize(envKey)
+                try? keychain.set(sanitized, for: .geminiApiKey)
+                return sanitized
+            }
+            let key = keychain.string(for: .geminiApiKey) ?? ""
+            if !key.isEmpty {
+                let sanitized = sanitize(key)
+                if sanitized != key {
+                    try? keychain.set(sanitized, for: .geminiApiKey)
+                }
+                return sanitized
+            }
+            if let dotEnvKey = Self.loadKeyFromDotEnv("GEMINI_API_KEY") ?? Self.loadKeyFromDotEnv("GOOGLE_API_KEY"), !dotEnvKey.isEmpty {
+                let sanitized = sanitize(dotEnvKey)
+                try? keychain.set(sanitized, for: .geminiApiKey)
+                return sanitized
+            }
+            return ""
+        }
+        set {
+            withMutation(keyPath: \.geminiAPIKey) {
+                var trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmed.hasPrefix("Bearer ") {
+                    trimmed = String(trimmed.dropFirst("Bearer ".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+                try? keychain.set(trimmed.isEmpty ? nil : trimmed, for: .geminiApiKey)
+            }
+        }
+    }
+
     public var jevCloudURL: String {
         didSet { userDefaults.set(jevCloudURL, forKey: Keys.jevCloudURL) }
     }
@@ -372,5 +420,6 @@ public final class BackendConfigurationStore: @unchecked Sendable {
         openaiOrganization = ""
         openaiProject = ""
         openaiAPIKey = ""
+        geminiAPIKey = ""
     }
 }

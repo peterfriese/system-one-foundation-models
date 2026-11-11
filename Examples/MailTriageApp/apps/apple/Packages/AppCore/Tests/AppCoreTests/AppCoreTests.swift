@@ -621,9 +621,9 @@ struct TriageEngineTests {
         engine.clearCoreMLCache()
     }
 
-    @Test("TriageBackend enum defines all 7 architectures and their metadata")
+    @Test("TriageBackend enum defines all 8 architectures and their metadata")
     func testTriageBackendMetadata() {
-        #expect(TriageBackend.allCases.count == 7)
+        #expect(TriageBackend.allCases.count == 8)
 
         let coreML = TriageBackend.onDeviceCoreML
         #expect(coreML.iconName == "cpu.fill")
@@ -673,6 +673,18 @@ struct TriageEngineTests {
         #expect(openai.isDecisionModel == true)
         #expect(openai.supportsMultimodal == true)
         #expect(openai.pricePerMillionInputTokens == 0.10)
+
+        let gemini = TriageBackend.geminiDecisions
+        #expect(gemini.displayName == "Google Gemini Decisions")
+        #expect(gemini.shortName == "Gemini")
+        #expect(gemini.description == "Google Gemini Decisions API (gemini-decision-1) fast multimodal decision primitive at $0.10/1M tokens.")
+        #expect(gemini.iconName == "diamond.fill")
+        #expect(gemini.latencyTier == "< 150ms")
+        #expect(gemini.privacyLevel == .cloud)
+        #expect(gemini.isOffline == false)
+        #expect(gemini.isDecisionModel == true)
+        #expect(gemini.supportsMultimodal == true)
+        #expect(gemini.pricePerMillionInputTokens == 0.10)
 
         let baseline = TriageBackend.generativeBaseline
         #expect(baseline.iconName == "sparkles")
@@ -1183,11 +1195,11 @@ struct HealthProbeTests {
         }
     }
 
-    @Test("probeAll probes all 7 backends concurrently")
+    @Test("probeAll probes all 8 backends concurrently")
     func testProbeAllConcurrently() async {
         let probe = BackendHealthProbeService()
         let results = await probe.probeAll()
-        #expect(results.count == 7)
+        #expect(results.count == 8)
     }
 
     @Test("BackendHealthStatus and BackendUnreachableError identify preparing state")
@@ -1268,6 +1280,14 @@ struct HealthProbeTests {
         )
         #expect(err6.errorDescription == "OpenAI Decisions Unreachable: Missing OpenAI API Key. Open Settings (⌘,) and paste your OPENAI_API_KEY.")
         #expect(err6.recoverySuggestion == "Open Settings (⌘,) and paste your OPENAI_API_KEY.")
+
+        let err7 = BackendUnreachableError(
+            backend: .geminiDecisions,
+            reason: "Missing Gemini API Key",
+            guidance: "Open Settings (⌘,) and paste your GEMINI_API_KEY."
+        )
+        #expect(err7.errorDescription == "Google Gemini Decisions Unreachable: Missing Gemini API Key. Open Settings (⌘,) and paste your GEMINI_API_KEY.")
+        #expect(err7.recoverySuggestion == "Open Settings (⌘,) and paste your GEMINI_API_KEY.")
     }
 
     @Test("OpenAI decisions probe sends valid payload and maps 200, 401, 429")
@@ -1331,6 +1351,61 @@ struct HealthProbeTests {
         #expect(store.openaiAPIKey == "")
         #expect(store.openaiOrganization == "")
         #expect(store.openaiProject == "")
+    }
+
+    @Test("Google Gemini decisions probe sends valid payload and maps 200, 401, 429, and timeout")
+    func testGeminiDecisionsProbeResponses() async throws {
+        let mockKeychain = MockKeychainService(initialStorage: [:])
+        try mockKeychain.set("AIzaSy-test-key-12345", for: .geminiApiKey)
+        let testConfigStore = BackendConfigurationStore(
+            userDefaults: UserDefaults(suiteName: "testGeminiProbeResponses_\(UUID().uuidString)")!,
+            keychain: mockKeychain
+        )
+
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockHTTPStatusURLProtocol.self]
+        let session = URLSession(configuration: config)
+        let probe = BackendHealthProbeService(session: session, configStore: testConfigStore)
+
+        MockHTTPStatusURLProtocol.mockStatusCode = 200
+        let status200 = await probe.probe(backend: .geminiDecisions)
+        #expect(status200.isHealthy == true)
+
+        MockHTTPStatusURLProtocol.mockStatusCode = 401
+        let status401 = await probe.probe(backend: .geminiDecisions)
+        #expect(status401.reason?.contains("Invalid API Key (HTTP 401)") == true || status401.guidance?.contains("GEMINI_API_KEY") == true)
+
+        MockHTTPStatusURLProtocol.mockStatusCode = 429
+        let status429 = await probe.probe(backend: .geminiDecisions)
+        #expect(status429.reason?.contains("Rate Limited (HTTP 429)") == true || status429.guidance?.contains("quota") == true)
+
+        MockHTTPStatusURLProtocol.mockError = URLError(.timedOut)
+        let statusTimeout = await probe.probe(backend: .geminiDecisions)
+        MockHTTPStatusURLProtocol.mockError = nil
+        #expect(statusTimeout.reason?.contains("Cannot connect to Google Gemini Decisions API") == true)
+        #expect(statusTimeout.guidance?.contains("GEMINI_API_KEY") == true)
+    }
+
+    @Test("BackendConfigurationStore correctly manages Google Gemini credentials")
+    func testBackendConfigurationStoreGeminiProperties() {
+        let mockKeychain = MockKeychainService()
+        let suite = "testGeminiConfig_\(UUID().uuidString)"
+        let store = BackendConfigurationStore(userDefaults: UserDefaults(suiteName: suite)!, keychain: mockKeychain)
+
+        store.geminiAPIKey = "AIzaSy-live-test"
+        #expect(store.geminiAPIKey == "AIzaSy-live-test")
+        #expect(mockKeychain.string(for: .geminiApiKey) == "AIzaSy-live-test")
+        #expect(mockKeychain.geminiAPIKey == "AIzaSy-live-test")
+
+        // Verify Bearer stripping from setter and getter
+        store.geminiAPIKey = "Bearer AIzaSy-bearer-token"
+        #expect(store.geminiAPIKey == "AIzaSy-bearer-token")
+
+        try? mockKeychain.set("Bearer AIzaSy-keychain-raw", for: .geminiApiKey)
+        #expect(store.geminiAPIKey == "AIzaSy-keychain-raw")
+
+        store.resetToDefaults()
+        #expect(store.geminiAPIKey == "")
     }
 }
 

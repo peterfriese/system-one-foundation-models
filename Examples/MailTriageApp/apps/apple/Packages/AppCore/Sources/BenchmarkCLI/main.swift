@@ -99,7 +99,7 @@ struct BenchmarkOptions {
           -n, --count <N>       Number of emails to benchmark per backend (default: 25, max: 500)
           --all                 Benchmark the entire 500-message inbox dataset
           -b, --backends <list> Comma-separated backends to benchmark
-                                (options: onDeviceCoreML, localServe, hostedVPC, cloudAPI, cloudflareClef, openaiDecisions, generativeBaseline)
+                                (options: onDeviceCoreML, localServe, hostedVPC, cloudAPI, cloudflareClef, openaiDecisions, geminiDecisions, generativeBaseline)
                                 (default: all probed reachable backends)
           -o, --output <path>   Output JSON file path (default: canonical Application Support/MailTriage/benchmark-truth.json)
           -h, --help            Show this help message
@@ -284,6 +284,8 @@ final class BenchmarkRunner: Sendable {
             endpointOrModel = "Cloudflare Workers AI (@cf/cloudflare/clef-flash)"
         case .openaiDecisions:
             endpointOrModel = "OpenAI Decisions API (gpt-6-luna)"
+        case .geminiDecisions:
+            endpointOrModel = "Google Gemini Decisions API (gemini-decision-1)"
         case .generativeBaseline:
             endpointOrModel = "SystemLanguageModel (~3B LLM)"
         }

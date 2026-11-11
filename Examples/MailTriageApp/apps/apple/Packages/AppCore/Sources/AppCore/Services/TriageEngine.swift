@@ -6,6 +6,7 @@ import LayaFoundationModels
 import JevFoundationModels
 import ClefFoundationModels
 import OpenAIFoundationModels
+import GeminiFoundationModels
 import LayaOnDevice
 import FactoryKit
 
@@ -281,6 +282,37 @@ public final class TriageEngine: TriageEngineProtocol, @unchecked Sendable {
                 throw error
             }
 
+        case .geminiDecisions:
+            guard let apiKey = (keychainService.string(for: .geminiApiKey) ?? (configStore.geminiAPIKey.isEmpty ? nil : configStore.geminiAPIKey))?.trimmingCharacters(in: .whitespacesAndNewlines), !apiKey.isEmpty else {
+                throw BackendUnreachableError(
+                    backend: backend,
+                    reason: "Missing Gemini API Key",
+                    guidance: "Open Settings (⌘,) and paste your GEMINI_API_KEY."
+                )
+            }
+            let model = GeminiDecisionsLanguageModel(apiKey: apiKey)
+            let session = LanguageModelSession(model: model)
+            let geminiPrompt = Prompt {
+                "Analyze the following email and any attached documents or screenshots for triage classification, urgency scoring, and suggested response actions."
+                "Sender: \(email.sender) <\(email.senderEmail)>"
+                "Subject: \(email.subject)"
+                "Body:\n\(email.body)"
+                for attachment in email.imageAttachments {
+                    let imageType = mapMimeTypeToUTType(attachment.mimeType)
+                    if let imageAttachment = Attachment(attachment.data, type: imageType) {
+                        imageAttachment
+                    }
+                }
+            }
+            do {
+                let response = try await session.respond(to: geminiPrompt, generating: EmailTriageDecision.self)
+                latencyMs = startTime.duration(to: clock.now).asMilliseconds
+                result = makeTriageResult(response: response, backend: backend, latencyMs: latencyMs)
+            } catch {
+                print("⚠️ [TriageEngine] Google Gemini Decisions evaluation failed: \(error)")
+                throw error
+            }
+
         case .onDeviceCoreML:
             guard let modelURL = activeCoreMLManager.resolvedModelURL else {
                 throw BackendUnreachableError(
@@ -403,11 +435,11 @@ public final class TriageEngine: TriageEngineProtocol, @unchecked Sendable {
         try Task.checkCancellation()
 
         // Adaptive parallelism: use maxParallelism = 4 for remote cloud backends
-        // (.cloudflareClef, .cloudAPI, .openaiDecisions) to prevent rate-limit saturation, while keeping
+        // (.cloudflareClef, .cloudAPI, .openaiDecisions, .geminiDecisions) to prevent rate-limit saturation, while keeping
         // maxParallelism = 8 for local/on-device backends.
         let effectiveParallelism: Int = {
             switch backend {
-            case .cloudflareClef, .cloudAPI, .openaiDecisions:
+            case .cloudflareClef, .cloudAPI, .openaiDecisions, .geminiDecisions:
                 return min(self.maxParallelism, 4)
             case .onDeviceCoreML, .localServe, .hostedVPC, .generativeBaseline:
                 return self.maxParallelism

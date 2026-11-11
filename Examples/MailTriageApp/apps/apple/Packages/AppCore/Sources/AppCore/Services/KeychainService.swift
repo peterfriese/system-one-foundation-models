@@ -18,6 +18,12 @@ extension KeychainServiceProtocol {
         get { string(for: .openaiApiKey) }
         set { try? set(newValue, for: .openaiApiKey) }
     }
+
+    /// Convenience access for the stored Google Gemini API Key (`gemini_api_key`).
+    public var geminiAPIKey: String? {
+        get { string(for: .geminiApiKey) }
+        set { try? set(newValue, for: .geminiApiKey) }
+    }
 }
 
 /// Errors thrown by Apple Security framework keychain operations.

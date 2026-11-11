@@ -144,6 +144,7 @@ struct AppUITests {
         try? mockKeychain.set("vpc_token_test_456", for: .hostedVpcToken)
         try? mockKeychain.set("cf_acc_test_789", for: .cloudflareAccountId)
         try? mockKeychain.set("cf_tok_test_012", for: .cloudflareApiToken)
+        try? mockKeychain.set("AIzaSy_gemini_test", for: .geminiApiKey)
 
         Container.shared.keychainService.register { mockKeychain }
         defer { Container.shared.keychainService.reset() }

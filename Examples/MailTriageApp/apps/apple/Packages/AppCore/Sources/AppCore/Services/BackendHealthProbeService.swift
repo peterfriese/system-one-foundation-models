@@ -6,6 +6,7 @@ import SystemOneCore
 import JevFoundationModels
 import ClefFoundationModels
 import OpenAIFoundationModels
+import GeminiFoundationModels
 
 /// Health status of a decision model inference backend.
 public enum BackendHealthStatus: Sendable, Equatable {
@@ -134,6 +135,8 @@ public final class BackendHealthProbeService: BackendHealthProbeServiceProtocol,
             return await probeCloudflareClef()
         case .openaiDecisions:
             return await probeOpenAIDecisions()
+        case .geminiDecisions:
+            return await probeGeminiDecisions()
         case .generativeBaseline:
             return await probeBaseline()
         }
@@ -491,6 +494,86 @@ public final class BackendHealthProbeService: BackendHealthProbeServiceProtocol,
             return .unreachable(
                 reason: "Cannot connect to OpenAI Decisions API: \(error.localizedDescription)",
                 guidance: "Check your internet connection and OpenAI API key."
+            )
+        }
+    }
+
+    private func probeGeminiDecisions() async -> BackendHealthStatus {
+        var key = configStore.geminiAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        if key.hasPrefix("Bearer ") {
+            key = String(key.dropFirst("Bearer ".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard !key.isEmpty else {
+            return .unreachable(
+                reason: "Missing Gemini API Key",
+                guidance: "Open Settings (⌘,) and paste your GEMINI_API_KEY."
+            )
+        }
+
+        let clock = ContinuousClock()
+        let start = clock.now
+
+        var request = URLRequest(url: GeminiDecisionsEndpoint.defaultURL)
+        request.httpMethod = "POST"
+        request.setValue(key, forHTTPHeaderField: "x-goog-api-key")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 10.0
+
+        do {
+            let probeRequest = GeminiDecisionsRequest(
+                model: GeminiDecisionsEndpoint.defaultModel,
+                input: .text("Health check ping."),
+                questions: [
+                    "ok": GeminiDecisionsQuestion(
+                        type: "noul",
+                        instructions: "Return true."
+                    )
+                ]
+            )
+            request.httpBody = try JSONEncoder().encode(probeRequest)
+
+            let (data, response) = try await session.data(for: request)
+            let elapsed = start.duration(to: clock.now).asMilliseconds
+            guard let http = response as? HTTPURLResponse else {
+                return .unreachable(
+                    reason: "Unexpected response from Google Gemini Decisions API",
+                    guidance: "Check your internet connection or service status."
+                )
+            }
+
+            if (200...299).contains(http.statusCode) {
+                return .healthy(latencyMs: elapsed)
+            }
+
+            let serverMessage = parseServerErrorMessage(from: data)
+            if let serverMessage, !serverMessage.isEmpty {
+                let guidance: String
+                if http.statusCode == 401 || http.statusCode == 403 {
+                    guidance = "Open Settings (⌘,) and paste your GEMINI_API_KEY."
+                } else if http.statusCode == 429 {
+                    guidance = "Google Gemini Decisions API rate limited or quota exceeded."
+                } else {
+                    guidance = "Check Google Gemini service status."
+                }
+                return .unreachable(
+                    reason: "Gemini Error (HTTP \(http.statusCode)): \(serverMessage)",
+                    guidance: guidance
+                )
+            }
+
+            if http.statusCode == 401 || http.statusCode == 403 {
+                return .unreachable(
+                    reason: http.statusCode == 401 ? "Invalid API Key (HTTP 401)" : "Authentication Failed (HTTP 403)",
+                    guidance: "Open Settings (⌘,) and paste your GEMINI_API_KEY."
+                )
+            }
+
+            return evaluateHTTPStatus(http.statusCode, latencyMs: elapsed)
+        } catch {
+            print("⚠️ [probeGeminiDecisions] Failed with error: \(error)")
+            return .unreachable(
+                reason: "Cannot connect to Google Gemini Decisions API: \(error.localizedDescription)",
+                guidance: "Open Settings (⌘,) and paste your GEMINI_API_KEY."
             )
         }
     }

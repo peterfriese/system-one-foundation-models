@@ -372,14 +372,15 @@ print("Probabilities: \(frustration.probabilities)")         // [0.01, 0.04, 0.1
 Explore [`Examples/MailTriageApp`](Examples/MailTriageApp/README.md), a complete native macOS and iOS reference application showcasing production-grade System One decision models in a modern Apple Mail interface:
 
 - **Intelligent Email Triage**: Automatically categorizes incoming messages, assigns color-coded urgency priority tokens (`P0 Critical`, `P1 High`, `P2 Normal`, `P3 Low`), extracts suggested follow-up actions (Reply, Forward, Compose), and drives batch triage flows.
-- **7 Selectable Backends**: Hot-swap backends on the fly in Settings:
+- **8 Selectable Backends**: Hot-swap backends on the fly in Settings:
   1. **Laya Core ML**: 100% offline inference on the Apple Neural Engine and GPU.
   2. **Laya Local**: Local `laya-serve` instance running on `http://127.0.0.1:8000`.
   3. **Laya Remote**: Hosted Laya instance on `https://api.impossibl.com`.
   4. **Cloudflare Clef**: Serverless Workers AI edge or local runner with multimodal email attachment triage.
   5. **OpenAI Decisions**: OpenAI Decisions API (`gpt-6-luna`) with ~150ms latency and $0.00 output token billing.
-  6. **Jev Cloud**: TypeSafe AI hosted service on `https://api.typesafe.ai`.
-  7. **Generative Baseline / Offline Mock**: On-device generative baseline or instant deterministic mock evaluation.
+  6. **Google Gemini Decisions**: Google Gemini Decisions API (`gemini-decision-1`) with multimodal attachment triage, ~150ms latency, and $0.00 output token billing.
+  7. **Jev Cloud**: TypeSafe AI hosted service on `https://api.typesafe.ai`.
+  8. **Generative Baseline / Offline Mock**: On-device generative baseline or instant deterministic mock evaluation.
 - **Pure Native Architecture**: Built with Swift 6 Complete Strict Concurrency, SwiftUI `@Observable`, FactoryKit dependency injection, Liquid Glass design, and multi-window split views.
 - **Catalog of Demos**: Browse [`Examples/README.md`](Examples/README.md) for the full list of runnable CLI tools and sample projects.
 
