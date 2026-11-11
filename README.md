@@ -15,6 +15,7 @@ Evaluate strongly typed `@Generable` structs and enums against application state
 - **Self-Hosted HTTP (`LayaFoundationModels`)**: Connect to `laya-serve` (PR #31 merged into `NandhaKishorM/laya`) speaking the Jev-compatible `POST /v1/systemone` protocol with presets for `localhost:8000`, `localhost:8770`, and hosted `api.impossibl.com`.
 - **Cloudflare Clef (`ClefFoundationModels`)**: Run open-weight multimodal decision models—**Clef (27B)** and **Clef-Flash (9B)**—running via Cloudflare Workers AI edge, Cloudflare AI Gateway, or local runner (`Tools/ClefLocalRunner`), judging camera frames and image attachments alongside text in a single feed-forward pass.
 - **OpenAI Decisions (`OpenAIFoundationModels`)**: Non-autoregressive decision computing via OpenAI's Decisions API (`POST https://api.openai.com/v1/decisions`) powered by **`gpt-6-luna`** with ~150ms latency, zero output token billing ($0.10/1M input, $0.00 output), and enterprise multi-tenant header isolation (`OpenAI-Organization`, `OpenAI-Project`).
+- **Google Gemini Decisions (`GeminiFoundationModels`)**: High-density multimodal decision evaluation via Google's Gemini Decisions API (`POST https://generativelanguage.googleapis.com/v1beta/decisions`) powered by **`gemini-decision-1`** with up to 256K-token context, up to 1,000 concurrent questions per pass, ~150ms–250ms latency, and zero output token billing ($0.10/1M input, $0.00 output).
 - **TypeSafe AI Cloud (`JevFoundationModels`)**: Full backwards-compatible support for hosted TypeSafe Jev endpoints with automated HTTP retries (`RetryPolicy`), cooperative cancellation, and confidence routing (`RoutingPolicy`).
 
 > [!WARNING]
@@ -74,10 +75,10 @@ Using Swift 6.1 Package Traits ([SE-0402](https://github.com/swiftlang/swift-evo
 // On-Device only (Core ML + Apple Neural Engine, zero network/cloud code):
 .package(url: "https://github.com/peterfriese/system-one-foundation-models.git", from: "0.3.0", traits: ["OnDevice"])
 
-// Remote only (Jev cloud, self-hosted laya-serve HTTP, and Clef; no Core ML binaries):
+// Remote only (Jev cloud, self-hosted laya-serve HTTP, Clef, OpenAI, and Gemini; no Core ML binaries):
 .package(url: "https://github.com/peterfriese/system-one-foundation-models.git", from: "0.3.0", traits: ["Remote"])
 
-// All backends (Core ML, Laya HTTP, Jev cloud, and Cloudflare Clef):
+// All backends (Core ML, Laya HTTP, Jev cloud, Cloudflare Clef, OpenAI, and Google Gemini):
 .package(url: "https://github.com/peterfriese/system-one-foundation-models.git", from: "0.3.0", traits: ["All"])
 ```
 
@@ -88,9 +89,10 @@ Using Swift 6.1 Package Traits ([SE-0402](https://github.com/swiftlang/swift-evo
 | `LayaServe` | Model Boundary | Enables HTTP transport for self-hosted `laya-serve` instances (`LayaFoundationModels`) |
 | `Clef` | Model Boundary | Enables Cloudflare Clef and Clef-Flash hosted and local multimodal decision models (`ClefFoundationModels`) |
 | `OpenAI` | Model Boundary | Enables OpenAI Decisions API (`gpt-6-luna`) remote hosted client (`OpenAIFoundationModels`) |
+| `Gemini` | Model Boundary | Enables Google Gemini Decisions API (`gemini-decision-1`) remote hosted client (`GeminiFoundationModels`) |
 | `OnDevice` | Persona Shorthand | Enables on-device capabilities (activates `["Laya"]`) |
-| `Remote` | Persona Shorthand | Enables remote hosted and self-hosted decision model clients (activates `["Jev", "LayaServe", "Clef", "OpenAI"]`) |
-| `All` | Persona Shorthand | Enables all System One model backends and transports (activates `["Jev", "Laya", "LayaServe", "Clef", "OpenAI"]`) |
+| `Remote` | Persona Shorthand | Enables remote hosted and self-hosted decision model clients (activates `["Jev", "LayaServe", "Clef", "OpenAI", "Gemini"]`) |
+| `All` | Persona Shorthand | Enables all System One model backends and transports (activates `["Jev", "Laya", "LayaServe", "Clef", "OpenAI", "Gemini"]`) |
 
 ### Which Target Should I Import?
 
@@ -102,9 +104,10 @@ The package is split into focused, modular targets so you only link the code and
 | `LayaFoundationModels` | Connect to local (`localhost:8000`) or self-hosted `laya-serve` instances | ✅ Yes (Local/LAN) | ❌ No (Optional token) | `SystemOneCore` |
 | `ClefFoundationModels` | Multimodal decisions (Clef 27B & Clef-Flash 9B) via Cloudflare Workers AI or local runner | ✅ Yes (Workers AI or Local) | Optional (`CLOUDFLARE_API_TOKEN` for cloud) | `SystemOneCore` |
 | `OpenAIFoundationModels` | Non-autoregressive decisions via OpenAI Decisions API (`gpt-6-luna`) | ✅ Yes (Cloud HTTPS) | ✅ Yes (`OPENAI_API_KEY`) | `SystemOneCore` |
+| `GeminiFoundationModels` | Non-autoregressive multimodal decisions via Google Gemini Decisions API (`gemini-decision-1`) | ✅ Yes (Cloud HTTPS) | ✅ Yes (`GEMINI_API_KEY` or `GOOGLE_API_KEY`) | `SystemOneCore` |
 | `JevFoundationModels` | Connect to TypeSafe AI cloud API with exponential retries | ✅ Yes (Cloud HTTPS) | ✅ Yes (`TYPESAFE_API_KEY`) | `SystemOneCore` |
 | `SystemOneCore` | Core abstractions, `@Generable` schema translation, `RoutingPolicy`, offline mocks | ❌ No | ❌ No | None |
-| `SystemOneFoundationModels` | Umbrella module bundling Core ML, Laya HTTP, Clef, OpenAI, and Jev Cloud backends | Varies by backend | Varies by backend | All above |
+| `SystemOneFoundationModels` | Umbrella module bundling Core ML, Laya HTTP, Clef, OpenAI, Gemini, and Jev Cloud backends | Varies by backend | Varies by backend | All above |
 
 ### 2. Choose Your Execution Backend
 
@@ -189,7 +192,21 @@ let openai = OpenAIDecisionsLanguageModel(
 let session = LanguageModelSession(model: openai)
 ```
 
-#### Option F: Mobile Reverse Proxy with `ProxyTransport` (Zero Bundled Secrets)
+#### Option F: Google Gemini Decisions API (`gemini-decision-1`)
+```swift
+import FoundationModels
+import GeminiFoundationModels
+
+// 1. Connect to Google Gemini Decisions API (resolves GEMINI_API_KEY or GOOGLE_API_KEY)
+let gemini = GeminiDecisionsLanguageModel(
+    apiKey: ProcessInfo.processInfo.environment["GEMINI_API_KEY"]
+)
+
+// 2. Initialize native Apple Foundation Models session
+let session = LanguageModelSession(model: gemini)
+```
+
+#### Option G: Mobile Reverse Proxy with `ProxyTransport` (Zero Bundled Secrets)
 ```swift
 import FoundationModels
 import JevFoundationModels
@@ -387,6 +404,7 @@ Explore [`Examples/MailTriageApp`](Examples/MailTriageApp/README.md), a complete
 │     ├── LayaHTTPBackend: POST http://localhost:8000/v1/systemone       │
 │     ├── ClefHTTPBackend: Cloudflare Workers AI / Gateway / Local       │
 │     ├── OpenAIDecisionsHTTPBackend: POST https://api.openai.com/...    │
+│     ├── GeminiDecisionsHTTPBackend: POST https://generativelanguage... │
 │     └── JevBackend: POST https://api.typesafe.ai/v1/systemone          │
 │  • ResponseSynthesizer: converts answers into canonical JSON / enums   │
 └───────────────────────────────────┬────────────────────────────────────┘
@@ -408,10 +426,12 @@ For more in-depth documentation, see:
   * [ADR: Mail Triage System One Engine](docs/architecture/ADR-2026-09-25-mail-triage-system-one-engine.md)
   * [ADR: Cloudflare Clef Foundation Models Integration](docs/architecture/ADR-2026-10-03-01-clef-foundation-models-integration.md)
   * [ADR: OpenAI Decisions API Integration](docs/architecture/ADR-2026-10-08-01-openai-decisions-models-integration.md)
+  * [ADR: Google Gemini Decisions API Integration](docs/architecture/ADR-2026-11-11-01-gemini-decisions-models-integration.md)
 * [Product Requirements Documents (PRDs)](docs/prd/)
   * [PRD: Mail Triage Engine](docs/prd/PRD-2026-09-25-mail-triage-system-one-engine.md)
   * [PRD: Clef Multimodal Decision Models](docs/prd/PRD-2026-10-03-clef-decision-models.md)
   * [PRD: OpenAI Decisions Models (`gpt-6-luna`)](docs/prd/PRD-2026-10-08-openai-decisions-models.md)
+  * [PRD: Google Gemini Decisions Models (`gemini-decision-1`)](docs/prd/PRD-2026-11-11-gemini-decisions-models.md)
 * [Repository Audit Sweep & Remediation Report](docs/plans/AUDIT-SWEEP-2026-10-09.md)
 * [CLI & Server Deployment Guide](docs/laya-cli-guide.md)
 * [Mobile Deployment & Core ML Guide](docs/laya-mobile-guide.md)

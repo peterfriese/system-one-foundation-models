@@ -18,6 +18,7 @@ This directory contains reference applications, production examples, and runnabl
 | [**ClefCameraScanner**](ClefCameraScanner/README.md) | Full macOS & iOS SwiftUI App | `ClefFoundationModels` (Workers AI / Local Runner) | Optional (Local runner or `CLOUDFLARE_API_TOKEN`) | Real-time camera viewfinder, `@Observable CameraManager`, `AVCaptureVideoPreviewLayer` bridge, live visual triage, Liquid Glass HUD, simulation fallback feed. |
 | [**ClefDemo**](ClefDemo/README.md) | CLI Executable | `ClefFoundationModels` (Workers AI / Local Runner) | Optional (Local runner or `CLOUDFLARE_API_TOKEN`) | Multimodal evaluation on image files or synthetic CoreGraphics visual frames, single forward-pass non-autoregressive triage, latency breakdown. |
 | [**OpenAIDemo**](OpenAIDemo/README.md) | CLI Executable | `OpenAIFoundationModels` (`POST /v1/decisions`) | ✅ Yes (`OPENAI_API_KEY`) | Frontier non-autoregressive classification with `gpt-6-luna`, ~150ms latency, zero output token pricing, multi-tenant enterprise headers (`OpenAI-Organization`, `OpenAI-Project`). |
+| [**GeminiDemo**](GeminiDemo/README.md) | CLI Executable | `GeminiFoundationModels` (`POST /v1beta/decisions`) | ✅ Yes (`GEMINI_API_KEY` or `GOOGLE_API_KEY`) | High-density non-autoregressive classification with `gemini-decision-1`, ~150ms–250ms latency, zero output token pricing, 256K-token context, `x-goog-api-key` auth. |
 | [**TraitSamples/01-OfflineLayaApp**](TraitSamples/01-OfflineLayaApp/README.md) | Standalone Package | `LayaOnDevice` | ❌ No API key | Pure on-device classification via Apple Neural Engine (`traits: ["Laya"]`). Zero network code linked. |
 | [**TraitSamples/02-CloudJevWorker**](TraitSamples/02-CloudJevWorker/README.md) | Standalone Package | `JevFoundationModels` | ✅ Yes (`TYPESAFE_API_KEY`) | Ultra-lean ticket triage worker (`traits: ["Jev"]`). Sub-second build, zero ML linkage. Fails fast if API key is missing. |
 | [**TraitSamples/03-PrivateLayaServer**](TraitSamples/03-PrivateLayaServer/README.md) | Standalone Package | `LayaFoundationModels` | `laya-serve` daemon | Internal VPC cluster scoring (`traits: ["LayaServe"]`). Custom DNS, TLS, and bearer auth. Requires reachable `laya-serve`. |
@@ -186,7 +187,26 @@ For complete documentation, see [Examples/OpenAIDemo/README.md](OpenAIDemo/READM
 
 ---
 
-### 9. Trait Samples (`Examples/TraitSamples/`)
+### 9. GeminiDemo (Google Gemini Decisions API `gemini-decision-1` Demonstrator)
+
+Demonstrates non-autoregressive decision evaluation via Google's Gemini Decisions API (`POST /v1beta/decisions`):
+
+```bash
+# 1. Export your Google Gemini API key (or GOOGLE_API_KEY)
+export GEMINI_API_KEY="AIza..."
+
+# 2. Run the demo against default customer ticket
+swift run gemini-demo
+
+# 3. Evaluate a custom customer inquiry
+swift run gemini-demo "Customer reported unauthorized charge on their Visa card ending in 4112."
+```
+
+For complete documentation, see [Examples/GeminiDemo/README.md](GeminiDemo/README.md).
+
+---
+
+### 10. Trait Samples (`Examples/TraitSamples/`)
 
 Five standalone SPM packages demonstrating fine-grained package traits and modularity:
 
