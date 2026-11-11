@@ -21,3 +21,8 @@ import Foundation
 #if canImport(OpenAIFoundationModels)
 @_exported import OpenAIFoundationModels
 #endif
+
+#if canImport(GeminiFoundationModels)
+@_exported import GeminiFoundationModels
+#endif
+

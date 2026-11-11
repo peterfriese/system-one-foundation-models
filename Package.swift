@@ -37,6 +37,10 @@ let package = Package(
             name: "OpenAIFoundationModels",
             targets: ["OpenAIFoundationModels"]
         ),
+        .library(
+            name: "GeminiFoundationModels",
+            targets: ["GeminiFoundationModels"]
+        ),
         .executable(
             name: "ticket-triage-demo",
             targets: ["TicketTriageDemo"]
@@ -64,6 +68,10 @@ let package = Package(
         .executable(
             name: "openai-demo",
             targets: ["OpenAIDemo"]
+        ),
+        .executable(
+            name: "gemini-demo",
+            targets: ["GeminiDemo"]
         )
     ],
     traits: [
@@ -88,6 +96,10 @@ let package = Package(
             description: "Enables OpenAI Decisions API hosted client"
         ),
         .trait(
+            name: "Gemini",
+            description: "Enables Google Gemini Decisions API hosted client"
+        ),
+        .trait(
             name: "OnDevice",
             description: "Enables on-device decision model capabilities",
             enabledTraits: ["Laya"]
@@ -95,12 +107,12 @@ let package = Package(
         .trait(
             name: "Remote",
             description: "Enables remote hosted and self-hosted decision model clients",
-            enabledTraits: ["Jev", "LayaServe", "Clef", "OpenAI"]
+            enabledTraits: ["Jev", "LayaServe", "Clef", "OpenAI", "Gemini"]
         ),
         .trait(
             name: "All",
             description: "Enables all System One model backends and transports",
-            enabledTraits: ["Jev", "Laya", "LayaServe", "Clef", "OpenAI"]
+            enabledTraits: ["Jev", "Laya", "LayaServe", "Clef", "OpenAI", "Gemini"]
         ),
         .default(enabledTraits: ["All"])
     ],
@@ -120,7 +132,8 @@ let package = Package(
                 .target(name: "LayaFoundationModels", condition: .when(traits: ["LayaServe"])),
                 .target(name: "LayaOnDevice", condition: .when(traits: ["Laya"])),
                 .target(name: "ClefFoundationModels", condition: .when(traits: ["Clef"])),
-                .target(name: "OpenAIFoundationModels", condition: .when(traits: ["OpenAI"]))
+                .target(name: "OpenAIFoundationModels", condition: .when(traits: ["OpenAI"])),
+                .target(name: "GeminiFoundationModels", condition: .when(traits: ["Gemini"]))
             ],
             swiftSettings: [
                 .enableUpcomingFeature("StrictConcurrency")
@@ -156,6 +169,13 @@ let package = Package(
         ),
         .target(
             name: "OpenAIFoundationModels",
+            dependencies: ["SystemOneCore"],
+            swiftSettings: [
+                .enableUpcomingFeature("StrictConcurrency")
+            ]
+        ),
+        .target(
+            name: "GeminiFoundationModels",
             dependencies: ["SystemOneCore"],
             swiftSettings: [
                 .enableUpcomingFeature("StrictConcurrency")
@@ -212,6 +232,15 @@ let package = Package(
                 .enableUpcomingFeature("StrictConcurrency")
             ]
         ),
+        .executableTarget(
+            name: "GeminiDemo",
+            dependencies: ["GeminiFoundationModels"],
+            path: "Examples/GeminiDemo",
+            exclude: ["README.md"],
+            swiftSettings: [
+                .enableUpcomingFeature("StrictConcurrency")
+            ]
+        ),
         .testTarget(
             name: "SystemOneCoreTests",
             dependencies: [
@@ -247,6 +276,16 @@ let package = Package(
             name: "OpenAIFoundationModelsTests",
             dependencies: [
                 "OpenAIFoundationModels",
+                "SystemOneCore"
+            ],
+            swiftSettings: [
+                .enableUpcomingFeature("StrictConcurrency")
+            ]
+        ),
+        .testTarget(
+            name: "GeminiFoundationModelsTests",
+            dependencies: [
+                "GeminiFoundationModels",
                 "SystemOneCore"
             ],
             swiftSettings: [
