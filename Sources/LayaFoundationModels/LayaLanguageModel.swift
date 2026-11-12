@@ -15,8 +15,10 @@ public struct LayaLanguageModel: LanguageModel, Sendable {
             endpoint: LayaEndpoint = .localDefault,
             modelID: String = "english",
             apiKey: String? = nil,
+            proxyCredential: ProxyCredential? = nil,
             session: URLSession = .shared,
-            timeoutInterval: TimeInterval = 30
+            timeoutInterval: TimeInterval = 30,
+            retryPolicy: RetryPolicy = .default
         ) {
             self.endpoint = endpoint
             self.modelID = modelID
@@ -24,8 +26,10 @@ public struct LayaLanguageModel: LanguageModel, Sendable {
             self.backend = LayaHTTPBackend(
                 endpoint: endpoint,
                 apiKey: apiKey,
+                proxyCredential: proxyCredential,
                 session: session,
-                timeoutInterval: timeoutInterval
+                timeoutInterval: timeoutInterval,
+                retryPolicy: retryPolicy
             )
         }
     }
@@ -42,15 +46,74 @@ public struct LayaLanguageModel: LanguageModel, Sendable {
         endpoint: LayaEndpoint = .localDefault,
         modelID: String = "english",
         apiKey: String? = nil,
+        proxyCredential: ProxyCredential? = nil,
         session: URLSession = .shared,
-        timeoutInterval: TimeInterval = 30
+        timeoutInterval: TimeInterval = 30,
+        retryPolicy: RetryPolicy = .default
     ) {
         self.executorConfiguration = Configuration(
             endpoint: endpoint,
             modelID: modelID,
             apiKey: apiKey,
+            proxyCredential: proxyCredential,
             session: session,
-            timeoutInterval: timeoutInterval
+            timeoutInterval: timeoutInterval,
+            retryPolicy: retryPolicy
+        )
+    }
+
+    public init(
+        proxyEndpoint: URL,
+        modelID: String = "english",
+        credential: ProxyCredential,
+        session: URLSession = .shared,
+        timeoutInterval: TimeInterval = 30,
+        retryPolicy: RetryPolicy = .default
+    ) {
+        self.executorConfiguration = Configuration(
+            endpoint: .custom(proxyEndpoint),
+            modelID: modelID,
+            apiKey: nil,
+            proxyCredential: credential,
+            session: session,
+            timeoutInterval: timeoutInterval,
+            retryPolicy: retryPolicy
+        )
+    }
+
+    public init(
+        proxyEndpoint: URL,
+        credential: ProxyCredential,
+        modelID: String,
+        session: URLSession = .shared,
+        timeoutInterval: TimeInterval = 30,
+        retryPolicy: RetryPolicy = .default
+    ) {
+        self.init(
+            proxyEndpoint: proxyEndpoint,
+            modelID: modelID,
+            credential: credential,
+            session: session,
+            timeoutInterval: timeoutInterval,
+            retryPolicy: retryPolicy
+        )
+    }
+
+    public init(
+        proxyEndpoint: URL,
+        modelID: String = "english",
+        session: URLSession = .shared,
+        timeoutInterval: TimeInterval = 30,
+        retryPolicy: RetryPolicy = .default,
+        authorize: @escaping @Sendable (inout URLRequest) async throws -> Void
+    ) {
+        self.init(
+            proxyEndpoint: proxyEndpoint,
+            modelID: modelID,
+            credential: .custom(authorize),
+            session: session,
+            timeoutInterval: timeoutInterval,
+            retryPolicy: retryPolicy
         )
     }
 

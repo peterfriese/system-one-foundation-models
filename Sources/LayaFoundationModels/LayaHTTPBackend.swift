@@ -7,22 +7,110 @@ import SystemOneCore
 public struct LayaHTTPBackend: SystemOneBackend, Hashable, Sendable {
     public let endpoint: LayaEndpoint
     public let apiKey: String?
+    public let proxyCredential: ProxyCredential?
     public let session: URLSession
     public let timeoutInterval: TimeInterval
+    public let retryPolicy: RetryPolicy
 
     public init(
         endpoint: LayaEndpoint = .localDefault,
         apiKey: String? = nil,
+        proxyCredential: ProxyCredential? = nil,
         session: URLSession = .shared,
-        timeoutInterval: TimeInterval = 30
+        timeoutInterval: TimeInterval = 30,
+        retryPolicy: RetryPolicy = .default
     ) {
         self.endpoint = endpoint
         self.apiKey = apiKey
+        self.proxyCredential = proxyCredential
         self.session = session
         self.timeoutInterval = timeoutInterval
+        self.retryPolicy = retryPolicy
+    }
+
+    public init(
+        proxyEndpoint: URL,
+        credential: ProxyCredential,
+        session: URLSession = .shared,
+        timeoutInterval: TimeInterval = 30,
+        retryPolicy: RetryPolicy = .default
+    ) {
+        self.endpoint = .custom(proxyEndpoint)
+        self.apiKey = nil
+        self.proxyCredential = credential
+        self.session = session
+        self.timeoutInterval = timeoutInterval
+        self.retryPolicy = retryPolicy
+    }
+
+    private struct HTTPResponseError: Error {
+        let httpResponse: HTTPURLResponse
+        let data: Data
     }
 
     public func evaluate(request: SystemOneRequest) async throws -> SystemOneResponse {
+        if proxyCredential != nil {
+            try ProxyEndpointValidator.validate(endpoint.url)
+        }
+
+        var attempts = 0
+        let maxAttempts = max(1, retryPolicy.maxAttempts)
+
+        while true {
+            attempts += 1
+            do {
+                return try await performSingleEvaluation(request: request)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch let resError as HTTPResponseError {
+                let statusCode = resError.httpResponse.statusCode
+                let isLastAttempt = attempts >= maxAttempts
+
+                guard retryPolicy.retryableStatuses.contains(statusCode), !isLastAttempt else {
+                    let body = String(data: resError.data, encoding: .utf8) ?? "Unknown server error"
+                    throw SystemOneError.apiError(statusCode: statusCode, message: body)
+                }
+
+                let delay: Duration
+                if statusCode == 429, let retryAfterDelay = retryPolicy.retryAfter(from: resError.httpResponse) {
+                    delay = retryAfterDelay
+                } else {
+                    delay = retryPolicy.backoff(afterAttempt: attempts)
+                }
+
+                try await Task.sleep(for: delay)
+                continue
+            } catch let error as SystemOneError {
+                switch error {
+                case .networkError:
+                    if attempts < maxAttempts && !Task.isCancelled {
+                        let delay = retryPolicy.backoff(afterAttempt: attempts)
+                        try await Task.sleep(for: delay)
+                        continue
+                    }
+                    throw error
+                case .apiError(let statusCode, _):
+                    if retryPolicy.retryableStatuses.contains(statusCode), attempts < maxAttempts {
+                        let delay = retryPolicy.backoff(afterAttempt: attempts)
+                        try await Task.sleep(for: delay)
+                        continue
+                    }
+                    throw error
+                default:
+                    throw error
+                }
+            } catch {
+                if attempts < maxAttempts && !Task.isCancelled {
+                    let delay = retryPolicy.backoff(afterAttempt: attempts)
+                    try await Task.sleep(for: delay)
+                    continue
+                }
+                throw SystemOneError.networkError(error.localizedDescription)
+            }
+        }
+    }
+
+    private func performSingleEvaluation(request: SystemOneRequest) async throws -> SystemOneResponse {
         var urlRequest = URLRequest(url: endpoint.url)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -30,6 +118,18 @@ public struct LayaHTTPBackend: SystemOneBackend, Hashable, Sendable {
         // Bearer auth is optional: laya-serve without LAYA_API_KEY requires no authorization header
         if let key = apiKey, !key.isEmpty {
             urlRequest.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        }
+
+        if let proxyCredential {
+            do {
+                try await proxyCredential.apply(to: &urlRequest)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch let error as SystemOneError {
+                throw error
+            } catch {
+                throw SystemOneError.authenticationFailed("Failed to acquire proxy credential: \(error.localizedDescription)")
+            }
         }
 
         urlRequest.timeoutInterval = timeoutInterval
@@ -40,7 +140,8 @@ public struct LayaHTTPBackend: SystemOneBackend, Hashable, Sendable {
             throw SystemOneError.decodingError("Failed to encode SystemOneRequest: \(error.localizedDescription)")
         }
 
-        let networkStartTime = CFAbsoluteTimeGetCurrent()
+        let clock = ContinuousClock()
+        let networkStart = clock.now
         let data: Data
         let response: URLResponse
         do {
@@ -55,15 +156,16 @@ public struct LayaHTTPBackend: SystemOneBackend, Hashable, Sendable {
             }
             throw SystemOneError.networkError(error.localizedDescription)
         }
-        let transportDuration = (CFAbsoluteTimeGetCurrent() - networkStartTime) * 1000.0
+        let elapsed = networkStart.duration(to: clock.now)
+        let transportDuration = Double(elapsed.components.seconds) * 1000.0
+            + Double(elapsed.components.attoseconds) / 1_000_000_000_000_000.0
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw SystemOneError.networkError("Invalid HTTP response received from server.")
         }
 
         guard (200...299).contains(httpResponse.statusCode) else {
-            let body = String(data: data, encoding: .utf8) ?? "Unknown server error"
-            throw SystemOneError.apiError(statusCode: httpResponse.statusCode, message: body)
+            throw HTTPResponseError(httpResponse: httpResponse, data: data)
         }
 
         do {

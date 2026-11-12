@@ -51,7 +51,13 @@ final class MockURLProtocol: URLProtocol {
 }
 
 private final class CapturedRequestBox: @unchecked Sendable {
-    var request: URLRequest?
+    private let lock = NSLock()
+    private var _request: URLRequest?
+
+    var request: URLRequest? {
+        get { lock.withLock { _request } }
+        set { lock.withLock { _request = newValue } }
+    }
 }
 
 @Suite("LayaFoundationModels HTTP Adapter Tests", .serialized)
@@ -163,5 +169,65 @@ struct LayaFoundationModelsTests {
         #expect(model.capabilities.contains(.toolCalling) == false)
         #expect(model.executorConfiguration.endpoint == .localAlt)
         #expect(model.executorConfiguration.modelID == "english")
+
+        let proxyURL = URL(string: "https://laya-gateway.company.com/v1/systemone")!
+        let proxyModel1 = LayaLanguageModel(
+            proxyEndpoint: proxyURL,
+            credential: .appCheck { "laya-tok-1" }
+        )
+        #expect(proxyModel1.executorConfiguration.endpoint == .custom(proxyURL))
+
+        let proxyModel2 = LayaLanguageModel(proxyEndpoint: proxyURL) { req in
+            req.setValue("laya-tok-2", forHTTPHeaderField: "X-Firebase-AppCheck")
+        }
+        #expect(proxyModel2.executorConfiguration.endpoint == .custom(proxyURL))
+    }
+
+    @Test("LayaHTTPBackend supports ProxyCredential and rejects insecure remote HTTP")
+    func testLayaHTTPBackendProxyCredential() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: config)
+
+        let box = CapturedRequestBox()
+        MockURLProtocol.requestHandler = { request in
+            box.request = request
+            let json = """
+            {
+              "model": "laya-rl-agent",
+              "answers": {},
+              "usage": { "input_tokens": 10, "output_tokens": 0 }
+            }
+            """
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            return (response, Data(json.utf8))
+        }
+        defer { MockURLProtocol.requestHandler = nil }
+
+        let proxyURL = URL(string: "https://laya-gateway.company.com/v1/systemone")!
+        let backend = LayaHTTPBackend(
+            proxyEndpoint: proxyURL,
+            credential: .appCheck { "laya-attested-xyz" },
+            session: session
+        )
+        let request = SystemOneRequest(state: "Check status", questions: [:])
+        _ = try await backend.evaluate(request: request)
+
+        #expect(box.request?.value(forHTTPHeaderField: "X-Firebase-AppCheck") == "laya-attested-xyz")
+        #expect(box.request?.value(forHTTPHeaderField: "Authorization") == nil)
+
+        let insecureBackend = LayaHTTPBackend(
+            proxyEndpoint: URL(string: "http://remote-laya.example.com/v1/systemone")!,
+            credential: .bearer { "tok" },
+            session: session
+        )
+        await #expect(throws: SystemOneError.self) {
+            _ = try await insecureBackend.evaluate(request: request)
+        }
     }
 }

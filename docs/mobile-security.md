@@ -1,6 +1,6 @@
-# Secure Mobile Deployments: Firebase App Check & Apple App Attest
+# Secure Mobile Deployments: Universal `ProxyCredential`, Firebase App Check & Apple App Attest
 
-This guide details how to securely deploy **Jev Foundation Models** in client-side Apple applications (iOS, iPadOS, macOS, visionOS) using **Firebase App Check** and **Apple App Attest** (`DeviceCheck`).
+This guide details how to securely deploy **System One Foundation Models** (`GeminiLanguageModel`, `OpenAIDecisionsLanguageModel`, `ClefLanguageModel`, `LayaLanguageModel`, `JevLanguageModel`, and vendor-agnostic `SystemOneLanguageModel`) in client-side Apple applications (iOS, iPadOS, macOS, visionOS) using **`ProxyCredential`**, **Firebase App Check**, and **Apple App Attest** (`DeviceCheck`).
 
 ---
 
@@ -10,15 +10,15 @@ When building an Apple platform application with AI capabilities, embedding thir
 
 1. **Decompilation:** Anyone can inspect compiled Mach-O binaries using tools like `strings`, Hopper, or Ghidra and extract embedded strings.
 2. **Network Interception:** Even with HTTPS, an attacker on a supervised or jailbroken device can install a custom root certificate authority and inspect outbound traffic using Proxyman or Charles.
-3. **Account Depletion:** A leaked `TYPESAFE_API_KEY` grants unrestricted access to your TypeSafe account balance and models.
+3. **Account Depletion:** A leaked `GEMINI_API_KEY`, `OPENAI_API_KEY`, `CLOUDFLARE_API_TOKEN`, or `TYPESAFE_API_KEY` grants unrestricted access to your cloud AI account balance and models.
 
-Because TypeSafe AI currently requires a secret master API key and does not provide a public client-facing OAuth 2.0 token exchange endpoint, **client applications must never communicate directly with `api.typesafe.ai` using a client-bundled master key.**
+Because cloud AI providers require secret master API keys that cannot be safely shipped inside client binaries, **client applications must never communicate directly with upstream cloud endpoints using a client-bundled master key.**
 
 ---
 
 ## 2. Architecture: Hardware Attestation + Cloud Proxy
 
-To solve this, we place a lightweight **Firebase Cloud Function (2nd Gen)** between the client app and TypeSafe AI, protected by **Apple App Attest**:
+To solve this, we place a lightweight **Firebase Cloud Function (2nd Gen)** or API gateway between the client app and your upstream System One provider (Google Gemini, OpenAI, Cloudflare Clef, Laya, or TypeSafe Jev), protected by **Apple App Attest**:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -26,7 +26,7 @@ To solve this, we place a lightweight **Firebase Cloud Function (2nd Gen)** betw
 │                                                         │
 │  1. Device creates key pair in Secure Enclave           │
 │  2. Firebase App Check obtains Apple Attestation token  │
-│  3. ProxyTransport attaches dynamic token header        │
+│  3. ProxyCredential attaches dynamic token header       │
 │  4. Standard LanguageModelSession executes decision     │
 └────────────────────────────┬────────────────────────────┘
                              │
@@ -39,16 +39,16 @@ To solve this, we place a lightweight **Firebase Cloud Function (2nd Gen)** betw
 │                                                         │
 │  5. Ingress automatically validates Apple Attestation   │
 │     (Unauthorized requests rejected with 401 at edge)   │
-│  6. Injects TYPESAFE_API_KEY from Secret Manager        │
-│  7. Forwards payload to TypeSafe System One API         │
+│  6. Injects secret API key from Secret Manager          │
+│  7. Forwards payload to Gemini / OpenAI / Clef / Jev    │
 └────────────────────────────┬────────────────────────────┘
                              │
-                POST https://api.typesafe.ai/v1/systemone
-                Header: Authorization: Bearer <TYPESAFE_API_KEY>
+                POST https://generativelanguage.googleapis.com/v1beta/decisions
+                (or api.openai.com / api.cloudflare.com / api.typesafe.ai)
                              │
                              ▼
 ┌─────────────────────────────────────────────────────────┐
-│                    TypeSafe AI (Jev)                    │
+│       Upstream System One Provider (Gemini / etc.)      │
 │  Evaluates state & returns typed decision probabilities │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -56,7 +56,7 @@ To solve this, we place a lightweight **Firebase Cloud Function (2nd Gen)** betw
 ### Why this is secure
 * **Hardware-Backed:** App Attest uses the device's physical **Secure Enclave**. The private key never leaves the chip and cannot be copied or spoofed by bots.
 * **Ingress-Level Filtering:** Firebase Cloud Functions v2 with `enforceAppCheck: true` validates the token at Google's ingress edge. Requests from tampered apps or curl scripts are rejected **before** your Cloud Function executes, preventing unwanted compute and API costs.
-* **Zero Credential Exposure:** The `TYPESAFE_API_KEY` exists only in Google Cloud Secret Manager.
+* **Zero Credential Exposure:** Your upstream API keys (`GEMINI_API_KEY`, `OPENAI_API_KEY`, `CLOUDFLARE_API_TOKEN`, `TYPESAFE_API_KEY`) exist only in Google Cloud Secret Manager.
 
 ---
 
@@ -202,46 +202,108 @@ struct MyApp: App {
 
 ---
 
-### Step 4: Configure the Built-in `ProxyTransport`
+### Step 4: Configure Universal `ProxyCredential` Across Any System One Model
 
-`JevFoundationModels` includes **`ProxyTransport`** as an official, built-in transport for mobile applications routing through secure reverse proxies.
+`SystemOneCore` provides **`ProxyCredential`** and **`SystemOneProxyBackend`** so you can authenticate against your reverse proxy with **any** hosted System One model (`GeminiLanguageModel`, `OpenAIDecisionsLanguageModel`, `ClefLanguageModel`, `LayaLanguageModel`, `JevLanguageModel`, or vendor-agnostic `SystemOneLanguageModel`).
 
 > **Zero Third-Party Runtime Dependencies via Closure Injection:**
-> `JevFoundationModels` maintains a strict mandate of **Zero External Third-Party Runtime Dependencies** ([Tech Note 0005](../tech-notes/0005-spm-dependency-isolation-and-vendor-transports.md)). Rather than forcing all package consumers to compile Google Firebase or Apple DeviceCheck SDKs, `ProxyTransport` uses dynamic closure injection (`Credential.header`, `Credential.bearer`, or `Credential.custom`).
+> `SystemOneFoundationModels` maintains a strict mandate of **Zero External Third-Party Runtime Dependencies** ([Tech Note 0005](../tech-notes/0005-spm-dependency-isolation-and-vendor-transports.md)). Rather than forcing all package consumers to compile Google Firebase or Apple DeviceCheck SDKs, `ProxyCredential` uses dynamic closure injection (`.appCheck`, `.header`, `.bearer`, `.custom`, or inline `authorize:` trailing closures).
 >
-> Your application target links `FirebaseAppCheck`, and passes an asynchronous token acquisition closure directly into `ProxyTransport`. Token resolution occurs **per attempt inside the retry loop**, ensuring automatic refresh during exponential backoff. For architectural details, see [Tech Note 0010 — Dynamic Credential Resolution & Reverse Proxying with ProxyTransport](../tech-notes/0010-proxy-transport-and-dynamic-attestation.md).
+> Your application target links `FirebaseAppCheck`, and passes an asynchronous token acquisition closure directly into the model initializer. Token resolution occurs **per attempt inside the retry loop**, ensuring automatic refresh during exponential backoff. For architectural details, see [ADR-2026-11-12-01](architecture/ADR-2026-11-12-01-universal-proxy-credentials.md) and [Tech Note 0010](../tech-notes/0010-proxy-transport-and-dynamic-attestation.md).
 
-#### Strategy A: Cached Tokens (< 1 ms in-memory lookup, recommended for interactive UI)
+#### Pattern A: Provider Passthrough Proxy (`.appCheck` Shorthand Across All Models)
+
+Every hosted provider model accepts `proxyEndpoint: URL` and `credential: ProxyCredential` directly:
 
 ```swift
 import Foundation
 import FirebaseAppCheck
+import GeminiFoundationModels
+import OpenAIFoundationModels
+import ClefFoundationModels
+import LayaFoundationModels
 import JevFoundationModels
 
-let proxyURL = URL(string: "https://us-central1-myproject.cloudfunctions.net/systemone")!
+let proxyBaseURL = URL(string: "https://us-central1-myproject.cloudfunctions.net")!
 
-// Dynamically resolves cached App Check tokens from memory
-let transport = ProxyTransport(
-    proxyEndpoint: proxyURL,
-    credential: .header(name: "X-Firebase-AppCheck") {
-        try await AppCheck.appCheck().token(forcingRefresh: false).token
-    }
+// Shared zero-dependency App Check credential (defaults to "X-Firebase-AppCheck" header)
+let appCheckCredential = ProxyCredential.appCheck {
+    try await AppCheck.appCheck().token(forcingRefresh: false).token
+}
+
+// 1. Google Gemini Decisions (gemini-decision-1)
+let gemini = GeminiLanguageModel(
+    proxyEndpoint: proxyBaseURL.appending(path: "geminiDecisions"),
+    credential: appCheckCredential
+)
+
+// 2. OpenAI Decisions (gpt-6-luna)
+let openai = OpenAIDecisionsLanguageModel(
+    proxyEndpoint: proxyBaseURL.appending(path: "openaiDecisions"),
+    credential: appCheckCredential
+)
+
+// 3. Cloudflare Clef Multimodal (clef-flash / clef)
+let clef = ClefLanguageModel(
+    proxyEndpoint: proxyBaseURL.appending(path: "clefDecisions"),
+    model: .clefFlash,
+    credential: appCheckCredential
+)
+
+// 4. Self-Hosted Laya (laya-serve)
+let laya = LayaLanguageModel(
+    proxyEndpoint: proxyBaseURL.appending(path: "layaDecisions"),
+    credential: appCheckCredential
+)
+
+// 5. TypeSafe AI Jev
+let jev = JevLanguageModel(
+    proxyEndpoint: proxyBaseURL.appending(path: "systemone"),
+    credential: appCheckCredential
 )
 ```
 
-#### Strategy B: Single-Use Consumable Tokens (Replay-protected, recommended for high-value decisions)
+#### Pattern B: Vendor-Agnostic Gateway (`SystemOneLanguageModel` + `SystemOneProxyBackend`)
+
+If your backend gateway accepts canonical `SystemOneRequest` JSON and routes or fails over between Gemini, OpenAI, Clef, Jev, and Laya server-side, use `SystemOneLanguageModel` directly from `SystemOneCore`:
 
 ```swift
 import Foundation
 import FirebaseAppCheck
-import JevFoundationModels
+import SystemOneCore
 
-let proxyURL = URL(string: "https://us-central1-myproject.cloudfunctions.net/systemone")!
+let gatewayURL = URL(string: "https://us-central1-myproject.cloudfunctions.net/systemone")!
 
-// Dynamically mints a consumable limited-use token per request attempt
-let transport = ProxyTransport(
-    proxyEndpoint: proxyURL,
-    credential: .header(name: "X-Firebase-AppCheck") {
+let model = SystemOneLanguageModel(
+    proxyEndpoint: gatewayURL,
+    credential: .appCheck {
+        try await AppCheck.appCheck().token(forcingRefresh: false).token
+    },
+    modelID: "gemini-decision-1"
+)
+```
+
+#### Inline Trailing-Closure `authorize:` (Multi-Header Gateways)
+
+When your gateway requires multiple dynamic headers (e.g., `X-Firebase-AppCheck` for device attestation plus `Authorization: Bearer` for user identity), use `.custom` or the inline `authorize:` trailing-closure initializer available on all hosted `LanguageModel` types:
+
+```swift
+let gemini = GeminiLanguageModel(
+    proxyEndpoint: URL(string: "https://us-central1-myproject.cloudfunctions.net/geminiDecisions")!
+) { request in
+    let appCheckToken = try await AppCheck.appCheck().token(forcingRefresh: false).token
+    let userIDToken = try await Auth.auth().currentUser?.getIDToken() ?? ""
+    request.setValue(appCheckToken, forHTTPHeaderField: "X-Firebase-AppCheck")
+    request.setValue("Bearer \(userIDToken)", forHTTPHeaderField: "Authorization")
+}
+```
+
+#### Single-Use Consumable Tokens (Replay-protected, recommended for high-value decisions)
+
+```swift
+let replayProtectedModel = GeminiLanguageModel(
+    proxyEndpoint: URL(string: "https://us-central1-myproject.cloudfunctions.net/geminiDecisions")!,
+    credential: .appCheck {
         try await AppCheck.appCheck().limitedUseToken().token
     }
 )
@@ -251,30 +313,26 @@ let transport = ProxyTransport(
 
 ### Step 5: Evaluate with Apple Foundation Models
 
-At your application call site, configure `JevLanguageModel` with the configured `ProxyTransport` and evaluate via standard Apple Foundation Models APIs:
+At your application call site, pass your proxy-configured model to standard Apple Foundation Models `LanguageModelSession`:
 
 ```swift
 import FoundationModels
-import JevFoundationModels
+import GeminiFoundationModels
 import FirebaseAppCheck
 
-// 1. Initialize your secure transport pointing to your Cloud Function proxy
-let proxyURL = URL(string: "https://us-central1-myproject.cloudfunctions.net/systemone")!
-let transport = ProxyTransport(
-    proxyEndpoint: proxyURL,
-    credential: .header(name: "X-Firebase-AppCheck") {
+// 1. Configure GeminiLanguageModel (or OpenAI / Clef / Laya / Jev / SystemOneLanguageModel) with .appCheck
+// No API key is needed on the client — key injection happens server-side in the Cloud Function
+let gemini = GeminiLanguageModel(
+    proxyEndpoint: URL(string: "https://us-central1-myproject.cloudfunctions.net/geminiDecisions")!,
+    credential: .appCheck {
         try await AppCheck.appCheck().token(forcingRefresh: false).token
     }
 )
 
-// 2. Configure JevLanguageModel with the proxy transport
-// No API key is needed on the client — key injection happens server-side in the Cloud Function
-let jev = JevLanguageModel(transport: transport)
+// 2. Initialize standard Apple LanguageModelSession
+let session = LanguageModelSession(model: gemini)
 
-// 3. Initialize standard Apple LanguageModelSession
-let session = LanguageModelSession(model: jev)
-
-// 4. Evaluate typed @Generable schema
+// 3. Evaluate typed @Generable schema
 let ticketText = "My payment failed and I was double charged!"
 let response = try await session.respond(to: ticketText, generating: TicketTriage.self)
 
@@ -410,11 +468,11 @@ Firebase App Check provides **Limited-Use Tokens** designed for replay protectio
    Set the environment variable `CONSUME_APP_CHECK=true` in your function's environment.
 
 3. **Configure Swift Client:**
-   Initialize `ProxyTransport` with `limitedUseToken()`:
+   Initialize any hosted `LanguageModel` with `.appCheck` and `limitedUseToken()`:
    ```swift
-   let transport = ProxyTransport(
+   let model = GeminiLanguageModel(
        proxyEndpoint: proxyURL,
-       credential: .header(name: "X-Firebase-AppCheck") {
+       credential: .appCheck {
            try await AppCheck.appCheck().limitedUseToken().token
        }
    )

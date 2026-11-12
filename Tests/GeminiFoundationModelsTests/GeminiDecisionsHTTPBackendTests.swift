@@ -526,4 +526,74 @@ struct GeminiDecisionsHTTPBackendTests {
         }
         #expect(MockGeminiURLProtocol.recordedRequests.isEmpty)
     }
+
+    @Test("HTTP Backend with ProxyCredential succeeds without GEMINI_API_KEY and rotates token per retry attempt")
+    func testProxyCredentialAndPerAttemptTokenRotation() async throws {
+        actor TokenCounter {
+            private var count = 0
+            func next() -> String {
+                count += 1
+                return "gemini-appcheck-\(count)"
+            }
+        }
+
+        MockGeminiURLProtocol.reset()
+        MockGeminiURLProtocol.enqueue(
+            statusCode: 429,
+            headers: ["Retry-After": "0"],
+            body: """
+            {"error": {"code": 429, "message": "Rate limited", "status": "RESOURCE_EXHAUSTED"}}
+            """.data(using: .utf8)!
+        )
+        MockGeminiURLProtocol.enqueue(
+            statusCode: 200,
+            headers: ["x-goog-processing-ms": "12.0"],
+            body: sampleResponseJSON
+        )
+
+        let counter = TokenCounter()
+        let proxyURL = URL(string: "https://us-central1-myapp.cloudfunctions.net/geminiProxy")!
+        let backend = GeminiDecisionsHTTPBackend(
+            endpoint: .custom(proxyURL),
+            apiKey: nil,
+            proxyCredential: .appCheck { await counter.next() },
+            session: makeSession(),
+            retryPolicy: RetryPolicy(maxAttempts: 2, initialDelay: .zero),
+            environmentOverride: [:]
+        )
+
+        let request = SystemOneRequest(
+            state: "Proxy test",
+            questions: ["isSafe": .noul(instructions: "Is safe?")]
+        )
+
+        let response = try await backend.evaluate(request: request)
+        #expect(response.answers["isSafe"]?.noul == 0.98)
+
+        let recorded = MockGeminiURLProtocol.recordedRequests
+        #expect(recorded.count == 2)
+        #expect(recorded[0].url == proxyURL)
+        #expect(recorded[0].value(forHTTPHeaderField: "x-goog-api-key") == nil)
+        #expect(recorded[0].value(forHTTPHeaderField: "X-Firebase-AppCheck") == "gemini-appcheck-1")
+        #expect(recorded[1].value(forHTTPHeaderField: "X-Firebase-AppCheck") == "gemini-appcheck-2")
+    }
+
+    @Test("HTTP Backend with ProxyCredential rejects insecure remote HTTP endpoint")
+    func testProxyCredentialRejectsRemoteHTTP() async throws {
+        let insecureURL = URL(string: "http://remote-gateway.example.com/v1beta/decisions")!
+        let backend = GeminiDecisionsHTTPBackend(
+            proxyEndpoint: insecureURL,
+            credential: .bearer { "token" },
+            session: makeSession()
+        )
+
+        let request = SystemOneRequest(
+            state: "Test",
+            questions: ["isSafe": .noul(instructions: "Is safe?")]
+        )
+
+        await #expect(throws: SystemOneError.self) {
+            _ = try await backend.evaluate(request: request)
+        }
+    }
 }

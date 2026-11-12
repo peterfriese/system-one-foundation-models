@@ -539,4 +539,49 @@ struct ClefBackendTests {
             Issue.record("Expected CancellationError, got \(error)")
         }
     }
+
+    @Test("ClefHTTPBackend with ProxyCredential rotates token per retry attempt and validates HTTPS")
+    func testProxyCredentialAndValidation() async throws {
+        actor TokenCounter {
+            private var count = 0
+            func next() -> String {
+                count += 1
+                return "clef-appcheck-\(count)"
+            }
+        }
+
+        MockClefBackendProtocol.reset()
+        MockClefBackendProtocol.enqueue(statusCode: 429, headers: ["Retry-After": "0"], body: Data("Rate limited".utf8))
+        MockClefBackendProtocol.enqueue(statusCode: 200, body: sampleValidClefJSON)
+
+        let counter = TokenCounter()
+        let proxyURL = URL(string: "https://clef-gateway.company.com/v1/evaluate")!
+        let backend = ClefHTTPBackend(
+            proxyEndpoint: proxyURL,
+            model: .clefFlash,
+            credential: .appCheck { await counter.next() },
+            session: makeSession(),
+            retryPolicy: RetryPolicy(maxAttempts: 2, initialDelay: .zero)
+        )
+
+        let response = try await backend.evaluate(request: sampleRequest)
+        #expect(response.model == "@cf/cloudflare/clef-flash")
+
+        let recorded = MockClefBackendProtocol.recordedRequests
+        #expect(recorded.count == 2)
+        #expect(recorded[0].url == proxyURL)
+        #expect(recorded[0].value(forHTTPHeaderField: "Authorization") == nil)
+        #expect(recorded[0].value(forHTTPHeaderField: "X-Firebase-AppCheck") == "clef-appcheck-1")
+        #expect(recorded[1].value(forHTTPHeaderField: "X-Firebase-AppCheck") == "clef-appcheck-2")
+
+        // Verify insecure remote HTTP is rejected
+        let insecureBackend = ClefHTTPBackend(
+            proxyEndpoint: URL(string: "http://remote-clef.example.com/v1/evaluate")!,
+            credential: .bearer { "tok" },
+            session: makeSession()
+        )
+        await #expect(throws: SystemOneError.self) {
+            _ = try await insecureBackend.evaluate(request: sampleRequest)
+        }
+    }
 }

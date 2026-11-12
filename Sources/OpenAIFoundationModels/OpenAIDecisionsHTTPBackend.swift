@@ -5,22 +5,45 @@ import SystemOneCore
 public struct OpenAIDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
     public let endpoint: OpenAIDecisionsEndpoint
     public let apiKey: String?
+    public let proxyCredential: ProxyCredential?
     public let session: URLSession
     public let timeoutInterval: TimeInterval
     public let retryPolicy: RetryPolicy
+    internal var environmentOverride: [String: String]? = nil
 
     public init(
         endpoint: OpenAIDecisionsEndpoint = .hosted(),
         apiKey: String? = nil,
+        proxyCredential: ProxyCredential? = nil,
         session: URLSession = .shared,
         timeoutInterval: TimeInterval = 30,
         retryPolicy: RetryPolicy = .default
     ) {
         self.endpoint = endpoint
         self.apiKey = apiKey
+        self.proxyCredential = proxyCredential
         self.session = session
         self.timeoutInterval = timeoutInterval
         self.retryPolicy = retryPolicy
+        self.environmentOverride = nil
+    }
+
+    internal init(
+        endpoint: OpenAIDecisionsEndpoint = .hosted(),
+        apiKey: String? = nil,
+        proxyCredential: ProxyCredential? = nil,
+        session: URLSession = .shared,
+        timeoutInterval: TimeInterval = 30,
+        retryPolicy: RetryPolicy = .default,
+        environmentOverride: [String: String]?
+    ) {
+        self.endpoint = endpoint
+        self.apiKey = apiKey
+        self.proxyCredential = proxyCredential
+        self.session = session
+        self.timeoutInterval = timeoutInterval
+        self.retryPolicy = retryPolicy
+        self.environmentOverride = environmentOverride
     }
 
     public init(
@@ -40,9 +63,37 @@ public struct OpenAIDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
             clientRequestID: clientRequestID
         )
         self.apiKey = apiKey
+        self.proxyCredential = nil
         self.session = session
         self.timeoutInterval = timeoutInterval
         self.retryPolicy = retryPolicy
+        self.environmentOverride = nil
+    }
+
+    public init(
+        proxyEndpoint: URL,
+        credential: ProxyCredential,
+        model: String = OpenAIDecisionsEndpoint.defaultModel,
+        organization: String? = nil,
+        project: String? = nil,
+        clientRequestID: String? = nil,
+        session: URLSession = .shared,
+        timeoutInterval: TimeInterval = 30,
+        retryPolicy: RetryPolicy = .default
+    ) {
+        self.endpoint = .custom(
+            proxyEndpoint,
+            model: model,
+            organization: organization,
+            project: project,
+            clientRequestID: clientRequestID
+        )
+        self.apiKey = nil
+        self.proxyCredential = credential
+        self.session = session
+        self.timeoutInterval = timeoutInterval
+        self.retryPolicy = retryPolicy
+        self.environmentOverride = nil
     }
 
     // MARK: - SystemOneBackend Conformance
@@ -72,16 +123,40 @@ public struct OpenAIDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
         let data: Data
     }
 
+    private func resolveAPIKey() -> String? {
+        if let explicit = apiKey {
+            let trimmed = explicit.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                return trimmed
+            }
+        }
+        if proxyCredential != nil {
+            return nil
+        }
+        let env = environmentOverride ?? ProcessInfo.processInfo.environment
+        if let openAIKey = env["OPENAI_API_KEY"] {
+            let trimmed = openAIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                return trimmed
+            }
+        }
+        return nil
+    }
+
     private func evaluateWithTiming(
         request: OpenAIDecisionsRequest
     ) async throws -> (response: OpenAIDecisionsResponse, transportDurationMs: Double, serverDurationMs: Double?) {
-        guard let resolvedKey = apiKey ?? ProcessInfo.processInfo.environment["OPENAI_API_KEY"],
-              !resolvedKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        if proxyCredential != nil {
+            try ProxyEndpointValidator.validate(endpoint.url)
+        }
+
+        let resolvedKey = resolveAPIKey()
+        if proxyCredential == nil && resolvedKey == nil {
             throw SystemOneError.missingAPIKey
         }
 
         var attempts = 0
-        let maxAttempts = retryPolicy.maxAttempts
+        let maxAttempts = max(1, retryPolicy.maxAttempts)
 
         while true {
             attempts += 1
@@ -151,12 +226,14 @@ public struct OpenAIDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
 
     private func performSingleEvaluation(
         request: OpenAIDecisionsRequest,
-        apiKey: String
+        apiKey: String?
     ) async throws -> (response: OpenAIDecisionsResponse, transportDurationMs: Double, serverDurationMs: Double?) {
         var urlRequest = URLRequest(url: endpoint.url)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        if let apiKey {
+            urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        }
         urlRequest.timeoutInterval = timeoutInterval
 
         if let org = endpoint.organization, !org.isEmpty {
@@ -169,13 +246,26 @@ public struct OpenAIDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
             urlRequest.setValue(clientReqID, forHTTPHeaderField: "X-Client-Request-Id")
         }
 
+        if let proxyCredential {
+            do {
+                try await proxyCredential.apply(to: &urlRequest)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch let error as SystemOneError {
+                throw error
+            } catch {
+                throw SystemOneError.authenticationFailed("Failed to acquire proxy credential: \(error.localizedDescription)")
+            }
+        }
+
         do {
             urlRequest.httpBody = try JSONEncoder().encode(request)
         } catch {
             throw SystemOneError.decodingError("Failed to serialize OpenAIDecisionsRequest: \(error.localizedDescription)")
         }
 
-        let networkStartTime = CFAbsoluteTimeGetCurrent()
+        let clock = ContinuousClock()
+        let networkStart = clock.now
         let data: Data
         let urlResponse: URLResponse
         do {
@@ -191,7 +281,8 @@ public struct OpenAIDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
             throw SystemOneError.networkError(error.localizedDescription)
         }
 
-        let transportDuration = (CFAbsoluteTimeGetCurrent() - networkStartTime) * 1000.0
+        let elapsed = networkStart.duration(to: clock.now)
+        let transportDuration = Double(elapsed.components.seconds) * 1000.0 + Double(elapsed.components.attoseconds) / 1e15
 
         guard let httpResponse = urlResponse as? HTTPURLResponse else {
             throw SystemOneError.networkError("Invalid HTTP response received from OpenAI Decisions API.")

@@ -5,6 +5,7 @@ import SystemOneCore
 public struct ClefHTTPBackend: SystemOneBackend, Sendable, Hashable {
     public let endpoint: ClefEndpoint
     public let apiToken: String?
+    public let proxyCredential: ProxyCredential?
     public let session: URLSession
     public let timeoutInterval: TimeInterval
     public let retryPolicy: RetryPolicy
@@ -12,20 +13,60 @@ public struct ClefHTTPBackend: SystemOneBackend, Sendable, Hashable {
     public init(
         endpoint: ClefEndpoint,
         apiToken: String? = nil,
+        proxyCredential: ProxyCredential? = nil,
         session: URLSession = .shared,
         timeoutInterval: TimeInterval = 45,
         retryPolicy: RetryPolicy = .default
     ) {
         self.endpoint = endpoint
         self.apiToken = apiToken
+        self.proxyCredential = proxyCredential
         self.session = session
         self.timeoutInterval = timeoutInterval
         self.retryPolicy = retryPolicy
     }
 
+    public init(
+        proxyEndpoint: URL,
+        model: ClefModel = .clefFlash,
+        credential: ProxyCredential,
+        session: URLSession = .shared,
+        timeoutInterval: TimeInterval = 45,
+        retryPolicy: RetryPolicy = .default
+    ) {
+        self.endpoint = .custom(proxyEndpoint, model: model)
+        self.apiToken = nil
+        self.proxyCredential = credential
+        self.session = session
+        self.timeoutInterval = timeoutInterval
+        self.retryPolicy = retryPolicy
+    }
+
+    public init(
+        proxyEndpoint: URL,
+        credential: ProxyCredential,
+        model: ClefModel,
+        session: URLSession = .shared,
+        timeoutInterval: TimeInterval = 45,
+        retryPolicy: RetryPolicy = .default
+    ) {
+        self.init(
+            proxyEndpoint: proxyEndpoint,
+            model: model,
+            credential: credential,
+            session: session,
+            timeoutInterval: timeoutInterval,
+            retryPolicy: retryPolicy
+        )
+    }
+
     public func evaluate(request: SystemOneRequest) async throws -> SystemOneResponse {
+        if proxyCredential != nil {
+            try ProxyEndpointValidator.validate(endpoint.url)
+        }
+
         var attempts = 0
-        let maxAttempts = retryPolicy.maxAttempts
+        let maxAttempts = max(1, retryPolicy.maxAttempts)
 
         while true {
             attempts += 1
@@ -101,13 +142,26 @@ public struct ClefHTTPBackend: SystemOneBackend, Sendable, Hashable {
             urlRequest.setValue("clef-multimodal", forHTTPHeaderField: "cf-aig-metadata-tag")
         }
 
+        if let proxyCredential {
+            do {
+                try await proxyCredential.apply(to: &urlRequest)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch let error as SystemOneError {
+                throw error
+            } catch {
+                throw SystemOneError.authenticationFailed("Failed to acquire proxy credential: \(error.localizedDescription)")
+            }
+        }
+
         do {
             urlRequest.httpBody = try JSONEncoder().encode(request)
         } catch {
             throw SystemOneError.decodingError("Failed to serialize SystemOneRequest: \(error.localizedDescription)")
         }
 
-        let networkStartTime = CFAbsoluteTimeGetCurrent()
+        let clock = ContinuousClock()
+        let networkStart = clock.now
         let data: Data
         let response: URLResponse
         do {
@@ -123,7 +177,9 @@ public struct ClefHTTPBackend: SystemOneBackend, Sendable, Hashable {
             throw SystemOneError.networkError(error.localizedDescription)
         }
 
-        let transportDuration = (CFAbsoluteTimeGetCurrent() - networkStartTime) * 1000.0
+        let elapsed = networkStart.duration(to: clock.now)
+        let transportDuration = Double(elapsed.components.seconds) * 1000.0
+            + Double(elapsed.components.attoseconds) / 1_000_000_000_000_000.0
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw SystemOneError.networkError("Invalid HTTP response received from server.")

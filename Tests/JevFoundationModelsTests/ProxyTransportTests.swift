@@ -226,4 +226,36 @@ struct ProxyTransportTests {
         let response = try await transport.send(request: request, apiKey: nil, endpoint: localURL)
         #expect(response.answers.count == 1)
     }
+
+    @Test("JevLanguageModel supports proxyEndpoint with ProxyCredential (.appCheck) and trailing-closure authorize")
+    func testJevLanguageModelProxyInitializers() async throws {
+        MockProxyURLProtocol.reset()
+        MockProxyURLProtocol.enqueue(statusCode: 200, body: sampleResponseData)
+
+        let proxyURL = URL(string: "https://my-app.cloudfunctions.net/jevProxy")!
+        let model1 = JevLanguageModel(
+            proxyEndpoint: proxyURL,
+            credential: .appCheck { "jev-appcheck-token" },
+            session: makeSession()
+        )
+        #expect(model1.executorConfiguration.endpoint == proxyURL)
+        #expect(model1.executorConfiguration.apiKey == nil)
+
+        let model2 = JevLanguageModel(
+            proxyEndpoint: proxyURL,
+            session: makeSession()
+        ) { req in
+            req.setValue("jev-custom-appcheck", forHTTPHeaderField: "X-Firebase-AppCheck")
+        }
+        #expect(model2.executorConfiguration.endpoint == proxyURL)
+
+        let request = JevRequest(state: "Test", model: "jev-latest", questions: [:])
+        let response = try await model2.executorConfiguration.transport.send(
+            request: request,
+            apiKey: nil,
+            endpoint: proxyURL
+        )
+        #expect(response.answers.count == 1)
+        #expect(MockProxyURLProtocol.recordedRequests.first?.value(forHTTPHeaderField: "X-Firebase-AppCheck") == "jev-custom-appcheck")
+    }
 }

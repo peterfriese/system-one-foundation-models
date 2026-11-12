@@ -1,4 +1,5 @@
 import Foundation
+import SystemOneCore
 
 /// An HTTP transport that directs requests to a secure proxy endpoint (e.g. Firebase Cloud Functions with App Check)
 /// rather than dispatching directly to the TypeSafe AI upstream API.
@@ -9,17 +10,8 @@ import Foundation
 /// See `tech-notes/0010-proxy-transport-and-dynamic-attestation.md`.
 public struct ProxyTransport: JevTransport, Sendable {
 
-    /// Authentication mechanisms supported by the proxy gateway.
-    public enum Credential: Sendable {
-        /// Sets `Authorization: Bearer <token>` using the dynamically resolved token.
-        case bearer(@Sendable () async throws -> String)
-
-        /// Sets a custom HTTP header with an optional prefix (e.g. `X-Firebase-AppCheck: <token>`).
-        case header(name: String, prefix: String? = nil, provider: @Sendable () async throws -> String)
-
-        /// Applies arbitrary modifications to the outbound `URLRequest` before dispatch.
-        case custom(@Sendable (inout URLRequest) async throws -> Void)
-    }
+    /// Authentication mechanisms supported by the proxy gateway, unified with `SystemOneCore.ProxyCredential`.
+    public typealias Credential = ProxyCredential
 
     /// The target proxy URL to which all requests are directed.
     public let proxyEndpoint: URL
@@ -141,33 +133,17 @@ public struct ProxyTransport: JevTransport, Sendable {
     }
 
     private func validateProxyEndpointSecurity() throws {
-        let scheme = proxyEndpoint.scheme?.lowercased()
-        if scheme == "https" {
-            return
+        do {
+            try ProxyEndpointValidator.validate(proxyEndpoint)
+        } catch let SystemOneError.networkError(msg) {
+            throw JevError.networkError(msg)
+        } catch {
+            throw JevError.networkError(error.localizedDescription)
         }
-        if scheme == "http" {
-            let host = proxyEndpoint.host?.lowercased()
-            if host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "[::1]" {
-                return
-            }
-        }
-        throw JevError.networkError("Insecure proxy endpoint: HTTPS is required for remote proxy connections.")
     }
 
     private func applyCredential(to request: inout URLRequest) async throws {
-        switch credential {
-        case .bearer(let provider):
-            let token = try await provider()
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-
-        case .header(let name, let prefix, let provider):
-            let token = try await provider()
-            let value = prefix.map { "\($0) \(token)" } ?? token
-            request.setValue(value, forHTTPHeaderField: name)
-
-        case .custom(let modifier):
-            try await modifier(&request)
-        }
+        try await credential.apply(to: &request)
     }
 
     private func failure(for response: HTTPURLResponse, data: Data) -> JevError {

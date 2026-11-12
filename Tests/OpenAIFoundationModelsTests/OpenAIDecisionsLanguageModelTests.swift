@@ -33,11 +33,23 @@ struct ExpenseAuditDecision: Sendable {
 @Suite("OpenAI Decisions Language Model Tests")
 struct OpenAIDecisionsLanguageModelTests {
 
-    @Test("OpenAIDecisionsLanguageModel capabilities advertise guidedGeneration and vision")
+    @Test("OpenAIDecisionsLanguageModel and OpenAILanguageModel typealias advertise guidedGeneration and vision")
     func testCapabilities() {
-        let model = OpenAIDecisionsLanguageModel(backend: MockOpenAIDecisionsBackend())
+        let model: OpenAILanguageModel = OpenAIDecisionsLanguageModel(backend: MockOpenAIDecisionsBackend())
         #expect(model.capabilities.contains(.guidedGeneration))
         #expect(model.capabilities.contains(.vision))
+
+        let proxyURL = URL(string: "https://us-central1-myapp.cloudfunctions.net/openAIProxy")!
+        let proxyModel1 = OpenAILanguageModel(
+            proxyEndpoint: proxyURL,
+            credential: .appCheck { "token-1" }
+        )
+        #expect(proxyModel1.executorConfiguration.endpoint.url == proxyURL)
+
+        let proxyModel2 = OpenAILanguageModel(proxyEndpoint: proxyURL) { request in
+            request.setValue("token-2", forHTTPHeaderField: "X-Firebase-AppCheck")
+        }
+        #expect(proxyModel2.executorConfiguration.endpoint.url == proxyURL)
     }
 
     @Test("OpenAIDecisionsLanguageModel supports PNG, JPEG, and WebP data attachments")
