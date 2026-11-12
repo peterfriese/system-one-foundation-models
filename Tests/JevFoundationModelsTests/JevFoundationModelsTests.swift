@@ -544,7 +544,9 @@ struct JevFoundationModelsTests {
     @Test("Live TypeSafe AI API integration test (runs when TYPESAFE_API_KEY is available)")
     func testLiveTypeSafeAPIIntegration() async throws {
         let apiKey: String? = {
-            if let envKey = ProcessInfo.processInfo.environment["TYPESAFE_API_KEY"], !envKey.isEmpty {
+            if let envKey = ProcessInfo.processInfo.environment["TYPESAFE_API_KEY"],
+               !envKey.isEmpty,
+               !envKey.lowercased().hasPrefix("your_") {
                 return envKey
             }
             let envURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent(".env")
@@ -558,7 +560,10 @@ struct JevFoundationModelsTests {
                     if (val.hasPrefix("\"") && val.hasSuffix("\"")) || (val.hasPrefix("'") && val.hasSuffix("'")) {
                         val = String(val.dropFirst().dropLast())
                     }
-                    return val.isEmpty ? nil : val
+                    if !val.isEmpty && !val.lowercased().hasPrefix("your_") {
+                        return val
+                    }
+                    return nil
                 }
             }
             return nil

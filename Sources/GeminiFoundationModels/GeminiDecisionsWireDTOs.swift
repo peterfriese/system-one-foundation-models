@@ -320,6 +320,9 @@ public struct GeminiDecisionsResponse: Codable, Sendable, Equatable {
         private enum CodingKeys: String, CodingKey {
             case inputTokens = "input_tokens"
             case outputTokens = "output_tokens"
+            case totalInputTokens = "total_input_tokens"
+            case totalOutputTokens = "total_output_tokens"
+            case totalTokens = "total_tokens"
             case promptTokenCount
             case candidatesTokenCount
         }
@@ -333,14 +336,20 @@ public struct GeminiDecisionsResponse: Codable, Sendable, Equatable {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             if let input = try container.decodeIfPresent(Int.self, forKey: .inputTokens) {
                 self.inputTokens = input
+            } else if let totalInput = try container.decodeIfPresent(Int.self, forKey: .totalInputTokens) {
+                self.inputTokens = totalInput
             } else if let prompt = try container.decodeIfPresent(Int.self, forKey: .promptTokenCount) {
                 self.inputTokens = prompt
+            } else if let total = try container.decodeIfPresent(Int.self, forKey: .totalTokens) {
+                self.inputTokens = total
             } else {
                 self.inputTokens = 0
             }
 
             if let output = try container.decodeIfPresent(Int.self, forKey: .outputTokens) {
                 self.outputTokens = output
+            } else if let totalOutput = try container.decodeIfPresent(Int.self, forKey: .totalOutputTokens) {
+                self.outputTokens = totalOutput
             } else if let candidates = try container.decodeIfPresent(Int.self, forKey: .candidatesTokenCount) {
                 self.outputTokens = candidates
             } else {

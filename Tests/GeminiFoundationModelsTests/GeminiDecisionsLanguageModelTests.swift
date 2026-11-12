@@ -245,4 +245,59 @@ struct GeminiDecisionsLanguageModelTests {
             }
         }
     }
+
+    // MARK: - Live API Integration Test
+
+    @Test("Live Google Gemini Decisions API integration test (runs when GEMINI_API_KEY is available)")
+    func testLiveGeminiDecisionsAPIIntegration() async throws {
+        let apiKey: String? = {
+            if let envKey = ProcessInfo.processInfo.environment["GEMINI_API_KEY"],
+               !envKey.isEmpty,
+               !envKey.lowercased().hasPrefix("your_") {
+                return envKey
+            }
+            if let envKey = ProcessInfo.processInfo.environment["GOOGLE_API_KEY"],
+               !envKey.isEmpty,
+               !envKey.lowercased().hasPrefix("your_") {
+                return envKey
+            }
+            let envURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent(".env")
+            guard let contents = try? String(contentsOf: envURL, encoding: .utf8) else { return nil }
+            for line in contents.components(separatedBy: .newlines) {
+                let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmed.hasPrefix("#") || trimmed.isEmpty { continue }
+                let parts = trimmed.split(separator: "=", maxSplits: 1).map(String.init)
+                if parts.count == 2 {
+                    let keyName = parts[0].trimmingCharacters(in: .whitespaces)
+                    if keyName == "GEMINI_API_KEY" || keyName == "GOOGLE_API_KEY" {
+                        var val = parts[1].trimmingCharacters(in: .whitespaces)
+                        if (val.hasPrefix("\"") && val.hasSuffix("\"")) || (val.hasPrefix("'") && val.hasSuffix("'")) {
+                            val = String(val.dropFirst().dropLast())
+                        }
+                        if !val.isEmpty && !val.lowercased().hasPrefix("your_") {
+                            return val
+                        }
+                    }
+                }
+            }
+            return nil
+        }()
+
+        guard let key = apiKey else {
+            // Live key not present, skip live call
+            return
+        }
+
+        let model = GeminiDecisionsLanguageModel(apiKey: key)
+        let session = LanguageModelSession(model: model)
+
+        let prompt = "Annual GitHub Enterprise subscription renewal invoice ($1,200) for the core engineering team, pre-approved by VP of Engineering."
+        let response = try await session.respond(to: prompt, generating: GeminiExpenseAuditDecision.self)
+
+        #expect(response.content.isApproved == true)
+        #expect(response.content.category == .software)
+        #expect((1...5).contains(response.content.riskScore))
+        #expect(response.usage.input.totalTokenCount > 0)
+        #expect(response.usage.output.totalTokenCount == 0)
+    }
 }

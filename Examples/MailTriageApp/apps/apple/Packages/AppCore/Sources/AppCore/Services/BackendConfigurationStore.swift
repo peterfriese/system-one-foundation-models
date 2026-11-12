@@ -269,7 +269,7 @@ public final class BackendConfigurationStore: @unchecked Sendable {
                 val = String(val.dropFirst().dropLast())
             }
             let trimmed = val.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
+            if !trimmed.isEmpty && !trimmed.lowercased().hasPrefix("your_") {
                 return trimmed
             }
         }
