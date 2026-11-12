@@ -187,7 +187,7 @@ public final class TriageEngine: TriageEngineProtocol, @unchecked Sendable {
                 configStore.hostedVpcURL,
                 defaultURL: BackendConfigurationStore.defaultHostedVpcURL
             )
-            let token = keychainService.string(for: .hostedVpcToken)
+            let token = keychainService.string(for: .hostedVpcToken) ?? (configStore.hostedVpcToken.isEmpty ? nil : configStore.hostedVpcToken)
             let model = LayaLanguageModel(endpoint: .custom(endpointURL), apiKey: token)
             let session = LanguageModelSession(model: model)
             let response = try await session.respond(to: prompt, generating: EmailTriageDecision.self)
@@ -195,7 +195,7 @@ public final class TriageEngine: TriageEngineProtocol, @unchecked Sendable {
             result = makeTriageResult(response: response, backend: backend, latencyMs: latencyMs)
 
         case .cloudAPI:
-            guard let apiKey = keychainService.string(for: .typesafeApiKey), !apiKey.isEmpty else {
+            guard let apiKey = (keychainService.string(for: .typesafeApiKey) ?? (configStore.typesafeApiKey.isEmpty ? nil : configStore.typesafeApiKey))?.trimmingCharacters(in: .whitespacesAndNewlines), !apiKey.isEmpty else {
                 throw BackendUnreachableError(
                     backend: backend,
                     reason: "Missing TypeSafe API Key",
@@ -211,14 +211,14 @@ public final class TriageEngine: TriageEngineProtocol, @unchecked Sendable {
             result = makeTriageResult(response: response, backend: backend, latencyMs: latencyMs)
 
         case .cloudflareClef:
-            guard let accountID = keychainService.string(for: .cloudflareAccountId)?.trimmingCharacters(in: .whitespacesAndNewlines), !accountID.isEmpty else {
+            guard let accountID = (keychainService.string(for: .cloudflareAccountId) ?? (configStore.cloudflareAccountId.isEmpty ? nil : configStore.cloudflareAccountId))?.trimmingCharacters(in: .whitespacesAndNewlines), !accountID.isEmpty else {
                 throw BackendUnreachableError(
                     backend: backend,
                     reason: "Missing Cloudflare Account ID",
                     guidance: "Open Settings (⌘,) and paste your Cloudflare Account ID."
                 )
             }
-            guard let token = keychainService.string(for: .cloudflareApiToken)?.trimmingCharacters(in: .whitespacesAndNewlines), !token.isEmpty else {
+            guard let token = (keychainService.string(for: .cloudflareApiToken) ?? (configStore.cloudflareApiToken.isEmpty ? nil : configStore.cloudflareApiToken))?.trimmingCharacters(in: .whitespacesAndNewlines), !token.isEmpty else {
                 throw BackendUnreachableError(
                     backend: backend,
                     reason: "Missing Cloudflare API Token",

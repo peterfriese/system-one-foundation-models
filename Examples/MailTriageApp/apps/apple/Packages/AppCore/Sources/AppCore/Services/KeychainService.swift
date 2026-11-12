@@ -49,6 +49,10 @@ public struct KeychainError: LocalizedError, Sendable {
 public final class KeychainService: KeychainServiceProtocol, @unchecked Sendable {
     private let serviceName: String
     private let lock = NSLock()
+    /// Process-local fallback storage used only when the host executable is unsigned
+    /// and lacks the macOS Data Protection Keychain entitlement (`errSecMissingEntitlement` / `-34018`),
+    /// such as during `swift test` or `swift run BenchmarkCLI`.
+    private var unentitledFallbackStorage: [String: String] = [:]
 
     public init(serviceName: String = "ai.typesafe.mailtriage") {
         self.serviceName = serviceName
@@ -78,7 +82,7 @@ public final class KeychainService: KeychainServiceProtocol, @unchecked Sendable
               let data = item as? Data,
               let string = String(data: data, encoding: .utf8),
               !string.isEmpty else {
-            return nil
+            return unentitledFallbackStorage[key]
         }
         return string
     }
@@ -111,6 +115,11 @@ public final class KeychainService: KeychainServiceProtocol, @unchecked Sendable
             }
         }
 
+        if status == errSecMissingEntitlement {
+            unentitledFallbackStorage[key] = value
+            return
+        }
+
         if status != errSecSuccess {
             throw KeychainError(status: status)
         }
@@ -123,8 +132,12 @@ public final class KeychainService: KeychainServiceProtocol, @unchecked Sendable
     }
 
     private func deleteLocked(forKey key: String) throws {
+        unentitledFallbackStorage.removeValue(forKey: key)
         let query = baseQuery(forKey: key)
         let status = SecItemDelete(query as CFDictionary)
+        if status == errSecMissingEntitlement {
+            return
+        }
         if status != errSecSuccess && status != errSecItemNotFound {
             throw KeychainError(status: status)
         }

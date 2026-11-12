@@ -4,6 +4,8 @@ import Testing
 import FactoryKit
 @testable import AppCore
 
+extension SerializedContainerTests {
+
 @Suite("KeychainStorage & KeychainService Protocol Tests", .serialized)
 struct KeychainStorageTests {
 
@@ -119,3 +121,5 @@ struct KeychainStorageTests {
         }
     }
 }
+
+} // extension SerializedContainerTests

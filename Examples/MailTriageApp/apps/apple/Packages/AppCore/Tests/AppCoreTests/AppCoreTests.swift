@@ -128,7 +128,10 @@ struct AppCoreModelsTests {
     }
 }
 
-@Suite("MailStore State and Action Tests")
+@Suite("Serialized DI Container Tests", .serialized)
+enum SerializedContainerTests {
+
+@Suite("MailStore State and Action Tests", .serialized)
 @MainActor
 struct MailStoreTests {
     @Test("MailStore initial state loads emails and calculates counts")
@@ -846,23 +849,28 @@ struct ConfigurationTests {
     @Test("BackendConfigurationStore loads TYPESAFE_API_KEY from environment and populates Keychain (SEC-2)")
     func testLoadDotEnvAndPopulateKeychain() {
         // SEC-2: If the required API keys are present in the environment, use them, otherwise fail the respective test
-        guard let envKey = ProcessInfo.processInfo.environment["TYPESAFE_API_KEY"], !envKey.isEmpty else {
+        guard let envKey = ProcessInfo.processInfo.environment["TYPESAFE_API_KEY"] ?? BackendConfigurationStore.loadKeyFromDotEnv("TYPESAFE_API_KEY"), !envKey.isEmpty else {
             withKnownIssue("Missing required TYPESAFE_API_KEY in environment") {
                 #expect(Bool(false), "Missing required TYPESAFE_API_KEY in environment")
             }
             return
         }
 
+        Container.shared.keychainService.reset()
+        defer { Container.shared.keychainService.reset() }
+
         #expect(envKey.starts(with: "apikey_") == true)
 
         let store = BackendConfigurationStore(userDefaults: UserDefaults())
         let key = store.typesafeApiKey
         #expect(!key.isEmpty)
-        #expect(key == envKey)
+        let matchesEnv = (key == envKey)
+        #expect(matchesEnv == true)
 
-        // Verify it was populated to keychain
+        // Verify it was populated to keychain without exposing raw secret in failure diffs
         let keychain = Container.shared.keychainService()
-        #expect(keychain.string(for: .typesafeApiKey) == envKey)
+        let matchesKeychain = (keychain.string(for: .typesafeApiKey) == envKey)
+        #expect(matchesKeychain == true)
     }
 
     @Test("BackendConfigurationStore normalizes System One endpoints to /v1/systemone")
@@ -2117,3 +2125,5 @@ struct BenchmarkSessionStoreTests {
         #expect(sessionStore.records[0].emailSubject == store.emails[0].subject)
     }
 }
+
+} // enum SerializedContainerTests

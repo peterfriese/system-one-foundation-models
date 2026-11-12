@@ -91,18 +91,12 @@ public final class BackendHealthProbeService: BackendHealthProbeServiceProtocol,
     private let customConfigStore: BackendConfigurationStore?
     private let customCoreMLManager: CoreMLModelManager?
 
-    @ObservationIgnored
-    @Injected(\.backendConfigurationStore) private var defaultStore
-
-    @ObservationIgnored
-    @Injected(\.coreMLModelManager) private var defaultCoreMLManager
-
     private var configStore: BackendConfigurationStore {
-        customConfigStore ?? defaultStore
+        customConfigStore ?? Container.shared.backendConfigurationStore()
     }
 
     private var coreMLManager: CoreMLModelManager {
-        customCoreMLManager ?? defaultCoreMLManager
+        customCoreMLManager ?? Container.shared.coreMLModelManager()
     }
 
     private let session: URLSession

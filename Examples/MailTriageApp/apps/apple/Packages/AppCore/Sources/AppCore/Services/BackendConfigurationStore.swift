@@ -8,11 +8,8 @@ public final class BackendConfigurationStore: @unchecked Sendable {
     private let userDefaults: UserDefaults
     private let customKeychain: (any KeychainServiceProtocol)?
 
-    @ObservationIgnored
-    @Injected(\.keychainService) private var defaultKeychain
-
     private var keychain: any KeychainServiceProtocol {
-        customKeychain ?? defaultKeychain
+        customKeychain ?? Container.shared.keychainService()
     }
 
     public static let defaultJevCloudURL = "https://api.typesafe.ai/v1/systemone"

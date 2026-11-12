@@ -3,7 +3,9 @@ import Testing
 @testable import AppCore
 import FactoryKit
 
-@Suite("Benchmark Ground-Truth & Store Tests")
+extension SerializedContainerTests {
+
+@Suite("Benchmark Ground-Truth & Store Tests", .serialized)
 struct BenchmarkTruthTests {
     @Test("BenchmarkHardwareInfo extracts current system hardware metadata")
     func testHardwareInfoCurrent() {
@@ -238,3 +240,5 @@ struct BenchmarkTruthTests {
         #expect(mailStore.canonicalBenchmarkTruth?.sampleCount == 30)
     }
 }
+
+} // extension SerializedContainerTests
