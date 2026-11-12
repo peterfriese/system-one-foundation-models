@@ -36,14 +36,14 @@ Key characteristics of the Gemini Decisions API:
   - **`choice`**: Discrete categorical selection across named candidate criteria (`criteria: [String: String]`) with full probability distributions.
   - **`score`**: Ordinal rubric evaluation across ordered criteria (`criteria: [String]`) with expected value scoring, probability distributions, and integer-indexed legends.
 - **Disruptive Zero-Output-Token Economics**: Billed strictly on input tokens (`output_tokens: 0` / `candidatesTokenCount: 0`), eliminating financial penalties for large, multi-field `@Generable` decision schemas.
-- **Multimodal `inline_data` Ingestion**: Evaluates both text state and visual evidence using Gemini's native `parts` envelope (`[{"parts": [{"text": "..."}, {"inline_data": {"mime_type": "image/jpeg", "data": "<raw_base64>"}}]}]`).
+- **Multimodal Typed `input` Array Ingestion**: Evaluates both text state and visual evidence using Gemini Decisions' flat typed content array (`[{"type": "text", "text": "..."}, {"type": "image", "mime_type": "image/jpeg", "data": "<raw_base64>"}]`).
 
 ### The Architectural Challenge
 `SystemOneFoundationModels` is the authoritative Apple platform framework bridging System One decision engines (TypeSafe Jev, on-device Laya Core ML, self-hosted Laya, Cloudflare Clef, and OpenAI Decisions) to Apple's native **Foundation Models** framework (`LanguageModel`, `LanguageModelSession`, `@Generable`, `@Guide`).
 
 Integrating Google's Gemini Decisions API (`gemini-decision-1`) introduces several specific architectural requirements:
-1. **Wire Format & Flexible Answer Normalization**: While Gemini Decisions shares dictionary-keyed `questions` and `answers` with TypeSafe System One primitives, Google's wire format supports both `"input"` and `"state"` keys, returns usage telemetry in either `"usage"` (`input_tokens`, `output_tokens`) or Gemini's standard `"usageMetadata"` (`promptTokenCount`, `candidatesTokenCount`), and may emit boolean probabilities under `"noul"` or `"probability"`, categorical selections under `"choice"` or `"selected"`, and safety blocks via `"refusal"` or `finishReason: "SAFETY"`.
-2. **Multimodal `inline_data` Parts Serialization**: Unlike OpenAI Decisions or Cloudflare Clef (which expect RFC 2397 `data:<mime>;base64,...` Data URL strings), Google's Generative Language API requires stripping the RFC 2397 prefix and serializing the raw Base64 payload and MIME type inside `{"inline_data": {"mime_type": "...", "data": "..."}}` part blocks when images are attached, while preserving lightweight plain-string `"input": "<text>"` serialization for text-only evaluations.
+1. **Wire Format & Flexible Answer Normalization**: While Gemini Decisions shares dictionary-keyed `questions` and `answers` with TypeSafe System One primitives, Google's wire format supports both `"input"` and `"state"` keys, returns usage telemetry in either `"usage"` (`input_tokens`, `output_tokens`, `total_input_tokens`, `total_output_tokens`) or Gemini's standard `"usageMetadata"` (`promptTokenCount`, `candidatesTokenCount`), and may emit boolean probabilities under `"noul"` or `"probability"`, categorical selections under `"choice"` or `"selected"`, and safety blocks via `"refusal"` or `finishReason: "SAFETY"`.
+2. **Multimodal Typed `input` Array Serialization**: Unlike OpenAI Decisions or Cloudflare Clef (which expect RFC 2397 `data:<mime>;base64,...` Data URL strings) and unlike conversational `generateContent` endpoints (which use `[{"role": "user", "parts": [...]}]`), Google's `/v1beta/decisions` endpoint requires a `"type"` parameter on each element of the `input` array (`"text"`, `"image"`, `"audio"`, `"document"`, `"video"`) and requires stripping the RFC 2397 prefix to serialize the raw Base64 payload and MIME type inside `{"type": "image", "mime_type": "...", "data": "..."}` items when images are attached, while preserving lightweight plain-string `"input": "<text>"` serialization for text-only evaluations.
 3. **Google API Key Authentication & Google RPC Error Envelopes**: The transport must authenticate via Google's `x-goog-api-key` HTTP header, automatically resolve credentials from `GEMINI_API_KEY` or `GOOGLE_API_KEY` in `ProcessInfo.processInfo.environment`, parse Google Cloud RPC error envelopes (`{"error": {"code": 429, "message": "...", "status": "RESOURCE_EXHAUSTED"}}`), distinguish hard quota exhaustion from transient rate limits, and honor RFC 9110 `Retry-After` headers alongside `RetryPolicy` exponential backoff.
 4. **Swift 6 Strict Concurrency & Package Trait Architecture**: The integration must strictly adhere to Swift 6 complete concurrency checking (`-strict-concurrency=complete`), introduce a zero-dependency target `GeminiFoundationModels` conforming to `SystemOneBackend`, expose a Swift 6.1 package trait (`Gemini`), provide the ergonomic typealias `GeminiLanguageModel = GeminiDecisionsLanguageModel`, and include a deterministic offline mock backend (`MockGeminiDecisionsBackend`).
 
@@ -89,19 +89,19 @@ Integrating Google's Gemini Decisions API (`gemini-decision-1`) introduces sever
   - *Pros*: Resilient against wire variations across `v1beta` and `v1` endpoints; maintains strict separation between internal `SystemOneCore` types and Google's wire protocol; comprehensive validation of expected question keys.
   - *Cons*: Thin adapter pass in memory ($<0.1\text{ms}$ overhead).
 
-### Decision Area 3: Multimodal Ingestion & Gemini `inline_data` Parts Serialization
+### Decision Area 3: Multimodal Ingestion & Gemini Typed `input` Array Serialization
 
-- **Option 3A: Send RFC 2397 Data URLs (`data:image/jpeg;base64,...`) Directly**:
-  - *Description*: Encode `SystemOneImage.dataURL` directly into the request JSON.
+- **Option 3A: Send RFC 2397 Data URLs (`data:image/jpeg;base64,...`) or Conversational `parts` Envelopes**:
+  - *Description*: Encode `SystemOneImage.dataURL` directly into the request JSON or wrap in conversational `[{"role": "user", "parts": [...]}]` blocks.
   - *Pros*: No string slicing required.
-  - *Cons*: Rejected with HTTP 400 `INVALID_ARGUMENT` by Google's Generative Language API, which strictly requires raw Base64 data without the `data:<mime>;base64,` prefix inside an `inline_data` object.
-- **Option 3B: Dual-Mode `InputPayload` with Gemini `inline_data` Parts Extraction [Chosen]**:
+  - *Cons*: Rejected with HTTP 400 `invalid_request` by Google's `/v1beta/decisions` endpoint (`The 'type' parameter is required at 'input[0]'`), which strictly requires a flat array of typed content items (`"type": "text"`, `"type": "image"`) with raw Base64 data (`"data"`) and `"mime_type"`.
+- **Option 3B: Dual-Mode `InputPayload` with Flat Typed `ContentItem` Array Extraction [Chosen]**:
   - *Description*:
     1. Extract images from `Transcript` via `TranscriptAttachmentExtractor.extractImages(from:)` and validate against `GeminiDecisionsAttachmentValidator` (enforcing `.png`, `.jpeg`, `.webp`, 16 MP limit, max 4 images, and 13 MiB payload cap).
     2. When `request.images` is `nil` or empty, serialize `input` as a plain JSON string (`"input": "<state>"`) for minimal wire overhead.
-    3. When `request.images` is non-empty, extract `image.format.rawValue` (`"image/png"`, `"image/jpeg"`, `"image/webp"`) and `image.base64DataString` (raw Base64 without prefix) from each `SystemOneImage`, and serialize `input` as Gemini content blocks:
-       `[{"role": "user", "parts": [{"text": "<state>"}, {"inline_data": {"mime_type": "image/jpeg", "data": "<base64>"}}]}]`.
-  - *Pros*: 100% compliant with Google's Generative Language API specification; zero overhead for text-only requests; preserves Apple-native `Transcript` attachment ergonomics.
+    3. When `request.images` is non-empty, extract `image.format.rawValue` (`"image/png"`, `"image/jpeg"`, `"image/webp"`) and `image.base64DataString` (raw Base64 without prefix) from each `SystemOneImage`, and serialize `input` as a flat array of typed Gemini Decisions content items:
+       `[{"type": "text", "text": "<state>"}, {"type": "image", "mime_type": "image/jpeg", "data": "<base64>"}]` (while retaining backward-compatible decoding for legacy `parts` / `inline_data` payloads).
+  - *Pros*: Verified 200 OK against live `https://generativelanguage.googleapis.com/v1beta/decisions`; zero overhead for text-only requests; preserves Apple-native `Transcript` attachment ergonomics.
   - *Cons*: Requires custom `Codable` synthesis on `GeminiDecisionsRequest.InputPayload`.
 
 ### Decision Area 4: HTTP Transport, `x-goog-api-key` Authentication & Error Handling

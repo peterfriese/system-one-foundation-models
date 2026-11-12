@@ -32,19 +32,18 @@ struct GeminiDecisionsWireDTOTests {
         #expect(decoded.questions["isSpam"]?.instructions == "Determine if message is spam")
     }
 
-    @Test("GeminiDecisionsRequest with multimodal parts and inline_data round-trips via JSON")
+    @Test("GeminiDecisionsRequest with multimodal typed content items round-trips via JSON and decodes legacy parts")
     func testMultimodalRequestRoundTrip() throws {
-        let parts: [GeminiDecisionsRequest.InputPayload.Part] = [
+        let items: [GeminiDecisionsRequest.InputPayload.ContentItem] = [
             .text("Inspect this badge"),
-            .inlineData(
+            .image(
                 mimeType: "image/png",
                 data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
             )
         ]
-        let contentItem = GeminiDecisionsRequest.InputPayload.ContentItem(role: "user", parts: parts)
         let request = GeminiDecisionsRequest(
             model: "gemini-decision-1",
-            input: .multimodal([contentItem]),
+            input: .multimodal(items),
             questions: [
                 "badgeType": GeminiDecisionsQuestion(
                     type: "choice",
@@ -58,27 +57,62 @@ struct GeminiDecisionsWireDTOTests {
         )
 
         let data = try JSONEncoder().encode(request)
+        let jsonObject = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let inputArray = try #require(jsonObject["input"] as? [[String: Any]])
+        #expect(inputArray.count == 2)
+        #expect(inputArray[0]["type"] as? String == "text")
+        #expect(inputArray[0]["text"] as? String == "Inspect this badge")
+        #expect(inputArray[1]["type"] as? String == "image")
+        #expect(inputArray[1]["mime_type"] as? String == "image/png")
+        #expect((inputArray[1]["data"] as? String)?.hasPrefix("iVBORw0KGgo") == true)
+
         let decoded = try JSONDecoder().decode(GeminiDecisionsRequest.self, from: data)
 
         #expect(decoded.model == "gemini-decision-1")
-        if case .multimodal(let items) = decoded.input {
-            #expect(items.count == 1)
-            #expect(items[0].role == "user")
-            #expect(items[0].parts.count == 2)
-            if case .text(let t) = items[0].parts[0] {
+        if case .multimodal(let decodedItems) = decoded.input {
+            #expect(decodedItems.count == 2)
+            if case .text(let t) = decodedItems[0] {
                 #expect(t == "Inspect this badge")
             } else {
-                Issue.record("Expected text part")
+                Issue.record("Expected text content item")
             }
-            if case .inlineData(let mimeType, let b64) = items[0].parts[1] {
+            if case .image(let mimeType, let b64) = decodedItems[1] {
                 #expect(mimeType == "image/png")
                 #expect(b64.hasPrefix("iVBORw0KGgo"))
                 #expect(!b64.hasPrefix("data:"))
             } else {
-                Issue.record("Expected inlineData part")
+                Issue.record("Expected image content item")
             }
         } else {
             Issue.record("Expected .multimodal input")
+        }
+
+        // Verify backward-compatible decoding of legacy [{"role": "user", "parts": [...]}] payloads
+        let legacyJSON = """
+        {
+          "model": "gemini-decision-1",
+          "input": [
+            {
+              "role": "user",
+              "parts": [
+                { "text": "Legacy part text" },
+                { "inline_data": { "mime_type": "image/jpeg", "data": "base64data" } }
+              ]
+            }
+          ],
+          "questions": {
+            "isValid": {
+              "type": "noul",
+              "instructions": "Is valid?"
+            }
+          }
+        }
+        """.data(using: .utf8)!
+        let decodedLegacy = try JSONDecoder().decode(GeminiDecisionsRequest.self, from: legacyJSON)
+        if case .multimodal(let legacyItems) = decodedLegacy.input {
+            #expect(legacyItems == [.text("Legacy part text"), .image(mimeType: "image/jpeg", data: "base64data")])
+        } else {
+            Issue.record("Expected legacy parts to decode into .multimodal([ContentItem])")
         }
     }
 

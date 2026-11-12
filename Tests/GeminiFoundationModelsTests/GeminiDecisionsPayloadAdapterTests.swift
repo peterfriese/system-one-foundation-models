@@ -54,7 +54,7 @@ struct GeminiDecisionsPayloadAdapterTests {
         #expect(scoreQ.criteria == .score(["Low", "Medium", "High"]))
     }
 
-    @Test("Adapt Request: Encodes images as multimodal parts with inline_data (raw Base64 without data: prefix)")
+    @Test("Adapt Request: Encodes images as flat multimodal typed ContentItem array (raw Base64 without data: prefix)")
     func testAdaptRequestWithImages() throws {
         var samplePNG = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
         samplePNG.append(contentsOf: [0x00, 0x00, 0x00, 0x0D]) // IHDR length
@@ -78,23 +78,20 @@ struct GeminiDecisionsPayloadAdapterTests {
         let geminiRequest = try GeminiDecisionsPayloadAdapter.adaptRequest(request)
 
         if case .multimodal(let items) = geminiRequest.input {
-            #expect(items.count == 1)
-            #expect(items[0].role == "user")
-            let parts = items[0].parts
-            #expect(parts.count == 2)
+            #expect(items.count == 2)
 
-            if case .text(let t) = parts[0] {
+            if case .text(let t) = items[0] {
                 #expect(t == "Inspect driver license photo")
             } else {
-                Issue.record("Expected text part")
+                Issue.record("Expected text content item")
             }
 
-            if case .inlineData(let mimeType, let b64) = parts[1] {
+            if case .image(let mimeType, let b64) = items[1] {
                 #expect(mimeType == "image/png")
                 #expect(!b64.hasPrefix("data:"))
                 #expect(Data(base64Encoded: b64) == samplePNG)
             } else {
-                Issue.record("Expected inlineData part")
+                Issue.record("Expected image content item")
             }
         } else {
             Issue.record("Expected multimodal payload")

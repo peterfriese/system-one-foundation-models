@@ -14,20 +14,18 @@ public enum GeminiDecisionsPayloadAdapter {
             // Validate all image attachments meet Gemini Decisions constraints
             try GeminiDecisionsAttachmentValidator.validate(attachments: images)
 
-            var parts: [GeminiDecisionsRequest.InputPayload.Part] = [
+            var items: [GeminiDecisionsRequest.InputPayload.ContentItem] = [
                 .text(request.state)
             ]
             for image in images {
-                parts.append(
-                    .inlineData(
+                items.append(
+                    .image(
                         mimeType: image.format.rawValue,
                         data: image.base64DataString
                     )
                 )
             }
-            inputPayload = .multimodal([
-                GeminiDecisionsRequest.InputPayload.ContentItem(role: "user", parts: parts)
-            ])
+            inputPayload = .multimodal(items)
         } else {
             inputPayload = .text(request.state)
         }

@@ -42,36 +42,33 @@ Unlike OpenAI's Decisions API (`POST /v1/decisions`), which uses an ordered arra
 
 Because `v1beta` and gateway proxies can emit either `"noul"` or `"probability"` for boolean propositions and either `"choice"` or `"selected"` for categorical selections, `GeminiDecisionsAnswer` normalizes both aliases during `init(from: Decoder)` so downstream `GeminiDecisionsPayloadAdapter` logic always receives a canonical representation.
 
-### 2. Multimodal `parts` & `inline_data` Base64 Extraction
+### 2. Multimodal Typed `input` Array & Raw Base64 Image Extraction
 
 When visual attachments (`PNG`, `JPEG`, `WebP`) are included in a Foundation Models `Transcript`, `TranscriptAttachmentExtractor` produces `SystemOneImage` values whose `dataURL` property is formatted as an RFC 2397 Data URL (`data:image/jpeg;base64,/9j/4AAQ...`).
 
-However, Google's Generative Language API (`generativelanguage.googleapis.com`) rejects RFC 2397 `data:` URI prefixes inside `inline_data.data` with HTTP 400 `INVALID_ARGUMENT`. Instead, Google requires:
+Unlike conversational `generateContent` endpoints (which use `[{"role": "user", "parts": [{"text": ...}, {"inline_data": ...}]}]`), the live Google Gemini Decisions API (`POST /v1beta/decisions`) rejects `parts` envelopes without a `"type"` parameter (`The 'type' parameter is required at 'input[0]'`) and rejects `"image_url"` (`The value 'image_url' is not supported for 'type' at 'input[1]'. Supported values: 'audio', 'document', 'image', 'text', 'video'.`). Instead, `/v1beta/decisions` requires:
 1. Plain string `"input": "<state text>"` when no images are attached.
-2. Multimodal `ContentItem` blocks with `parts` when images are attached, where `inline_data` separates `mime_type` from the **raw Base64 string** (`image.base64DataString`):
+2. A flat array of typed multimodal content items (`[{"type": "text", "text": "..."}, {"type": "image", "mime_type": "...", "data": "..."}]`) when images are attached, where `"image"` items separate `"mime_type"` from the **raw Base64 string** (`image.base64DataString`, without the RFC 2397 `data:<mime>;base64,` prefix):
 
 ```json
 {
   "model": "gemini-decision-1",
   "input": [
     {
-      "role": "user",
-      "parts": [
-        { "text": "Inspect this receipt photo." },
-        {
-          "inline_data": {
-            "mime_type": "image/jpeg",
-            "data": "/9j/4AAQSkZJRgABAQAAAQABAAD..."
-          }
-        }
-      ]
+      "type": "text",
+      "text": "Inspect this receipt photo."
+    },
+    {
+      "type": "image",
+      "mime_type": "image/jpeg",
+      "data": "/9j/4AAQSkZJRgABAQAAAQABAAD..."
     }
   ],
   "questions": { ... }
 }
 ```
 
-`GeminiDecisionsPayloadAdapter.adaptRequest(_:)` validates all attachments via `GeminiDecisionsAttachmentValidator.validate(attachments:)` and strips the `data:<mime>;base64,` prefix via `image.base64DataString`.
+`GeminiDecisionsPayloadAdapter.adaptRequest(_:)` validates all attachments via `GeminiDecisionsAttachmentValidator.validate(attachments:)`, strips the `data:<mime>;base64,` prefix via `image.base64DataString`, and encodes `.multimodal([.text(...), .image(mimeType:data:)])` (while `GeminiDecisionsRequest.InputPayload.init(from:)` also preserves backward-compatible decoding of legacy `parts` / `inline_data` payloads).
 
 ### 3. Dual `usage` and `usageMetadata` Telemetry Normalization
 

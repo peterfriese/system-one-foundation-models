@@ -160,8 +160,18 @@ struct GeminiDecisionsLanguageModelTests {
         #expect(response.content.isApproved == true)
         #expect(mockBackend.lastGeminiRequest != nil)
         if case .multimodal(let items) = mockBackend.lastGeminiRequest?.input {
-            #expect(items.count == 1)
-            #expect(items[0].parts.count == 2)
+            #expect(items.count == 2)
+            if case .text(let t) = items[0] {
+                #expect(t.contains("Inspect receipt photo"))
+            } else {
+                Issue.record("Expected text ContentItem at index 0")
+            }
+            if case .image(let mimeType, let b64) = items[1] {
+                #expect(mimeType == "image/jpeg" || mimeType == "image/png")
+                #expect(!b64.isEmpty)
+            } else {
+                Issue.record("Expected image ContentItem at index 1")
+            }
         } else {
             Issue.record("Expected multimodal ContentItem payload for attachment")
         }
@@ -299,5 +309,33 @@ struct GeminiDecisionsLanguageModelTests {
         #expect((1...5).contains(response.content.riskScore))
         #expect(response.usage.input.totalTokenCount > 0)
         #expect(response.usage.output.totalTokenCount == 0)
+
+        // Live multimodal image test against https://generativelanguage.googleapis.com/v1beta/decisions
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let ctx = CGContext(
+            data: nil,
+            width: 16,
+            height: 16,
+            bitsPerComponent: 8,
+            bytesPerRow: 64,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        let cgImage = ctx.makeImage()!
+
+        let multimodalSession = LanguageModelSession(model: model)
+        let multimodalPrompt = Prompt {
+            "Receipt photo for annual GitHub Enterprise software license ($1,200) for the engineering team, approved by VP."
+            Attachment(cgImage)
+        }
+        let multimodalResponse = try await multimodalSession.respond(
+            to: multimodalPrompt,
+            generating: GeminiExpenseAuditDecision.self
+        )
+
+        #expect(multimodalResponse.content.category == .software)
+        #expect((1...5).contains(multimodalResponse.content.riskScore))
+        #expect(multimodalResponse.usage.input.totalTokenCount > 0)
+        #expect(multimodalResponse.usage.output.totalTokenCount == 0)
     }
 }
