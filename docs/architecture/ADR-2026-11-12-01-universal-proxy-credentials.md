@@ -371,12 +371,8 @@ public struct SystemOneProxyBackend: SystemOneBackend, Sendable, Hashable {
                     throw SystemOneError.apiError(statusCode: statusCode, message: body)
                 }
 
-                let delay: Duration
-                if statusCode == 429, let retryAfterDelay = retryPolicy.retryAfter(from: resError.httpResponse) {
-                    delay = retryAfterDelay
-                } else {
-                    delay = retryPolicy.backoff(afterAttempt: attempts)
-                }
+                let delay = retryPolicy.retryAfter(from: resError.httpResponse)
+                    ?? retryPolicy.backoff(afterAttempt: attempts)
 
                 try await Task.sleep(for: delay)
                 continue
@@ -407,7 +403,6 @@ public struct SystemOneProxyBackend: SystemOneBackend, Sendable, Hashable {
         var urlRequest = URLRequest(url: proxyEndpoint)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
         urlRequest.timeoutInterval = timeoutInterval
         urlRequest.httpBody = requestData
 
@@ -415,6 +410,16 @@ public struct SystemOneProxyBackend: SystemOneBackend, Sendable, Hashable {
             try await credential.apply(to: &urlRequest)
         } catch is CancellationError {
             throw CancellationError()
+        } catch let urlError as URLError where urlError.code == .cancelled {
+            throw CancellationError()
+        } catch {
+            if Task.isCancelled {
+                throw CancellationError()
+            }
+            if let sysError = error as? SystemOneError {
+                throw sysError
+            }
+            throw SystemOneError.authenticationFailed("Failed to acquire proxy credential: \(error.localizedDescription)")
         }
 
         let clock = ContinuousClock()
@@ -448,11 +453,8 @@ public struct SystemOneProxyBackend: SystemOneBackend, Sendable, Hashable {
         do {
             var decoded = try JSONDecoder().decode(SystemOneResponse.self, from: data)
             decoded.transportDurationMs = transportDuration
-            if let serverMs = Self.parseServerDuration(from: httpResponse) {
-                decoded.serverDurationMs = serverMs
-            } else if decoded.serverDurationMs == nil {
-                decoded.serverDurationMs = transportDuration
-            }
+            decoded.serverDurationMs = decoded.serverDurationMs
+                ?? Self.parseServerDuration(from: httpResponse)
             return decoded
         } catch {
             throw SystemOneError.decodingError("Failed to decode SystemOneResponse from proxy: \(error.localizedDescription)")

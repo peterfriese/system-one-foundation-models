@@ -124,14 +124,14 @@ public struct OpenAIDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
     }
 
     private func resolveAPIKey() -> String? {
+        if proxyCredential != nil {
+            return nil
+        }
         if let explicit = apiKey {
             let trimmed = explicit.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
                 return trimmed
             }
-        }
-        if proxyCredential != nil {
-            return nil
         }
         let env = environmentOverride ?? ProcessInfo.processInfo.environment
         if let openAIKey = env["OPENAI_API_KEY"] {
@@ -146,13 +146,18 @@ public struct OpenAIDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
     private func evaluateWithTiming(
         request: OpenAIDecisionsRequest
     ) async throws -> (response: OpenAIDecisionsResponse, transportDurationMs: Double, serverDurationMs: Double?) {
-        if proxyCredential != nil {
-            try ProxyEndpointValidator.validate(endpoint.url)
-        }
+        try ProxyEndpointValidator.validate(endpoint.url)
 
         let resolvedKey = resolveAPIKey()
         if proxyCredential == nil && resolvedKey == nil {
             throw SystemOneError.missingAPIKey
+        }
+
+        let requestData: Data
+        do {
+            requestData = try JSONEncoder().encode(request)
+        } catch {
+            throw SystemOneError.decodingError("Failed to serialize OpenAIDecisionsRequest: \(error.localizedDescription)")
         }
 
         var attempts = 0
@@ -161,7 +166,7 @@ public struct OpenAIDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
         while true {
             attempts += 1
             do {
-                return try await performSingleEvaluation(request: request, apiKey: resolvedKey)
+                return try await performSingleEvaluation(requestData: requestData, apiKey: resolvedKey)
             } catch is CancellationError {
                 throw CancellationError()
             } catch let resError as HTTPResponseError {
@@ -185,12 +190,8 @@ public struct OpenAIDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
                     throw SystemOneError.apiError(statusCode: statusCode, message: errorMessage)
                 }
 
-                let delay: Duration
-                if statusCode == 429, let retryAfterDelay = retryPolicy.retryAfter(from: resError.httpResponse) {
-                    delay = retryAfterDelay
-                } else {
-                    delay = retryPolicy.backoff(afterAttempt: attempts)
-                }
+                let delay = retryPolicy.retryAfter(from: resError.httpResponse)
+                    ?? retryPolicy.backoff(afterAttempt: attempts)
 
                 try await Task.sleep(for: delay)
                 continue
@@ -198,13 +199,6 @@ public struct OpenAIDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
                 switch error {
                 case .networkError:
                     if attempts < maxAttempts && !Task.isCancelled {
-                        let delay = retryPolicy.backoff(afterAttempt: attempts)
-                        try await Task.sleep(for: delay)
-                        continue
-                    }
-                    throw error
-                case .apiError(let statusCode, _):
-                    if retryPolicy.retryableStatuses.contains(statusCode), attempts < maxAttempts {
                         let delay = retryPolicy.backoff(afterAttempt: attempts)
                         try await Task.sleep(for: delay)
                         continue
@@ -225,43 +219,45 @@ public struct OpenAIDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
     }
 
     private func performSingleEvaluation(
-        request: OpenAIDecisionsRequest,
+        requestData: Data,
         apiKey: String?
     ) async throws -> (response: OpenAIDecisionsResponse, transportDurationMs: Double, serverDurationMs: Double?) {
         var urlRequest = URLRequest(url: endpoint.url)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if let apiKey {
-            urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        }
-        urlRequest.timeoutInterval = timeoutInterval
-
-        if let org = endpoint.organization, !org.isEmpty {
-            urlRequest.setValue(org, forHTTPHeaderField: "OpenAI-Organization")
-        }
-        if let proj = endpoint.project, !proj.isEmpty {
-            urlRequest.setValue(proj, forHTTPHeaderField: "OpenAI-Project")
+        if proxyCredential == nil {
+            if let apiKey {
+                urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+            }
+            if let org = endpoint.organization, !org.isEmpty {
+                urlRequest.setValue(org, forHTTPHeaderField: "OpenAI-Organization")
+            }
+            if let proj = endpoint.project, !proj.isEmpty {
+                urlRequest.setValue(proj, forHTTPHeaderField: "OpenAI-Project")
+            }
         }
         if let clientReqID = endpoint.clientRequestID, !clientReqID.isEmpty {
             urlRequest.setValue(clientReqID, forHTTPHeaderField: "X-Client-Request-Id")
         }
+        urlRequest.timeoutInterval = timeoutInterval
+        urlRequest.httpBody = requestData
 
         if let proxyCredential {
             do {
                 try await proxyCredential.apply(to: &urlRequest)
             } catch is CancellationError {
                 throw CancellationError()
-            } catch let error as SystemOneError {
-                throw error
+            } catch let urlError as URLError where urlError.code == .cancelled {
+                throw CancellationError()
             } catch {
+                if Task.isCancelled {
+                    throw CancellationError()
+                }
+                if let sysError = error as? SystemOneError {
+                    throw sysError
+                }
                 throw SystemOneError.authenticationFailed("Failed to acquire proxy credential: \(error.localizedDescription)")
             }
-        }
-
-        do {
-            urlRequest.httpBody = try JSONEncoder().encode(request)
-        } catch {
-            throw SystemOneError.decodingError("Failed to serialize OpenAIDecisionsRequest: \(error.localizedDescription)")
         }
 
         let clock = ContinuousClock()

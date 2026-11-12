@@ -8,6 +8,11 @@ import Foundation
 /// `LanguageModel.Configuration` and HTTP backend structs retain automatic `Hashable`
 /// and `Sendable` synthesis.
 ///
+/// - Important: Each factory invocation mints a new identity `UUID` unless an explicit `id:` is
+///   supplied. In SwiftUI, store your `ProxyCredential`, `LanguageModel`, or `LanguageModelSession`
+///   in `@State`, an `@Observable` ViewModel, or your DI container rather than recreating it inside
+///   `View.body` on every render pass.
+///
 /// See `docs/architecture/ADR-2026-11-12-01-universal-proxy-credentials.md` and
 /// `tech-notes/0010-proxy-transport-and-dynamic-attestation.md`.
 public struct ProxyCredential: Sendable, Hashable {
@@ -36,13 +41,45 @@ public struct ProxyCredential: Sendable, Hashable {
         try await modifier(&request)
     }
 
+    private static func containsHeaderControlCharacters(_ value: String) -> Bool {
+        value.unicodeScalars.contains { scalar in
+            scalar == "\r" || scalar == "\n" || scalar.value == 0
+        }
+    }
+
     /// Sets `Authorization: Bearer <token>` using the dynamically resolved token.
+    ///
+    /// Automatically strips a duplicate leading `"Bearer "` prefix (case-insensitive) and rejects
+    /// empty tokens or CR/LF/NUL header control characters.
     public static func bearer(
+        id: UUID = UUID(),
         _ provider: @escaping @Sendable () async throws -> String
     ) -> ProxyCredential {
-        ProxyCredential { request in
-            let token = try await provider()
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        ProxyCredential(id: id) { request in
+            let rawToken = try await provider()
+            if Self.containsHeaderControlCharacters(rawToken) {
+                throw SystemOneError.authenticationFailed(
+                    "Invalid proxy bearer token: CR/LF/NUL header control characters are not permitted."
+                )
+            }
+            var cleanToken = rawToken.trimmingCharacters(in: .whitespaces)
+            while true {
+                let lower = cleanToken.lowercased()
+                if lower == "bearer" {
+                    cleanToken = ""
+                    break
+                } else if lower.hasPrefix("bearer ") {
+                    cleanToken = String(cleanToken.dropFirst("bearer ".count)).trimmingCharacters(in: .whitespaces)
+                } else {
+                    break
+                }
+            }
+            guard !cleanToken.isEmpty else {
+                throw SystemOneError.authenticationFailed(
+                    "Proxy credential provider returned an empty token."
+                )
+            }
+            request.setValue("Bearer \(cleanToken)", forHTTPHeaderField: "Authorization")
         }
     }
 
@@ -50,12 +87,50 @@ public struct ProxyCredential: Sendable, Hashable {
     public static func header(
         name: String,
         prefix: String? = nil,
+        id: UUID = UUID(),
         provider: @escaping @Sendable () async throws -> String
     ) -> ProxyCredential {
-        ProxyCredential { request in
-            let token = try await provider()
-            let value = prefix.map { "\($0) \(token)" } ?? token
-            request.setValue(value, forHTTPHeaderField: name)
+        ProxyCredential(id: id) { request in
+            if Self.containsHeaderControlCharacters(name) {
+                throw SystemOneError.authenticationFailed(
+                    "Invalid proxy credential header name: CR/LF/NUL control characters are not permitted."
+                )
+            }
+            let cleanName = name.trimmingCharacters(in: .whitespaces)
+            guard !cleanName.isEmpty else {
+                throw SystemOneError.authenticationFailed(
+                    "Proxy credential header name must not be empty."
+                )
+            }
+
+            let sanitizedPrefix: String?
+            if let prefix {
+                if Self.containsHeaderControlCharacters(prefix) {
+                    throw SystemOneError.authenticationFailed(
+                        "Invalid proxy credential header prefix: CR/LF/NUL control characters are not permitted."
+                    )
+                }
+                let trimmedPrefix = prefix.trimmingCharacters(in: .whitespaces)
+                sanitizedPrefix = trimmedPrefix.isEmpty ? nil : trimmedPrefix
+            } else {
+                sanitizedPrefix = nil
+            }
+
+            let rawToken = try await provider()
+            if Self.containsHeaderControlCharacters(rawToken) {
+                throw SystemOneError.authenticationFailed(
+                    "Invalid proxy credential token: CR/LF/NUL control characters are not permitted."
+                )
+            }
+            let cleanToken = rawToken.trimmingCharacters(in: .whitespaces)
+            guard !cleanToken.isEmpty else {
+                throw SystemOneError.authenticationFailed(
+                    "Proxy credential provider returned an empty token."
+                )
+            }
+
+            let value = sanitizedPrefix.map { "\($0) \(cleanToken)" } ?? cleanToken
+            request.setValue(value, forHTTPHeaderField: cleanName)
         }
     }
 
@@ -66,16 +141,19 @@ public struct ProxyCredential: Sendable, Hashable {
     /// linking `FirebaseAppCheck`.
     public static func appCheck(
         headerName: String = "X-Firebase-AppCheck",
+        id: UUID = UUID(),
         _ provider: @escaping @Sendable () async throws -> String
     ) -> ProxyCredential {
-        .header(name: headerName, provider: provider)
+        .header(name: headerName, id: id, provider: provider)
     }
 
     /// Applies arbitrary modifications to the outbound `URLRequest` before dispatch
-    /// (e.g. combining `X-Firebase-AppCheck` with a user `Authorization: Bearer` header).
+    /// (e.g. combining `X-Firebase-AppCheck` with a user `Authorization: Bearer` header,
+    /// or computing an HMAC signature over `request.httpBody`).
     public static func custom(
+        id: UUID = UUID(),
         _ modifier: @escaping @Sendable (inout URLRequest) async throws -> Void
     ) -> ProxyCredential {
-        ProxyCredential(modifier: modifier)
+        ProxyCredential(id: id, modifier: modifier)
     }
 }

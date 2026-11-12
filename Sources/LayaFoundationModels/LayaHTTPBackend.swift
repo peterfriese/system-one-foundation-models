@@ -53,30 +53,38 @@ public struct LayaHTTPBackend: SystemOneBackend, Hashable, Sendable {
             try ProxyEndpointValidator.validate(endpoint.url)
         }
 
+        let requestData: Data
+        do {
+            requestData = try JSONEncoder().encode(request)
+        } catch {
+            throw SystemOneError.decodingError("Failed to encode SystemOneRequest: \(error.localizedDescription)")
+        }
+
         var attempts = 0
         let maxAttempts = max(1, retryPolicy.maxAttempts)
 
         while true {
             attempts += 1
             do {
-                return try await performSingleEvaluation(request: request)
+                return try await performSingleEvaluation(requestData: requestData)
             } catch is CancellationError {
                 throw CancellationError()
             } catch let resError as HTTPResponseError {
                 let statusCode = resError.httpResponse.statusCode
+                let body = String(data: resError.data, encoding: .utf8) ?? "Unknown server error"
+
+                if statusCode == 401 || statusCode == 403 {
+                    throw SystemOneError.authenticationFailed(body)
+                }
+
                 let isLastAttempt = attempts >= maxAttempts
 
                 guard retryPolicy.retryableStatuses.contains(statusCode), !isLastAttempt else {
-                    let body = String(data: resError.data, encoding: .utf8) ?? "Unknown server error"
                     throw SystemOneError.apiError(statusCode: statusCode, message: body)
                 }
 
-                let delay: Duration
-                if statusCode == 429, let retryAfterDelay = retryPolicy.retryAfter(from: resError.httpResponse) {
-                    delay = retryAfterDelay
-                } else {
-                    delay = retryPolicy.backoff(afterAttempt: attempts)
-                }
+                let delay = retryPolicy.retryAfter(from: resError.httpResponse)
+                    ?? retryPolicy.backoff(afterAttempt: attempts)
 
                 try await Task.sleep(for: delay)
                 continue
@@ -110,34 +118,35 @@ public struct LayaHTTPBackend: SystemOneBackend, Hashable, Sendable {
         }
     }
 
-    private func performSingleEvaluation(request: SystemOneRequest) async throws -> SystemOneResponse {
+    private func performSingleEvaluation(requestData: Data) async throws -> SystemOneResponse {
         var urlRequest = URLRequest(url: endpoint.url)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         // Bearer auth is optional: laya-serve without LAYA_API_KEY requires no authorization header
-        if let key = apiKey, !key.isEmpty {
+        if proxyCredential == nil, let key = apiKey, !key.isEmpty {
             urlRequest.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         }
+
+        urlRequest.timeoutInterval = timeoutInterval
+        urlRequest.httpBody = requestData
 
         if let proxyCredential {
             do {
                 try await proxyCredential.apply(to: &urlRequest)
             } catch is CancellationError {
                 throw CancellationError()
-            } catch let error as SystemOneError {
-                throw error
+            } catch let urlError as URLError where urlError.code == .cancelled {
+                throw CancellationError()
             } catch {
+                if Task.isCancelled {
+                    throw CancellationError()
+                }
+                if let sysError = error as? SystemOneError {
+                    throw sysError
+                }
                 throw SystemOneError.authenticationFailed("Failed to acquire proxy credential: \(error.localizedDescription)")
             }
-        }
-
-        urlRequest.timeoutInterval = timeoutInterval
-
-        do {
-            urlRequest.httpBody = try JSONEncoder().encode(request)
-        } catch {
-            throw SystemOneError.decodingError("Failed to encode SystemOneRequest: \(error.localizedDescription)")
         }
 
         let clock = ContinuousClock()

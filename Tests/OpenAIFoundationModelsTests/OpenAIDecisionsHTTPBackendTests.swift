@@ -318,12 +318,14 @@ struct OpenAIDecisionsHTTPBackendTests {
         #expect(MockOpenAIURLProtocol.recordedRequests.count == 1)
     }
 
-    @Test("HTTP Backend with ProxyCredential succeeds without OPENAI_API_KEY and rotates token per retry attempt")
+    @Test("HTTP Backend with ProxyCredential suppresses master keys, exposes httpBody for signing, and rotates token per retry attempt")
     func testProxyCredentialAndPerAttemptTokenRotation() async throws {
         actor TokenCounter {
             private var count = 0
-            func next() -> String {
+            private(set) var observedBodySizes: [Int] = []
+            func next(bodySize: Int) -> String {
                 count += 1
+                observedBodySizes.append(bodySize)
                 return "openai-appcheck-\(count)"
             }
         }
@@ -345,12 +347,21 @@ struct OpenAIDecisionsHTTPBackendTests {
         let counter = TokenCounter()
         let proxyURL = URL(string: "https://us-central1-myapp.cloudfunctions.net/openAIProxy")!
         let backend = OpenAIDecisionsHTTPBackend(
-            endpoint: .custom(proxyURL),
-            apiKey: nil,
-            proxyCredential: .appCheck { await counter.next() },
+            endpoint: .custom(
+                proxyURL,
+                organization: "org-must-not-leak",
+                project: "proj-must-not-leak",
+                clientRequestID: "trace-openai-proxy"
+            ),
+            apiKey: "sk-must-not-leak-explicit",
+            proxyCredential: .custom { req in
+                let bodyCount = req.httpBody?.count ?? 0
+                let tok = await counter.next(bodySize: bodyCount)
+                req.setValue(tok, forHTTPHeaderField: "X-Firebase-AppCheck")
+            },
             session: makeSession(),
             retryPolicy: RetryPolicy(maxAttempts: 2, initialDelay: .zero),
-            environmentOverride: [:]
+            environmentOverride: ["OPENAI_API_KEY": "sk-must-not-leak-env"]
         )
 
         let request = SystemOneRequest(
@@ -361,10 +372,18 @@ struct OpenAIDecisionsHTTPBackendTests {
         let response = try await backend.evaluate(request: request)
         #expect(response.answers["isSafe"]?.noul == 0.98)
 
+        let bodySizes = await counter.observedBodySizes
+        #expect(bodySizes.count == 2)
+        #expect(bodySizes.allSatisfy { $0 > 0 })
+
         let recorded = MockOpenAIURLProtocol.recordedRequests
         #expect(recorded.count == 2)
         #expect(recorded[0].url == proxyURL)
         #expect(recorded[0].value(forHTTPHeaderField: "Authorization") == nil)
+        #expect(recorded[1].value(forHTTPHeaderField: "Authorization") == nil)
+        #expect(recorded[0].value(forHTTPHeaderField: "OpenAI-Organization") == nil)
+        #expect(recorded[0].value(forHTTPHeaderField: "OpenAI-Project") == nil)
+        #expect(recorded[0].value(forHTTPHeaderField: "X-Client-Request-Id") == "trace-openai-proxy")
         #expect(recorded[0].value(forHTTPHeaderField: "X-Firebase-AppCheck") == "openai-appcheck-1")
         #expect(recorded[1].value(forHTTPHeaderField: "X-Firebase-AppCheck") == "openai-appcheck-2")
     }

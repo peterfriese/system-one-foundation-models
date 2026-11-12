@@ -1,6 +1,6 @@
 # Secure Mobile Deployments: Universal `ProxyCredential`, Firebase App Check & Apple App Attest
 
-This guide details how to securely deploy **System One Foundation Models** (`GeminiLanguageModel`, `OpenAIDecisionsLanguageModel`, `ClefLanguageModel`, `LayaLanguageModel`, `JevLanguageModel`, and vendor-agnostic `SystemOneLanguageModel`) in client-side Apple applications (iOS, iPadOS, macOS, visionOS) using **`ProxyCredential`**, **Firebase App Check**, and **Apple App Attest** (`DeviceCheck`).
+This guide details how to securely deploy **System One Foundation Models** (`GeminiLanguageModel`, `OpenAILanguageModel`, `ClefLanguageModel`, `LayaLanguageModel`, `JevLanguageModel`, and vendor-agnostic `SystemOneLanguageModel`) in client-side Apple applications (iOS, iPadOS, macOS, visionOS) using **`ProxyCredential`**, **Firebase App Check**, and **Apple App Attest** (`DeviceCheck`).
 
 ---
 
@@ -55,7 +55,7 @@ To solve this, we place a lightweight **Firebase Cloud Function (2nd Gen)** or A
 
 ### Why this is secure
 * **Hardware-Backed:** App Attest uses the device's physical **Secure Enclave**. The private key never leaves the chip and cannot be copied or spoofed by bots.
-* **Ingress-Level Filtering:** Firebase Cloud Functions v2 with `enforceAppCheck: true` validates the token at Google's ingress edge. Requests from tampered apps or curl scripts are rejected **before** your Cloud Function executes, preventing unwanted compute and API costs.
+* **Pre-Dispatch Token Verification:** For raw HTTP endpoints (`onRequest`), the Cloud Function verifies the cryptographic signature of `X-Firebase-AppCheck` via the Firebase Admin SDK (`getAppCheck().verifyToken(...)`) before forwarding a single byte upstream (`enforceAppCheck: true` applies only to `onCall` callable functions). Unverified or tampered requests are rejected immediately with `401 Unauthorized`, protecting your upstream AI billing quota.
 * **Zero Credential Exposure:** Your upstream API keys (`GEMINI_API_KEY`, `OPENAI_API_KEY`, `CLOUDFLARE_API_TOKEN`, `TYPESAFE_API_KEY`) exist only in Google Cloud Secret Manager.
 
 ---
@@ -74,7 +74,7 @@ To solve this, we place a lightweight **Firebase Cloud Function (2nd Gen)** or A
 
 ### Step 2: Deploy the Firebase Cloud Function Proxy
 
-In a Node/TypeScript Firebase Functions directory:
+In a Node/TypeScript Firebase Functions directory, expose an HTTP proxy endpoint that verifies `X-Firebase-AppCheck`, validates the JSON payload before calling upstream, forwards `Retry-After` / timing headers, and logs internal diagnostics server-side without leaking raw error details:
 
 #### `functions/src/index.ts`
 ```typescript
@@ -82,19 +82,103 @@ import { onRequest } from "firebase-functions/v2/https";
 import { defineSecret } from "firebase-functions/params";
 import { initializeApp } from "firebase-admin/app";
 import { getAppCheck } from "firebase-admin/app-check";
+import type { Request, Response } from "express";
 
-// Initialize Firebase Admin SDK for token verification and consumption
+// Initialize Firebase Admin SDK for App Check token verification and optional consumption
 initializeApp();
 
-// Define the secret stored in Google Cloud Secret Manager
+// Secrets stored exclusively in Google Cloud Secret Manager
+const geminiApiKey = defineSecret("GEMINI_API_KEY");
 const typesafeApiKey = defineSecret("TYPESAFE_API_KEY");
 
+/**
+ * Verifies X-Firebase-AppCheck on raw HTTP onRequest handlers (note: enforceAppCheck: true
+ * is only supported on onCall functions). When CONSUME_APP_CHECK === "true", passes
+ * { consume: true } to verifyToken and rejects already-consumed tokens; clients MUST pair
+ * CONSUME_APP_CHECK="true" with AppCheck.appCheck().limitedUseToken() instead of token(forcingRefresh: false).
+ */
+async function verifyAppCheckHeader(req: Request, res: Response): Promise<boolean> {
+  const appCheckToken = req.header("X-Firebase-AppCheck");
+  if (!appCheckToken) {
+    res.status(401).json({ error: "Unauthorized" });
+    return false;
+  }
+
+  const consume = process.env.CONSUME_APP_CHECK === "true";
+  try {
+    const claims = await getAppCheck().verifyToken(appCheckToken, consume ? { consume: true } : undefined);
+    if (consume && claims.alreadyConsumed) {
+      res.status(401).json({ error: "Unauthorized" });
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error("App Check token verification failed:", err);
+    res.status(401).json({ error: "Unauthorized" });
+    return false;
+  }
+}
+
+function forwardUpstreamHeaders(upstream: globalThis.Response, res: Response): void {
+  res.setHeader("Content-Type", upstream.headers.get("Content-Type") || "application/json");
+  for (const headerName of ["Retry-After", "x-goog-processing-ms", "server-timing", "x-envoy-upstream-service-time"]) {
+    const value = upstream.headers.get(headerName);
+    if (value) {
+      res.setHeader(headerName, value);
+    }
+  }
+}
+
+// Pattern A: Provider Passthrough Proxy for GeminiLanguageModel (used in Step 5 below)
+export const geminiDecisions = onRequest(
+  {
+    cors: false,
+    secrets: [geminiApiKey],
+    minInstances: 1, // Keeps a container warm 24/7 to eliminate ~500ms-1.5s cold starts
+    concurrency: 80,
+  },
+  async (req, res) => {
+    if (req.method !== "POST") {
+      res.status(405).json({ error: "Method Not Allowed" });
+      return;
+    }
+    if (!(await verifyAppCheckHeader(req, res))) return;
+
+    // Validate non-empty Gemini Decisions payload before calling billable upstream
+    const { input, questions } = req.body ?? {};
+    const hasInput = (typeof input === "string" && input.trim().length > 0) || (Array.isArray(input) && input.length > 0);
+    const hasQuestions = questions && typeof questions === "object" && !Array.isArray(questions) && Object.keys(questions).length > 0;
+    if (!hasInput || !hasQuestions) {
+      res.status(400).json({ error: "Bad Request: 'input' and non-empty 'questions' are required" });
+      return;
+    }
+
+    try {
+      const upstreamResponse = await fetch("https://generativelanguage.googleapis.com/v1beta/decisions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": geminiApiKey.value(),
+        },
+        body: JSON.stringify(req.body),
+        signal: AbortSignal.timeout(15000),
+      });
+
+      const responseText = await upstreamResponse.text();
+      forwardUpstreamHeaders(upstreamResponse, res);
+      res.status(upstreamResponse.status).send(responseText);
+    } catch (err) {
+      console.error("Upstream Gemini Decisions request failed:", err);
+      res.status(502).json({ error: "Upstream evaluation failed" });
+    }
+  }
+);
+
+// Pattern B / Jev Gateway: Canonical SystemOneRequest Proxy (SystemOneLanguageModel / JevLanguageModel)
 export const systemone = onRequest(
   {
     cors: false,
-    enforceAppCheck: true, // Rejects unverified traffic at Google Cloud edge
     secrets: [typesafeApiKey],
-    // minInstances: 1 keeps a container warm 24/7 to eliminate ~500ms-1.5s cold starts
     minInstances: 1,
     concurrency: 80,
   },
@@ -103,23 +187,13 @@ export const systemone = onRequest(
       res.status(405).json({ error: "Method Not Allowed" });
       return;
     }
+    if (!(await verifyAppCheckHeader(req, res))) return;
 
-    // App Check Token Verification & Optional Replay Protection
-    const appCheckToken = req.header("X-Firebase-AppCheck");
-    if (!appCheckToken) {
-      res.status(401).json({ error: "Unauthorized: Missing X-Firebase-AppCheck header" });
-      return;
-    }
-
-    const consume = process.env.CONSUME_APP_CHECK === "true";
-    try {
-      const claims = await getAppCheck().verifyToken(appCheckToken, { consume });
-      if (claims.alreadyConsumed) {
-        res.status(401).json({ error: "Unauthorized: App Check token has already been consumed" });
-        return;
-      }
-    } catch (error: any) {
-      res.status(401).json({ error: `Unauthorized: Invalid App Check token (${error.message ?? error})` });
+    const { state, questions } = req.body ?? {};
+    const hasState = typeof state === "string" && state.trim().length > 0;
+    const hasQuestions = questions && typeof questions === "object" && !Array.isArray(questions) && Object.keys(questions).length > 0;
+    if (!hasState || !hasQuestions) {
+      res.status(400).json({ error: "Bad Request: non-empty 'state' and 'questions' are required" });
       return;
     }
 
@@ -131,32 +205,33 @@ export const systemone = onRequest(
           "Authorization": `Bearer ${typesafeApiKey.value()}`,
         },
         body: JSON.stringify(req.body),
-        signal: AbortSignal.timeout(15000), // 15-second upstream timeout
+        signal: AbortSignal.timeout(15000),
       });
 
       const responseText = await upstreamResponse.text();
-      res
-        .status(upstreamResponse.status)
-        .header("Content-Type", upstreamResponse.headers.get("Content-Type") || "application/json")
-        .send(responseText);
-    } catch (error: any) {
-      res.status(502).json({ error: error.message ?? "Upstream proxy failure" });
+      forwardUpstreamHeaders(upstreamResponse, res);
+      res.status(upstreamResponse.status).send(responseText);
+    } catch (err) {
+      console.error("Upstream System One request failed:", err);
+      res.status(502).json({ error: "Upstream evaluation failed" });
     }
   }
 );
 ```
 
-#### Set Secret & Deploy
+#### Set Secrets & Deploy
 ```bash
-# 1. Set the secret in Google Secret Manager
+# 1. Set secrets in Google Secret Manager
+firebase functions:secrets:set GEMINI_API_KEY
 firebase functions:secrets:set TYPESAFE_API_KEY
 
-# 2. Deploy the function
+# 2. Deploy the functions
 firebase deploy --only functions
 ```
 
-Note your deployed endpoint URL:
-`https://systemone-<unique-hash>.a.run.app` or `https://us-central1-<project-id>.cloudfunctions.net/systemone`.
+Note your deployed endpoint URLs:
+- `https://us-central1-<project-id>.cloudfunctions.net/geminiDecisions` (Pattern A passthrough)
+- `https://us-central1-<project-id>.cloudfunctions.net/systemone` (Pattern B canonical gateway / Jev)
 
 ---
 
@@ -204,7 +279,7 @@ struct MyApp: App {
 
 ### Step 4: Configure Universal `ProxyCredential` Across Any System One Model
 
-`SystemOneCore` provides **`ProxyCredential`** and **`SystemOneProxyBackend`** so you can authenticate against your reverse proxy with **any** hosted System One model (`GeminiLanguageModel`, `OpenAIDecisionsLanguageModel`, `ClefLanguageModel`, `LayaLanguageModel`, `JevLanguageModel`, or vendor-agnostic `SystemOneLanguageModel`).
+`SystemOneCore` provides **`ProxyCredential`** and **`SystemOneProxyBackend`** so you can authenticate against your reverse proxy with **any** hosted System One model (`GeminiLanguageModel`, `OpenAILanguageModel`, `ClefLanguageModel`, `LayaLanguageModel`, `JevLanguageModel`, or vendor-agnostic `SystemOneLanguageModel`).
 
 > **Zero Third-Party Runtime Dependencies via Closure Injection:**
 > `SystemOneFoundationModels` maintains a strict mandate of **Zero External Third-Party Runtime Dependencies** ([Tech Note 0005](../tech-notes/0005-spm-dependency-isolation-and-vendor-transports.md)). Rather than forcing all package consumers to compile Google Firebase or Apple DeviceCheck SDKs, `ProxyCredential` uses dynamic closure injection (`.appCheck`, `.header`, `.bearer`, `.custom`, or inline `authorize:` trailing closures).
@@ -238,7 +313,7 @@ let gemini = GeminiLanguageModel(
 )
 
 // 2. OpenAI Decisions (gpt-6-luna)
-let openai = OpenAIDecisionsLanguageModel(
+let openai = OpenAILanguageModel(
     proxyEndpoint: proxyBaseURL.appending(path: "openaiDecisions"),
     credential: appCheckCredential
 )

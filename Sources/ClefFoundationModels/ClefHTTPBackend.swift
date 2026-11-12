@@ -65,30 +65,38 @@ public struct ClefHTTPBackend: SystemOneBackend, Sendable, Hashable {
             try ProxyEndpointValidator.validate(endpoint.url)
         }
 
+        let requestData: Data
+        do {
+            requestData = try JSONEncoder().encode(request)
+        } catch {
+            throw SystemOneError.decodingError("Failed to serialize SystemOneRequest: \(error.localizedDescription)")
+        }
+
         var attempts = 0
         let maxAttempts = max(1, retryPolicy.maxAttempts)
 
         while true {
             attempts += 1
             do {
-                return try await performSingleEvaluation(request: request)
+                return try await performSingleEvaluation(requestData: requestData)
             } catch is CancellationError {
                 throw CancellationError()
             } catch let resError as HTTPResponseError {
                 let statusCode = resError.httpResponse.statusCode
+                let body = String(data: resError.data, encoding: .utf8) ?? "Unknown error"
+
+                if statusCode == 401 || statusCode == 403 {
+                    throw SystemOneError.authenticationFailed(body)
+                }
+
                 let isLastAttempt = attempts >= maxAttempts
 
                 guard retryPolicy.retryableStatuses.contains(statusCode), !isLastAttempt else {
-                    let body = String(data: resError.data, encoding: .utf8) ?? "Unknown error"
                     throw SystemOneError.apiError(statusCode: statusCode, message: body)
                 }
 
-                let delay: Duration
-                if statusCode == 429, let retryAfterDelay = retryPolicy.retryAfter(from: resError.httpResponse) {
-                    delay = retryAfterDelay
-                } else {
-                    delay = retryPolicy.backoff(afterAttempt: attempts)
-                }
+                let delay = retryPolicy.retryAfter(from: resError.httpResponse)
+                    ?? retryPolicy.backoff(afterAttempt: attempts)
 
                 try await Task.sleep(for: delay)
                 continue
@@ -127,13 +135,12 @@ public struct ClefHTTPBackend: SystemOneBackend, Sendable, Hashable {
         let data: Data
     }
 
-    private func performSingleEvaluation(request: SystemOneRequest) async throws -> SystemOneResponse {
+    private func performSingleEvaluation(requestData: Data) async throws -> SystemOneResponse {
         var urlRequest = URLRequest(url: endpoint.url)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        urlRequest.timeoutInterval = timeoutInterval
 
-        if let token = apiToken, !token.isEmpty {
+        if proxyCredential == nil, let token = apiToken, !token.isEmpty {
             urlRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
 
@@ -142,22 +149,25 @@ public struct ClefHTTPBackend: SystemOneBackend, Sendable, Hashable {
             urlRequest.setValue("clef-multimodal", forHTTPHeaderField: "cf-aig-metadata-tag")
         }
 
+        urlRequest.timeoutInterval = timeoutInterval
+        urlRequest.httpBody = requestData
+
         if let proxyCredential {
             do {
                 try await proxyCredential.apply(to: &urlRequest)
             } catch is CancellationError {
                 throw CancellationError()
-            } catch let error as SystemOneError {
-                throw error
+            } catch let urlError as URLError where urlError.code == .cancelled {
+                throw CancellationError()
             } catch {
+                if Task.isCancelled {
+                    throw CancellationError()
+                }
+                if let sysError = error as? SystemOneError {
+                    throw sysError
+                }
                 throw SystemOneError.authenticationFailed("Failed to acquire proxy credential: \(error.localizedDescription)")
             }
-        }
-
-        do {
-            urlRequest.httpBody = try JSONEncoder().encode(request)
-        } catch {
-            throw SystemOneError.decodingError("Failed to serialize SystemOneRequest: \(error.localizedDescription)")
         }
 
         let clock = ContinuousClock()

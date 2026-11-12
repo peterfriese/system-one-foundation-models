@@ -24,7 +24,7 @@ Evaluate strongly typed `@Generable` structs and enums against application state
 >
 > **Safe Deployment Patterns:**
 > - **On-Device Core ML (`LayaOnDevice`)**: Run models locally on hardware with 100% offline privacy and zero secrets required.
-> - **Backend / Server / CLI**: Use `GeminiLanguageModel`, `OpenAIDecisionsLanguageModel`, `ClefLanguageModel`, `LayaLanguageModel`, or `JevLanguageModel` directly in server-side Swift services or CLI tools where environment variables remain server-side.
+> - **Backend / Server / CLI**: Use `GeminiLanguageModel`, `OpenAILanguageModel`, `ClefLanguageModel`, `LayaLanguageModel`, or `JevLanguageModel` directly in server-side Swift services or CLI tools where environment variables remain server-side.
 > - **Mobile Applications with Cloud APIs**: Route mobile requests through your own authenticated reverse proxy protected by Apple App Attest and Firebase App Check using universal `ProxyCredential` (`.appCheck`, `.header`, `.bearer`, `.custom`, or inline `authorize:` closures) and `SystemOneProxyBackend` (see [Mobile Security Guide](docs/mobile-security.md), [ADR-2026-11-12-01](docs/architecture/ADR-2026-11-12-01-universal-proxy-credentials.md), and [Tech Note 0010](tech-notes/0010-proxy-transport-and-dynamic-attestation.md)).
 
 ---
@@ -182,7 +182,7 @@ import FoundationModels
 import OpenAIFoundationModels
 
 // 1. Connect to OpenAI Decisions API with optional enterprise headers
-let openai = OpenAIDecisionsLanguageModel(
+let openai = OpenAILanguageModel(
     apiKey: ProcessInfo.processInfo.environment["OPENAI_API_KEY"]!,
     organization: ProcessInfo.processInfo.environment["OPENAI_ORGANIZATION"],
     project: ProcessInfo.processInfo.environment["OPENAI_PROJECT"]
@@ -198,7 +198,7 @@ import FoundationModels
 import GeminiFoundationModels
 
 // 1. Connect to Google Gemini Decisions API (resolves GEMINI_API_KEY or GOOGLE_API_KEY)
-let gemini = GeminiDecisionsLanguageModel(
+let gemini = GeminiLanguageModel(
     apiKey: ProcessInfo.processInfo.environment["GEMINI_API_KEY"]
 )
 
@@ -207,7 +207,7 @@ let session = LanguageModelSession(model: gemini)
 ```
 
 #### Option G: Mobile Security & Zero-Secret App Check Gateways (`ProxyCredential` & `SystemOneProxyBackend`)
-Every hosted System One model (`GeminiLanguageModel`, `OpenAIDecisionsLanguageModel`, `ClefLanguageModel`, `LayaLanguageModel`, `JevLanguageModel`, and vendor-agnostic `SystemOneLanguageModel`) supports dynamic, per-attempt credential injection (`.appCheck`, `.header`, `.bearer`, `.custom`, or inline `authorize:` trailing closures) with zero third-party SDK dependencies in `SystemOneFoundationModels`:
+Every hosted System One model (`GeminiLanguageModel`, `OpenAILanguageModel`, `ClefLanguageModel`, `LayaLanguageModel`, `JevLanguageModel`, and vendor-agnostic `SystemOneLanguageModel`) supports dynamic, per-attempt credential injection (`.appCheck`, `.header`, `.bearer`, `.custom`, or inline `authorize:` trailing closures) with zero third-party SDK dependencies in `SystemOneFoundationModels`:
 
 ```swift
 import FoundationModels
@@ -233,7 +233,7 @@ let gatewayModel = SystemOneLanguageModel(
 )
 
 // Or use the inline trailing-closure `authorize:` syntax for multi-header gateways (App Check + User JWT):
-let customAuthModel = OpenAIDecisionsLanguageModel(
+let customAuthModel = OpenAILanguageModel(
     proxyEndpoint: URL(string: "https://api.mycompany.com/v1/decisions")!
 ) { request in
     let attestToken = try await AppCheck.appCheck().token(forcingRefresh: false).token

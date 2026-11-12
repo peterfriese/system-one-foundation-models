@@ -527,12 +527,14 @@ struct GeminiDecisionsHTTPBackendTests {
         #expect(MockGeminiURLProtocol.recordedRequests.isEmpty)
     }
 
-    @Test("HTTP Backend with ProxyCredential succeeds without GEMINI_API_KEY and rotates token per retry attempt")
+    @Test("HTTP Backend with ProxyCredential suppresses master keys, exposes httpBody for signing, and rotates token per retry attempt")
     func testProxyCredentialAndPerAttemptTokenRotation() async throws {
         actor TokenCounter {
             private var count = 0
-            func next() -> String {
+            private(set) var observedBodySizes: [Int] = []
+            func next(bodySize: Int) -> String {
                 count += 1
+                observedBodySizes.append(bodySize)
                 return "gemini-appcheck-\(count)"
             }
         }
@@ -554,12 +556,19 @@ struct GeminiDecisionsHTTPBackendTests {
         let counter = TokenCounter()
         let proxyURL = URL(string: "https://us-central1-myapp.cloudfunctions.net/geminiProxy")!
         let backend = GeminiDecisionsHTTPBackend(
-            endpoint: .custom(proxyURL),
-            apiKey: nil,
-            proxyCredential: .appCheck { await counter.next() },
+            endpoint: .custom(proxyURL, clientRequestID: "trace-gemini-proxy"),
+            apiKey: "must-not-leak-explicit",
+            proxyCredential: .custom { req in
+                let bodyCount = req.httpBody?.count ?? 0
+                let tok = await counter.next(bodySize: bodyCount)
+                req.setValue(tok, forHTTPHeaderField: "X-Firebase-AppCheck")
+            },
             session: makeSession(),
             retryPolicy: RetryPolicy(maxAttempts: 2, initialDelay: .zero),
-            environmentOverride: [:]
+            environmentOverride: [
+                "GEMINI_API_KEY": "must-not-leak-env",
+                "GOOGLE_API_KEY": "must-not-leak-google"
+            ]
         )
 
         let request = SystemOneRequest(
@@ -570,10 +579,16 @@ struct GeminiDecisionsHTTPBackendTests {
         let response = try await backend.evaluate(request: request)
         #expect(response.answers["isSafe"]?.noul == 0.98)
 
+        let bodySizes = await counter.observedBodySizes
+        #expect(bodySizes.count == 2)
+        #expect(bodySizes.allSatisfy { $0 > 0 })
+
         let recorded = MockGeminiURLProtocol.recordedRequests
         #expect(recorded.count == 2)
         #expect(recorded[0].url == proxyURL)
         #expect(recorded[0].value(forHTTPHeaderField: "x-goog-api-key") == nil)
+        #expect(recorded[1].value(forHTTPHeaderField: "x-goog-api-key") == nil)
+        #expect(recorded[0].value(forHTTPHeaderField: "X-Client-Request-Id") == "trace-gemini-proxy")
         #expect(recorded[0].value(forHTTPHeaderField: "X-Firebase-AppCheck") == "gemini-appcheck-1")
         #expect(recorded[1].value(forHTTPHeaderField: "X-Firebase-AppCheck") == "gemini-appcheck-2")
     }

@@ -183,8 +183,20 @@ struct LayaFoundationModelsTests {
         #expect(proxyModel2.executorConfiguration.endpoint == .custom(proxyURL))
     }
 
-    @Test("LayaHTTPBackend supports ProxyCredential and rejects insecure remote HTTP")
+    @Test("LayaHTTPBackend supports ProxyCredential with httpBody available, suppresses apiKey, maps 401/403 to authenticationFailed, and rejects insecure remote HTTP")
     func testLayaHTTPBackendProxyCredential() async throws {
+        actor BodyCheck {
+            private(set) var size = 0
+            private(set) var attempts = 0
+            func record(_ len: Int) {
+                attempts += 1
+                size = len
+            }
+            func resetAttempts() {
+                attempts = 0
+            }
+        }
+
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [MockURLProtocol.self]
         let session = URLSession(configuration: config)
@@ -209,17 +221,57 @@ struct LayaFoundationModelsTests {
         }
         defer { MockURLProtocol.requestHandler = nil }
 
+        let bodyCheck = BodyCheck()
         let proxyURL = URL(string: "https://laya-gateway.company.com/v1/systemone")!
         let backend = LayaHTTPBackend(
-            proxyEndpoint: proxyURL,
-            credential: .appCheck { "laya-attested-xyz" },
+            endpoint: .custom(proxyURL),
+            apiKey: "laya-master-must-not-leak",
+            proxyCredential: .custom { req in
+                await bodyCheck.record(req.httpBody?.count ?? 0)
+                req.setValue("laya-attested-xyz", forHTTPHeaderField: "X-Firebase-AppCheck")
+            },
             session: session
         )
         let request = SystemOneRequest(state: "Check status", questions: [:])
         _ = try await backend.evaluate(request: request)
 
+        let bodyLen = await bodyCheck.size
+        #expect(bodyLen > 0)
         #expect(box.request?.value(forHTTPHeaderField: "X-Firebase-AppCheck") == "laya-attested-xyz")
         #expect(box.request?.value(forHTTPHeaderField: "Authorization") == nil)
+
+        // Proxy 401/403 -> authenticationFailed on attempt 1 (0 retries)
+        for statusCode in [401, 403] {
+            await bodyCheck.resetAttempts()
+            MockURLProtocol.requestHandler = { req in
+                let response = HTTPURLResponse(
+                    url: req.url!,
+                    statusCode: statusCode,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                return (response, Data("Laya auth denied (\(statusCode))".utf8))
+            }
+
+            let authBackend = LayaHTTPBackend(
+                proxyEndpoint: proxyURL,
+                credential: .custom { req in
+                    await bodyCheck.record(req.httpBody?.count ?? 0)
+                    req.setValue("bad-tok", forHTTPHeaderField: "X-Firebase-AppCheck")
+                },
+                session: session,
+                retryPolicy: RetryPolicy(maxAttempts: 3, initialDelay: .zero)
+            )
+
+            do {
+                _ = try await authBackend.evaluate(request: request)
+                Issue.record("Expected authenticationFailed for Laya \(statusCode)")
+            } catch let SystemOneError.authenticationFailed(msg) {
+                #expect(msg.contains("Laya auth denied (\(statusCode))"))
+            }
+            let callCount = await bodyCheck.attempts
+            #expect(callCount == 1)
+        }
 
         let insecureBackend = LayaHTTPBackend(
             proxyEndpoint: URL(string: "http://remote-laya.example.com/v1/systemone")!,

@@ -181,6 +181,13 @@ public struct GeminiDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
         let resolvedKey = try resolveAPIKey()
         let sanitizedClientRequestID = try resolveClientRequestID()
 
+        let requestData: Data
+        do {
+            requestData = try JSONEncoder().encode(request)
+        } catch {
+            throw SystemOneError.decodingError("Failed to serialize GeminiDecisionsRequest: \(error.localizedDescription)")
+        }
+
         var attempts = 0
         let maxAttempts = max(1, retryPolicy.maxAttempts)
 
@@ -188,7 +195,7 @@ public struct GeminiDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
             attempts += 1
             do {
                 return try await performSingleEvaluation(
-                    request: request,
+                    requestData: requestData,
                     apiKey: resolvedKey,
                     clientRequestID: sanitizedClientRequestID
                 )
@@ -255,7 +262,7 @@ public struct GeminiDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
     }
 
     private func performSingleEvaluation(
-        request: GeminiDecisionsRequest,
+        requestData: Data,
         apiKey: String?,
         clientRequestID: String?
     ) async throws -> (response: GeminiDecisionsResponse, transportDurationMs: Double, serverDurationMs: Double?) {
@@ -263,31 +270,31 @@ public struct GeminiDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
-        if let apiKey {
+        if proxyCredential == nil, let apiKey {
             urlRequest.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
         }
-        urlRequest.timeoutInterval = timeoutInterval
-
         if let clientRequestID {
             urlRequest.setValue(clientRequestID, forHTTPHeaderField: "X-Client-Request-Id")
         }
+        urlRequest.timeoutInterval = timeoutInterval
+        urlRequest.httpBody = requestData
 
         if let proxyCredential {
             do {
                 try await proxyCredential.apply(to: &urlRequest)
             } catch is CancellationError {
                 throw CancellationError()
-            } catch let error as SystemOneError {
-                throw error
+            } catch let urlError as URLError where urlError.code == .cancelled {
+                throw CancellationError()
             } catch {
+                if Task.isCancelled {
+                    throw CancellationError()
+                }
+                if let sysError = error as? SystemOneError {
+                    throw sysError
+                }
                 throw SystemOneError.authenticationFailed("Failed to acquire proxy credential: \(error.localizedDescription)")
             }
-        }
-
-        do {
-            urlRequest.httpBody = try JSONEncoder().encode(request)
-        } catch {
-            throw SystemOneError.decodingError("Failed to serialize GeminiDecisionsRequest: \(error.localizedDescription)")
         }
 
         let clock = ContinuousClock()

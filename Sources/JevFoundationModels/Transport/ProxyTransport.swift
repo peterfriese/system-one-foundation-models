@@ -120,6 +120,11 @@ public struct ProxyTransport: JevTransport, Sendable {
                 }
             }
 
+            if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
+                let body = String(data: data, encoding: .utf8) ?? "Unknown server error"
+                throw JevError.authenticationFailed(body)
+            }
+
             let isLastAttempt = attempt >= retryPolicy.maxAttempts
             guard retryPolicy.retryableStatuses.contains(httpResponse.statusCode), !isLastAttempt else {
                 throw failure(for: httpResponse, data: data)
@@ -143,7 +148,21 @@ public struct ProxyTransport: JevTransport, Sendable {
     }
 
     private func applyCredential(to request: inout URLRequest) async throws {
-        try await credential.apply(to: &request)
+        do {
+            try await credential.apply(to: &request)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let urlError as URLError where urlError.code == .cancelled {
+            throw CancellationError()
+        } catch {
+            if Task.isCancelled {
+                throw CancellationError()
+            }
+            if let sysError = error as? SystemOneError {
+                throw sysError
+            }
+            throw JevError.authenticationFailed("Failed to acquire proxy credential: \(error.localizedDescription)")
+        }
     }
 
     private func failure(for response: HTTPURLResponse, data: Data) -> JevError {

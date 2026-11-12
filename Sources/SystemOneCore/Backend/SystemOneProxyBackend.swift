@@ -6,6 +6,8 @@ import Foundation
 /// Your backend gateway can route or fan-out the canonical `SystemOneRequest` to Jev, Laya,
 /// Clef, OpenAI (`gpt-6-luna`), or Google Gemini (`gemini-decision-1`) without requiring
 /// any client-side code changes.
+///
+/// See tech-notes/0010-proxy-transport-and-dynamic-attestation.md
 public struct SystemOneProxyBackend: SystemOneBackend, Sendable, Hashable {
     /// The target proxy URL to which canonical `SystemOneRequest` payloads are dispatched.
     public let proxyEndpoint: URL
@@ -21,6 +23,20 @@ public struct SystemOneProxyBackend: SystemOneBackend, Sendable, Hashable {
 
     /// Retry and backoff resilience configuration.
     public let retryPolicy: RetryPolicy
+
+    private static let maxRawErrorBodyCharacters = 512
+
+    private static let nonRetryableURLErrorCodes: Set<URLError.Code> = [
+        .badURL,
+        .unsupportedURL,
+        .appTransportSecurityRequiresSecureConnection,
+        .serverCertificateUntrusted,
+        .serverCertificateHasBadDate,
+        .serverCertificateHasUnknownRoot,
+        .serverCertificateNotYetValid,
+        .clientCertificateRejected,
+        .clientCertificateRequired
+    ]
 
     public init(
         proxyEndpoint: URL,
@@ -57,7 +73,7 @@ public struct SystemOneProxyBackend: SystemOneBackend, Sendable, Hashable {
                 throw CancellationError()
             } catch let resError as HTTPResponseError {
                 let statusCode = resError.httpResponse.statusCode
-                let body = String(data: resError.data, encoding: .utf8) ?? "Unknown server error"
+                let body = Self.formatErrorBody(from: resError.data, fallbackCode: statusCode)
 
                 if statusCode == 401 || statusCode == 403 {
                     throw SystemOneError.authenticationFailed(body)
@@ -69,26 +85,25 @@ public struct SystemOneProxyBackend: SystemOneBackend, Sendable, Hashable {
                     throw SystemOneError.apiError(statusCode: statusCode, message: body)
                 }
 
-                let delay: Duration
-                if statusCode == 429, let retryAfterDelay = retryPolicy.retryAfter(from: resError.httpResponse) {
-                    delay = retryAfterDelay
-                } else {
-                    delay = retryPolicy.backoff(afterAttempt: attempts)
-                }
+                let delay = retryPolicy.retryAfter(from: resError.httpResponse)
+                    ?? retryPolicy.backoff(afterAttempt: attempts)
 
+                try await Task.sleep(for: delay)
+                continue
+            } catch let urlError as URLError {
+                if urlError.code == .cancelled {
+                    throw CancellationError()
+                }
+                if Self.nonRetryableURLErrorCodes.contains(urlError.code) || attempts >= maxAttempts || Task.isCancelled {
+                    throw SystemOneError.networkError(urlError.localizedDescription)
+                }
+                let delay = retryPolicy.backoff(afterAttempt: attempts)
                 try await Task.sleep(for: delay)
                 continue
             } catch let error as SystemOneError {
                 switch error {
                 case .networkError:
                     if attempts < maxAttempts && !Task.isCancelled {
-                        let delay = retryPolicy.backoff(afterAttempt: attempts)
-                        try await Task.sleep(for: delay)
-                        continue
-                    }
-                    throw error
-                case .apiError(let statusCode, _):
-                    if retryPolicy.retryableStatuses.contains(statusCode), attempts < maxAttempts {
                         let delay = retryPolicy.backoff(afterAttempt: attempts)
                         try await Task.sleep(for: delay)
                         continue
@@ -113,6 +128,16 @@ public struct SystemOneProxyBackend: SystemOneBackend, Sendable, Hashable {
         let data: Data
     }
 
+    private static func formatErrorBody(from data: Data, fallbackCode: Int) -> String {
+        guard let rawString = String(data: data, encoding: .utf8), !rawString.isEmpty else {
+            return "HTTP error \(fallbackCode)"
+        }
+        if rawString.count > maxRawErrorBodyCharacters {
+            return String(rawString.prefix(maxRawErrorBodyCharacters))
+        }
+        return rawString
+    }
+
     private func performSingleEvaluation(requestData: Data) async throws -> SystemOneResponse {
         var urlRequest = URLRequest(url: proxyEndpoint)
         urlRequest.httpMethod = "POST"
@@ -125,9 +150,15 @@ public struct SystemOneProxyBackend: SystemOneBackend, Sendable, Hashable {
             try await credential.apply(to: &urlRequest)
         } catch is CancellationError {
             throw CancellationError()
-        } catch let error as SystemOneError {
-            throw error
+        } catch let urlError as URLError where urlError.code == .cancelled {
+            throw CancellationError()
         } catch {
+            if Task.isCancelled {
+                throw CancellationError()
+            }
+            if let sysError = error as? SystemOneError {
+                throw sysError
+            }
             throw SystemOneError.authenticationFailed("Failed to acquire proxy credential: \(error.localizedDescription)")
         }
 
@@ -139,12 +170,12 @@ public struct SystemOneProxyBackend: SystemOneBackend, Sendable, Hashable {
             (data, response) = try await session.data(for: urlRequest)
         } catch is CancellationError {
             throw CancellationError()
-        } catch let urlError as URLError where urlError.code == .cancelled {
-            throw CancellationError()
-        } catch {
-            if (error as? URLError)?.code == .cancelled || error is CancellationError {
+        } catch let urlError as URLError {
+            if urlError.code == .cancelled {
                 throw CancellationError()
             }
+            throw urlError
+        } catch {
             throw SystemOneError.networkError(error.localizedDescription)
         }
 
@@ -165,7 +196,6 @@ public struct SystemOneProxyBackend: SystemOneBackend, Sendable, Hashable {
             decoded.transportDurationMs = transportDuration
             decoded.serverDurationMs = decoded.serverDurationMs
                 ?? Self.parseServerTimingDuration(from: httpResponse)
-                ?? transportDuration
 
             return decoded
         } catch {

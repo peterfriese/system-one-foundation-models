@@ -197,6 +197,74 @@ struct ProxyCredentialTests {
                 #expect(msg.contains("Insecure proxy endpoint: HTTPS is required"))
             }
         }
+
+        // Embedded URL credentials rejected with specific message
+        do {
+            try ProxyEndpointValidator.validate(URL(string: "https://user:pass@gateway.company.com/v1/decisions")!)
+            Issue.record("Expected embedded credentials to be rejected")
+        } catch let SystemOneError.networkError(msg) {
+            #expect(msg.contains("embedded user credentials"))
+        }
+
+        // Missing host rejected with specific message
+        do {
+            try ProxyEndpointValidator.validate(URL(string: "https:///v1/decisions")!)
+            Issue.record("Expected missing host URL to be rejected")
+        } catch let SystemOneError.networkError(msg) {
+            #expect(msg.contains("missing scheme or host"))
+        }
+    }
+
+    @Test("ProxyCredential hardens empty tokens, CR/LF injection, duplicate Bearer prefix, and deterministic id equality")
+    func testProxyCredentialValidationAndDeterministicIdentity() async throws {
+        let url = URL(string: "https://gateway.example.com/v1/decisions")!
+
+        // 1. Duplicate "Bearer " (case-insensitive) stripped cleanly so "Bearer Bearer ..." never occurs
+        var bearerReq = URLRequest(url: url)
+        let dupBearer = ProxyCredential.bearer { "  bearer   test-token  " }
+        try await dupBearer.apply(to: &bearerReq)
+        #expect(bearerReq.value(forHTTPHeaderField: "Authorization") == "Bearer test-token")
+
+        // 2. Empty or whitespace-only tokens rejected across .bearer, .header, and .appCheck
+        let emptyCredentials: [ProxyCredential] = [
+            .bearer { "   " },
+            .bearer { "Bearer   " },
+            .header(name: "X-Auth") { "" },
+            .appCheck { " \t " }
+        ]
+        for cred in emptyCredentials {
+            var req = URLRequest(url: url)
+            do {
+                try await cred.apply(to: &req)
+                Issue.record("Expected empty token to throw authenticationFailed")
+            } catch let SystemOneError.authenticationFailed(msg) {
+                #expect(msg.contains("empty token"))
+            }
+        }
+
+        // 3. CR/LF/NUL control characters rejected in header name, prefix, or token
+        let crlfCredentials: [ProxyCredential] = [
+            .bearer { "tok\r\nX-Injected: 1" },
+            .header(name: "X-Bad\nName") { "tok" },
+            .header(name: "X-Auth", prefix: "Token\r\nEvil: 1") { "tok" },
+            .appCheck { "tok\0null" }
+        ]
+        for cred in crlfCredentials {
+            var req = URLRequest(url: url)
+            do {
+                try await cred.apply(to: &req)
+                Issue.record("Expected CR/LF/NUL injection to throw authenticationFailed")
+            } catch SystemOneError.authenticationFailed {
+                // Expected
+            }
+        }
+
+        // 4. Deterministic UUID identity equality across factories
+        let fixedID = UUID()
+        #expect(ProxyCredential.bearer(id: fixedID) { "a" } == ProxyCredential.bearer(id: fixedID) { "b" })
+        #expect(ProxyCredential.header(name: "X-Foo", id: fixedID) { "a" } == ProxyCredential.header(name: "X-Foo", id: fixedID) { "b" })
+        #expect(ProxyCredential.appCheck(id: fixedID) { "a" } == ProxyCredential.appCheck(id: fixedID) { "b" })
+        #expect(ProxyCredential.custom(id: fixedID) { _ in } == ProxyCredential.custom(id: fixedID) { _ in })
     }
 
     @Test("SystemOneProxyBackend dispatches canonical SystemOneRequest and rotates credentials per retry attempt")
@@ -414,5 +482,87 @@ struct ProxyCredentialTests {
         )
         let res2 = try await backend.evaluate(request: request)
         #expect(res2.serverDurationMs == 23.75)
+
+        // 3. No timing headers and nil serverDurationMs in JSON -> serverDurationMs stays nil (not fabricated)
+        MockSystemOneProxyURLProtocol.reset()
+        MockSystemOneProxyURLProtocol.enqueue(statusCode: 200, body: sampleResponseJSON)
+        let res3 = try await backend.evaluate(request: request)
+        #expect(res3.serverDurationMs == nil)
+        #expect(res3.transportDurationMs != nil)
+    }
+
+    @Test("SystemOneProxyBackend populates httpBody before credential.apply and propagates URLError(.cancelled) as CancellationError")
+    func testBodyBeforeCredentialAndCooperativeCancellation() async throws {
+        actor BodyObserver {
+            private(set) var bodyLength: Int = 0
+            func record(_ count: Int) { bodyLength = count }
+        }
+
+        let proxyURL = URL(string: "https://gateway.company.com/v1/systemone")!
+        let request = SystemOneRequest(
+            state: "Sign payload",
+            questions: [
+                "isUrgent": .noul(instructions: "Urgent?"),
+                "priority": .choice(instructions: "Priority", criteria: ["low": "Low", "high": "High"])
+            ]
+        )
+
+        // 1. httpBody is populated before .custom closure runs (enabling HMAC signing)
+        MockSystemOneProxyURLProtocol.reset()
+        MockSystemOneProxyURLProtocol.enqueue(statusCode: 200, body: sampleResponseJSON)
+        let observer = BodyObserver()
+        let signingBackend = SystemOneProxyBackend(
+            proxyEndpoint: proxyURL,
+            credential: .custom { req in
+                await observer.record(req.httpBody?.count ?? 0)
+                req.setValue("hmac-ok", forHTTPHeaderField: "X-Signature")
+            },
+            session: makeSession()
+        )
+        _ = try await signingBackend.evaluate(request: request)
+        let observedLen = await observer.bodyLength
+        #expect(observedLen > 0)
+        #expect(MockSystemOneProxyURLProtocol.recordedRequests.first?.value(forHTTPHeaderField: "X-Signature") == "hmac-ok")
+
+        // 2. URLError(.cancelled) inside ProxyCredential closure propagates CancellationError (not authenticationFailed)
+        MockSystemOneProxyURLProtocol.reset()
+        let cancellingBackend = SystemOneProxyBackend(
+            proxyEndpoint: proxyURL,
+            credential: .appCheck {
+                throw URLError(.cancelled)
+            },
+            session: makeSession(),
+            retryPolicy: RetryPolicy(maxAttempts: 3, initialDelay: .zero)
+        )
+        do {
+            _ = try await cancellingBackend.evaluate(request: request)
+            Issue.record("Expected CancellationError when credential closure throws URLError(.cancelled)")
+        } catch is CancellationError {
+            // Expected
+        } catch {
+            Issue.record("Expected CancellationError, got \(error)")
+        }
+        #expect(MockSystemOneProxyURLProtocol.recordedRequests.isEmpty)
+
+        // 3. SystemOneLanguageModel gates .vision capability on supportsVision
+        struct TextOnlyMockBackend: SystemOneBackend {
+            func evaluate(request: SystemOneRequest) async throws -> SystemOneResponse {
+                SystemOneResponse(model: "text-only", answers: [:])
+            }
+        }
+        let textOnlyModel = SystemOneLanguageModel(backend: TextOnlyMockBackend())
+        #expect(textOnlyModel.supportsVision == false)
+        #expect(textOnlyModel.capabilities.contains(.guidedGeneration))
+        #expect(!textOnlyModel.capabilities.contains(.vision))
+        #expect(try await textOnlyModel.supportsDataAttachmentType(.png) == false)
+
+        let visionProxyModel = SystemOneLanguageModel(
+            proxyEndpoint: proxyURL,
+            credential: .bearer { "tok" },
+            session: makeSession()
+        )
+        #expect(visionProxyModel.supportsVision == true)
+        #expect(visionProxyModel.capabilities.contains(.vision))
+        #expect(try await visionProxyModel.supportsDataAttachmentType(.png) == true)
     }
 }

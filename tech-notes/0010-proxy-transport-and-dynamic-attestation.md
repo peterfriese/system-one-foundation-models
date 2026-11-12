@@ -17,7 +17,7 @@ To eliminate this threat vector, mobile clients must route their decision querie
 
 Historically, bridging this flow across all System One providers presented three architectural challenges:
 1. **The Dependency Dilemma (Tech Note 0005):** As documented in [Tech Note 0005](0005-spm-dependency-isolation-and-vendor-transports.md), `SystemOneFoundationModels` enforces a strict mandate of **Zero External Third-Party Runtime Dependencies**. Directly linking vendor SDKs (e.g., `firebase-ios-sdk`, AWS SDK, or Auth0) in `Package.swift` would force all consumers to resolve large transitive dependency trees, increasing clean build times from ~1 second to over 45 seconds.
-2. **Provider Asymmetry & Boilerplate:** Initially, only `JevFoundationModels` supported dynamic reverse-proxy credentials via `ProxyTransport`. Developers using `GeminiLanguageModel`, `OpenAIDecisionsLanguageModel`, `ClefLanguageModel`, `LayaLanguageModel`, or vendor-agnostic `SystemOneLanguageModel` needed the same zero-dependency, retry-aware credential abstraction without duplicating transport boilerplate.
+2. **Provider Asymmetry & Boilerplate:** Initially, only `JevFoundationModels` supported dynamic reverse-proxy credentials via `ProxyTransport`. Developers using `GeminiLanguageModel`, `OpenAILanguageModel`, `ClefLanguageModel`, `LayaLanguageModel`, or vendor-agnostic `SystemOneLanguageModel` needed the same zero-dependency, retry-aware credential abstraction without duplicating transport boilerplate.
 3. **Token Rotation & Stale Retries:** Authenticated gateways frequently rely on dynamic, short-lived, or consumable credentials:
    - **Apple App Attest / Firebase App Check tokens:** Valid for up to 1 hour, or consumable single-use tokens valid for a single request (`limitedUseToken()`).
    - **OAuth 2.0 / OIDC access tokens:** Ephemeral bearer tokens subject to automated refresh cycles.
@@ -44,15 +44,15 @@ public struct ProxyCredential: Sendable, Hashable {
         try await modifier(&request)
     }
 
-    public static func bearer(_ provider: @escaping @Sendable () async throws -> String) -> ProxyCredential
-    public static func header(name: String, prefix: String? = nil, provider: @escaping @Sendable () async throws -> String) -> ProxyCredential
-    public static func appCheck(headerName: String = "X-Firebase-AppCheck", _ provider: @escaping @Sendable () async throws -> String) -> ProxyCredential
-    public static func custom(_ modifier: @escaping @Sendable (inout URLRequest) async throws -> Void) -> ProxyCredential
+    public static func bearer(id: UUID = UUID(), _ provider: @escaping @Sendable () async throws -> String) -> ProxyCredential
+    public static func header(name: String, prefix: String? = nil, id: UUID = UUID(), provider: @escaping @Sendable () async throws -> String) -> ProxyCredential
+    public static func appCheck(headerName: String = "X-Firebase-AppCheck", id: UUID = UUID(), _ provider: @escaping @Sendable () async throws -> String) -> ProxyCredential
+    public static func custom(id: UUID = UUID(), _ modifier: @escaping @Sendable (inout URLRequest) async throws -> Void) -> ProxyCredential
 }
 ```
 
 In `JevFoundationModels`, `ProxyTransport.Credential` is a `public typealias Credential = ProxyCredential`, preserving 100% source compatibility with existing `ProxyTransport` code while unifying all 6 hosted providers:
-- **Pattern A (Provider Passthrough Proxy):** `GeminiLanguageModel`, `OpenAIDecisionsLanguageModel`, `ClefLanguageModel`, `LayaLanguageModel`, and `JevLanguageModel` each accept `(proxyEndpoint: URL, credential: ProxyCredential, ...)` or an inline trailing closure `(proxyEndpoint: URL, ..., authorize: { request in ... })`, dispatching the provider's native wire format (`GeminiDecisionsRequest`, `OpenAIDecisionsRequest`, `SystemOneRequest`, `JevRequest`) to your proxy without requiring local API keys.
+- **Pattern A (Provider Passthrough Proxy):** `GeminiLanguageModel`, `OpenAILanguageModel`, `ClefLanguageModel`, `LayaLanguageModel`, and `JevLanguageModel` each accept `(proxyEndpoint: URL, credential: ProxyCredential, ...)` or an inline trailing closure `(proxyEndpoint: URL, ..., authorize: { request in ... })`, dispatching the provider's native wire format (`GeminiDecisionsRequest`, `OpenAIDecisionsRequest`, `SystemOneRequest`, `JevRequest`) to your proxy without requiring local API keys.
 - **Pattern B (Vendor-Agnostic Gateway via `SystemOneProxyBackend`):** `SystemOneLanguageModel(proxyEndpoint:credential:modelID:)` dispatches canonical `SystemOneRequest` payloads (including multimodal vision attachments) via `SystemOneProxyBackend`, allowing your backend gateway to route or fail over between `gemini-decision-1`, `gpt-6-luna`, `clef`, `jev-latest`, and `laya-serve` server-side.
 - **Fail-Closed Endpoint Validation (`ProxyEndpointValidator`):** All proxy-configured backends validate that `proxyEndpoint` uses `https://` for remote hosts, permitting `http://` strictly for local loopback emulators (`localhost`, `127.0.0.1`, `::1`, `[::1]`).
 
@@ -146,7 +146,7 @@ This delivers the ideal balance:
 
 ## Implications & Call-Site Design
 
-### 1. Universal Provider Passthrough with `.appCheck` (`GeminiLanguageModel`, `OpenAIDecisionsLanguageModel`, `ClefLanguageModel`, `LayaLanguageModel`, `JevLanguageModel`)
+### 1. Universal Provider Passthrough with `.appCheck` (`GeminiLanguageModel`, `OpenAILanguageModel`, `ClefLanguageModel`, `LayaLanguageModel`, `JevLanguageModel`)
 
 All hosted System One language models accept `proxyEndpoint` and `credential: .appCheck { ... }` (or `.header`, `.bearer`, `.custom`), allowing your mobile app to call any upstream provider through your Cloud Function / Worker gateway with zero embedded secrets:
 
@@ -170,7 +170,7 @@ let gemini = GeminiLanguageModel(
 )
 
 // 2. OpenAI Decisions (gpt-6-luna) via proxy
-let openai = OpenAIDecisionsLanguageModel(
+let openai = OpenAILanguageModel(
     proxyEndpoint: URL(string: "https://my-gateway.run.app/openai/decisions")!,
     credential: appCheckCredential
 )
@@ -229,7 +229,7 @@ let multiHeaderModel = GeminiLanguageModel(
 For enterprise internal apps communicating with a private ingress gateway requiring dynamic user tokens:
 
 ```swift
-let oauthModel = OpenAIDecisionsLanguageModel(
+let oauthModel = OpenAILanguageModel(
     proxyEndpoint: URL(string: "https://gateway.internal.company.com/v1/decisions")!,
     credential: .bearer {
         // Asynchronously retrieves or refreshes user session token on every attempt

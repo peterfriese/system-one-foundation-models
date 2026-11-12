@@ -362,33 +362,34 @@ struct ClefBackendTests {
 
     // MARK: - Error & Retry Handling Tests
 
-    @Test("401 Unauthorized is never retried and throws immediately")
-    func test401UnauthorizedNeverRetried() async throws {
-        MockClefBackendProtocol.reset()
-        MockClefBackendProtocol.enqueue(statusCode: 401, body: Data("Invalid API Token".utf8))
+    @Test("401 and 403 responses are never retried and immediately throw authenticationFailed")
+    func test401And403NeverRetried() async throws {
+        for statusCode in [401, 403] {
+            MockClefBackendProtocol.reset()
+            MockClefBackendProtocol.enqueue(statusCode: statusCode, body: Data("Invalid API Token (\(statusCode))".utf8))
 
-        let backend = ClefHTTPBackend(
-            endpoint: .workersAI(accountID: "acc", model: .clefFlash),
-            apiToken: "bad-token",
-            session: makeSession(),
-            retryPolicy: RetryPolicy(maxAttempts: 3, initialDelay: .milliseconds(1))
-        )
+            let backend = ClefHTTPBackend(
+                endpoint: .workersAI(accountID: "acc", model: .clefFlash),
+                apiToken: "bad-token",
+                session: makeSession(),
+                retryPolicy: RetryPolicy(maxAttempts: 3, initialDelay: .milliseconds(1))
+            )
 
-        do {
-            _ = try await backend.evaluate(request: sampleRequest)
-            Issue.record("Expected 401 apiError to be thrown")
-        } catch let error as SystemOneError {
-            if case .apiError(let statusCode, let message) = error {
-                #expect(statusCode == 401)
-                #expect(message.contains("Invalid API Token"))
-            } else {
-                Issue.record("Unexpected SystemOneError case: \(error)")
+            do {
+                _ = try await backend.evaluate(request: sampleRequest)
+                Issue.record("Expected \(statusCode) authenticationFailed to be thrown")
+            } catch let error as SystemOneError {
+                if case .authenticationFailed(let message) = error {
+                    #expect(message.contains("Invalid API Token (\(statusCode))"))
+                } else {
+                    Issue.record("Unexpected SystemOneError case: \(error)")
+                }
+            } catch {
+                Issue.record("Unexpected error thrown: \(error)")
             }
-        } catch {
-            Issue.record("Unexpected error thrown: \(error)")
-        }
 
-        #expect(MockClefBackendProtocol.requestCount == 1)
+            #expect(MockClefBackendProtocol.requestCount == 1)
+        }
     }
 
     @Test("429 Rate Limit retries with backoff and succeeds on subsequent attempt")
@@ -540,12 +541,14 @@ struct ClefBackendTests {
         }
     }
 
-    @Test("ClefHTTPBackend with ProxyCredential rotates token per retry attempt and validates HTTPS")
+    @Test("ClefHTTPBackend with ProxyCredential suppresses apiToken, exposes httpBody for signing, maps 401/403 to authenticationFailed, and validates HTTPS")
     func testProxyCredentialAndValidation() async throws {
         actor TokenCounter {
             private var count = 0
-            func next() -> String {
+            private(set) var observedBodySizes: [Int] = []
+            func next(bodySize: Int) -> String {
                 count += 1
+                observedBodySizes.append(bodySize)
                 return "clef-appcheck-\(count)"
             }
         }
@@ -557,9 +560,12 @@ struct ClefBackendTests {
         let counter = TokenCounter()
         let proxyURL = URL(string: "https://clef-gateway.company.com/v1/evaluate")!
         let backend = ClefHTTPBackend(
-            proxyEndpoint: proxyURL,
-            model: .clefFlash,
-            credential: .appCheck { await counter.next() },
+            endpoint: .custom(proxyURL, model: .clefFlash),
+            apiToken: "cf-must-not-leak",
+            proxyCredential: .custom { req in
+                let tok = await counter.next(bodySize: req.httpBody?.count ?? 0)
+                req.setValue(tok, forHTTPHeaderField: "X-Firebase-AppCheck")
+            },
             session: makeSession(),
             retryPolicy: RetryPolicy(maxAttempts: 2, initialDelay: .zero)
         )
@@ -567,12 +573,36 @@ struct ClefBackendTests {
         let response = try await backend.evaluate(request: sampleRequest)
         #expect(response.model == "@cf/cloudflare/clef-flash")
 
+        let bodySizes = await counter.observedBodySizes
+        #expect(bodySizes.count == 2)
+        #expect(bodySizes.allSatisfy { $0 > 0 })
+
         let recorded = MockClefBackendProtocol.recordedRequests
         #expect(recorded.count == 2)
         #expect(recorded[0].url == proxyURL)
         #expect(recorded[0].value(forHTTPHeaderField: "Authorization") == nil)
         #expect(recorded[0].value(forHTTPHeaderField: "X-Firebase-AppCheck") == "clef-appcheck-1")
         #expect(recorded[1].value(forHTTPHeaderField: "X-Firebase-AppCheck") == "clef-appcheck-2")
+
+        // Proxy 401/403 -> authenticationFailed on attempt 1 (0 retries)
+        for statusCode in [401, 403] {
+            MockClefBackendProtocol.reset()
+            MockClefBackendProtocol.enqueue(statusCode: statusCode, body: Data("Proxy denied (\(statusCode))".utf8))
+            let proxyAuthBackend = ClefHTTPBackend(
+                proxyEndpoint: proxyURL,
+                model: .clefFlash,
+                credential: .appCheck { "tok" },
+                session: makeSession(),
+                retryPolicy: RetryPolicy(maxAttempts: 3, initialDelay: .zero)
+            )
+            do {
+                _ = try await proxyAuthBackend.evaluate(request: sampleRequest)
+                Issue.record("Expected authenticationFailed for proxy \(statusCode)")
+            } catch let SystemOneError.authenticationFailed(msg) {
+                #expect(msg.contains("Proxy denied (\(statusCode))"))
+            }
+            #expect(MockClefBackendProtocol.requestCount == 1)
+        }
 
         // Verify insecure remote HTTP is rejected
         let insecureBackend = ClefHTTPBackend(
