@@ -99,7 +99,7 @@ struct BenchmarkOptions {
           -n, --count <N>       Number of emails to benchmark per backend (default: 25, max: 500)
           --all                 Benchmark the entire 500-message inbox dataset
           -b, --backends <list> Comma-separated backends to benchmark
-                                (options: onDeviceCoreML, localServe, hostedVPC, cloudAPI, cloudflareClef, openaiDecisions, generativeBaseline)
+                                (options: onDeviceCoreML, localServe, hostedVPC, cloudAPI, cloudflareClef, openaiDecisions, geminiDecisions, generativeBaseline)
                                 (default: all probed reachable backends)
           -o, --output <path>   Output JSON file path (default: canonical Application Support/MailTriage/benchmark-truth.json)
           -h, --help            Show this help message
@@ -144,7 +144,9 @@ final class BenchmarkRunner: Sendable {
             print("  1. Start local laya-serve:   laya-serve --port 8000")
             print("  2. Or configure TypeSafe:    export TYPESAFE_API_KEY=\"...\"")
             print("  3. Or configure Cloudflare:  export CLOUDFLARE_API_TOKEN=\"...\" CLOUDFLARE_ACCOUNT_ID=\"...\"")
-            print("  4. Or compile Core ML model: xcrun coremlc compile LayaDecisionModel.mlmodelc")
+            print("  4. Or configure OpenAI:      export OPENAI_API_KEY=\"...\"")
+            print("  5. Or configure Gemini:      export GEMINI_API_KEY=\"...\"")
+            print("  6. Or compile Core ML model: xcrun coremlc compile LayaDecisionModel.mlmodelc")
             print("================================================================================")
             exit(1)
         }
@@ -284,6 +286,8 @@ final class BenchmarkRunner: Sendable {
             endpointOrModel = "Cloudflare Workers AI (@cf/cloudflare/clef-flash)"
         case .openaiDecisions:
             endpointOrModel = "OpenAI Decisions API (gpt-6-luna)"
+        case .geminiDecisions:
+            endpointOrModel = "Google Gemini Decisions API (gemini-decision-1)"
         case .generativeBaseline:
             endpointOrModel = "SystemLanguageModel (~3B LLM)"
         }

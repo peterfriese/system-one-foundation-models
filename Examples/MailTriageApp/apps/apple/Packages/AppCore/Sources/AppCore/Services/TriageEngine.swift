@@ -6,6 +6,7 @@ import LayaFoundationModels
 import JevFoundationModels
 import ClefFoundationModels
 import OpenAIFoundationModels
+import GeminiFoundationModels
 import LayaOnDevice
 import FactoryKit
 
@@ -47,6 +48,7 @@ extension TriageEngineProtocol {
 /// Production implementation of `TriageEngineProtocol`.
 /// Executes real inference across Apple Foundation Models, Core ML (ANE),
 /// local laya-serve daemon, hosted VPC, and TypeSafe Jev Cloud API.
+/// Thread-safety for `cachedCoreMLEngine` is synchronized via `coreMLEngineLock: NSLock` (`@unchecked Sendable` per `AGENTS.md` Principle 2).
 public final class TriageEngine: TriageEngineProtocol, @unchecked Sendable {
     private let maxParallelism: Int
     private let coreMLEngineLock = NSLock()
@@ -186,7 +188,7 @@ public final class TriageEngine: TriageEngineProtocol, @unchecked Sendable {
                 configStore.hostedVpcURL,
                 defaultURL: BackendConfigurationStore.defaultHostedVpcURL
             )
-            let token = keychainService.string(for: .hostedVpcToken)
+            let token = keychainService.string(for: .hostedVpcToken) ?? (configStore.hostedVpcToken.isEmpty ? nil : configStore.hostedVpcToken)
             let model = LayaLanguageModel(endpoint: .custom(endpointURL), apiKey: token)
             let session = LanguageModelSession(model: model)
             let response = try await session.respond(to: prompt, generating: EmailTriageDecision.self)
@@ -194,15 +196,17 @@ public final class TriageEngine: TriageEngineProtocol, @unchecked Sendable {
             result = makeTriageResult(response: response, backend: backend, latencyMs: latencyMs)
 
         case .cloudAPI:
-            guard let apiKey = keychainService.string(for: .typesafeApiKey), !apiKey.isEmpty else {
+            guard let apiKey = (keychainService.string(for: .typesafeApiKey) ?? (configStore.typesafeApiKey.isEmpty ? nil : configStore.typesafeApiKey))?.trimmingCharacters(in: .whitespacesAndNewlines), !apiKey.isEmpty else {
                 throw BackendUnreachableError(
                     backend: backend,
                     reason: "Missing TypeSafe API Key",
                     guidance: "Open Settings (⌘,) and paste your TYPESAFE_API_KEY."
                 )
             }
-            let urlString = configStore.jevCloudURL.trimmingCharacters(in: .whitespacesAndNewlines)
-            let endpointURL = URL(string: urlString) ?? URL(string: "https://api.typesafe.ai/v1/systemone")!
+            let endpointURL = BackendConfigurationStore.normalizeSystemOneEndpoint(
+                configStore.jevCloudURL,
+                defaultURL: BackendConfigurationStore.defaultJevCloudURL
+            )
             let model = JevLanguageModel(apiKey: apiKey, endpoint: endpointURL)
             let session = LanguageModelSession(model: model)
             let response = try await session.respond(to: prompt, generating: EmailTriageDecision.self)
@@ -210,14 +214,14 @@ public final class TriageEngine: TriageEngineProtocol, @unchecked Sendable {
             result = makeTriageResult(response: response, backend: backend, latencyMs: latencyMs)
 
         case .cloudflareClef:
-            guard let accountID = keychainService.string(for: .cloudflareAccountId)?.trimmingCharacters(in: .whitespacesAndNewlines), !accountID.isEmpty else {
+            guard let accountID = (keychainService.string(for: .cloudflareAccountId) ?? (configStore.cloudflareAccountId.isEmpty ? nil : configStore.cloudflareAccountId))?.trimmingCharacters(in: .whitespacesAndNewlines), !accountID.isEmpty else {
                 throw BackendUnreachableError(
                     backend: backend,
                     reason: "Missing Cloudflare Account ID",
                     guidance: "Open Settings (⌘,) and paste your Cloudflare Account ID."
                 )
             }
-            guard let token = keychainService.string(for: .cloudflareApiToken)?.trimmingCharacters(in: .whitespacesAndNewlines), !token.isEmpty else {
+            guard let token = (keychainService.string(for: .cloudflareApiToken) ?? (configStore.cloudflareApiToken.isEmpty ? nil : configStore.cloudflareApiToken))?.trimmingCharacters(in: .whitespacesAndNewlines), !token.isEmpty else {
                 throw BackendUnreachableError(
                     backend: backend,
                     reason: "Missing Cloudflare API Token",
@@ -278,6 +282,37 @@ public final class TriageEngine: TriageEngineProtocol, @unchecked Sendable {
                 result = makeTriageResult(response: response, backend: backend, latencyMs: latencyMs)
             } catch {
                 print("⚠️ [TriageEngine] OpenAI Decisions evaluation failed: \(error)")
+                throw error
+            }
+
+        case .geminiDecisions:
+            guard let apiKey = (keychainService.string(for: .geminiApiKey) ?? (configStore.geminiAPIKey.isEmpty ? nil : configStore.geminiAPIKey))?.trimmingCharacters(in: .whitespacesAndNewlines), !apiKey.isEmpty else {
+                throw BackendUnreachableError(
+                    backend: backend,
+                    reason: "Missing Gemini API Key",
+                    guidance: "Open Settings (⌘,) and paste your GEMINI_API_KEY."
+                )
+            }
+            let model = GeminiDecisionsLanguageModel(apiKey: apiKey)
+            let session = LanguageModelSession(model: model)
+            let geminiPrompt = Prompt {
+                "Analyze the following email and any attached documents or screenshots for triage classification, urgency scoring, and suggested response actions."
+                "Sender: \(email.sender) <\(email.senderEmail)>"
+                "Subject: \(email.subject)"
+                "Body:\n\(email.body)"
+                for attachment in email.imageAttachments {
+                    let imageType = mapMimeTypeToUTType(attachment.mimeType)
+                    if let imageAttachment = Attachment(attachment.data, type: imageType) {
+                        imageAttachment
+                    }
+                }
+            }
+            do {
+                let response = try await session.respond(to: geminiPrompt, generating: EmailTriageDecision.self)
+                latencyMs = startTime.duration(to: clock.now).asMilliseconds
+                result = makeTriageResult(response: response, backend: backend, latencyMs: latencyMs)
+            } catch {
+                print("⚠️ [TriageEngine] Google Gemini Decisions evaluation failed: \(error)")
                 throw error
             }
 
@@ -403,11 +438,11 @@ public final class TriageEngine: TriageEngineProtocol, @unchecked Sendable {
         try Task.checkCancellation()
 
         // Adaptive parallelism: use maxParallelism = 4 for remote cloud backends
-        // (.cloudflareClef, .cloudAPI, .openaiDecisions) to prevent rate-limit saturation, while keeping
+        // (.cloudflareClef, .cloudAPI, .openaiDecisions, .geminiDecisions) to prevent rate-limit saturation, while keeping
         // maxParallelism = 8 for local/on-device backends.
         let effectiveParallelism: Int = {
             switch backend {
-            case .cloudflareClef, .cloudAPI, .openaiDecisions:
+            case .cloudflareClef, .cloudAPI, .openaiDecisions, .geminiDecisions:
                 return min(self.maxParallelism, 4)
             case .onDeviceCoreML, .localServe, .hostedVPC, .generativeBaseline:
                 return self.maxParallelism
@@ -545,26 +580,47 @@ public final class TriageEngine: TriageEngineProtocol, @unchecked Sendable {
 }
 
 /// Deterministic mock triage engine for unit testing and SwiftUI previews.
+/// Deterministic mock engine for SwiftUI Previews and fast unit tests.
+/// Thread-safety is enforced via `NSLock` protecting mutable mock configuration (`@unchecked Sendable` per `AGENTS.md` Principle 2).
 public final class MockTriageEngine: TriageEngineProtocol, @unchecked Sendable {
-    public var cannedResult: TriageResult?
-    public var shouldThrowError: Error?
-    public var latencyMs: Double
+    private let lock = NSLock()
+    private var _cannedResult: TriageResult?
+    private var _shouldThrowError: Error?
+    private var _latencyMs: Double
+
+    public var cannedResult: TriageResult? {
+        get { lock.withLock { _cannedResult } }
+        set { lock.withLock { _cannedResult = newValue } }
+    }
+
+    public var shouldThrowError: Error? {
+        get { lock.withLock { _shouldThrowError } }
+        set { lock.withLock { _shouldThrowError = newValue } }
+    }
+
+    public var latencyMs: Double {
+        get { lock.withLock { _latencyMs } }
+        set { lock.withLock { _latencyMs = newValue } }
+    }
 
     public init(
         cannedResult: TriageResult? = nil,
         shouldThrowError: Error? = nil,
         latencyMs: Double = 2.0
     ) {
-        self.cannedResult = cannedResult
-        self.shouldThrowError = shouldThrowError
-        self.latencyMs = latencyMs
+        self._cannedResult = cannedResult
+        self._shouldThrowError = shouldThrowError
+        self._latencyMs = latencyMs
     }
 
     public func triage(email: Email, backend: TriageBackend, skipProbe: Bool = false) async throws -> TriageResult {
-        if let error = shouldThrowError {
+        let (error, canned, currentLatency) = lock.withLock {
+            (_shouldThrowError, _cannedResult, _latencyMs)
+        }
+        if let error {
             throw error
         }
-        if let canned = cannedResult {
+        if let canned {
             return canned
         }
         let decision = EmailTriageDecision(
@@ -578,7 +634,7 @@ public final class MockTriageEngine: TriageEngineProtocol, @unchecked Sendable {
             confidenceScore: 0.90,
             decisiveness: 0.90,
             routingTier: .auto,
-            latencyMs: latencyMs,
+            latencyMs: currentLatency,
             backendUsed: backend
         )
     }
@@ -589,7 +645,7 @@ public final class MockTriageEngine: TriageEngineProtocol, @unchecked Sendable {
         progress: (@Sendable (Int, Int) -> Void)? = nil,
         onItemCompleted: (@Sendable (Email, TriageResult) -> Void)? = nil
     ) async throws -> BatchTriageReport {
-        if let error = shouldThrowError {
+        if let error = lock.withLock({ _shouldThrowError }) {
             throw error
         }
 
@@ -606,7 +662,7 @@ public final class MockTriageEngine: TriageEngineProtocol, @unchecked Sendable {
         return BatchTriageReport(
             totalProcessed: emails.count,
             totalDurationSeconds: 0.05,
-            averageLatencyMs: latencyMs,
+            averageLatencyMs: lock.withLock { _latencyMs },
             actionBreakdown: [.scheduleTask: emails.count],
             routingBreakdown: [.auto: emails.count],
             backend: backend

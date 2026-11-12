@@ -48,17 +48,115 @@ public enum TranscriptAttachmentExtractor {
             return SystemOneImage(data: dataAttachment.content, format: format, identifier: attachmentSegment.label)
 
         case .image(let imageAttachment):
-            if let url = imageAttachment.url, let image = try? SystemOneImage(fileURL: url, identifier: attachmentSegment.label) {
+            if let url = imageAttachment.url,
+               let image = try? extractImage(fromFileURL: url, identifier: attachmentSegment.label, maxDimension: 1024) {
                 return image
             }
-            let cgImage = imageAttachment.cgImage
-            guard let jpegData = convertCGImageToJPEG(cgImage, maxDimension: 1024, quality: 0.8) else {
-                throw SystemOneError.modelExecutionError("Failed to convert image attachment to JPEG data.")
+            let sourceImage = imageAttachment.cgImage
+            let preservesAlpha = hasAlphaChannel(sourceImage)
+            guard let scaledImage = downscaleCGImage(sourceImage, maxDimension: 1024) else {
+                throw SystemOneError.modelExecutionError("Failed to downscale image attachment.")
             }
-            return SystemOneImage(data: jpegData, format: .jpeg, identifier: attachmentSegment.label)
+            if preservesAlpha {
+                guard let pngData = encodePNG(scaledImage) else {
+                    throw SystemOneError.modelExecutionError("Failed to convert alpha image attachment to PNG data.")
+                }
+                return SystemOneImage(data: pngData, format: .png, identifier: attachmentSegment.label)
+            } else {
+                guard let jpegData = encodeJPEG(scaledImage, quality: 0.8) else {
+                    throw SystemOneError.modelExecutionError("Failed to convert opaque image attachment to JPEG data.")
+                }
+                return SystemOneImage(data: jpegData, format: .jpeg, identifier: attachmentSegment.label)
+            }
 
         @unknown default:
             return nil
+        }
+    }
+
+    /// Returns `true` when `cgImage` declares an active alpha channel that must be preserved losslessly.
+    ///
+    /// Standard iOS/macOS camera frames (`CVPixelBuffer` `32BGRA` -> `.noneSkipFirst`) and decoded
+    /// JPEG/HEIC photos (`.noneSkipLast` / `.none`) return `false`, fast-pathing to single-pass JPEG.
+    public static func hasAlphaChannel(_ cgImage: CGImage) -> Bool {
+        switch cgImage.alphaInfo {
+        case .first, .last, .premultipliedFirst, .premultipliedLast, .alphaOnly:
+            return true
+        case .none, .noneSkipFirst, .noneSkipLast:
+            return false
+        @unknown default:
+            return true
+        }
+    }
+
+    /// Extracts an image from a local file URL, returning raw file bytes without bitmap decoding when
+    /// already in a supported format (`PNG`, `JPEG`, `WebP`) within `maxDimension`, and downscaling via
+    /// `ImageIO` thumbnailing when dimensions exceed `maxDimension`.
+    public static func extractImage(
+        fromFileURL url: URL,
+        identifier: String? = nil,
+        maxDimension: Int = 1024
+    ) throws -> SystemOneImage {
+        try withAutoreleasePool {
+            let resolvedIdentifier = identifier ?? url.lastPathComponent
+            let sourceOptions: [CFString: Any] = [kCGImageSourceShouldCache: false]
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, sourceOptions as CFDictionary) else {
+                throw SystemOneError.modelExecutionError("Unable to open image source at file URL '\(url.lastPathComponent)'.")
+            }
+
+            let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+            let pixelWidth = (properties?[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue
+            let pixelHeight = (properties?[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue
+
+            let sourceFormat: SystemOneImage.Format? = {
+                if let typeIdentifier = CGImageSourceGetType(source) as String?,
+                   let utType = UTType(typeIdentifier),
+                   let mapped = mapUTTypeToFormat(utType) {
+                    return mapped
+                }
+                if let extType = UTType(filenameExtension: url.pathExtension) {
+                    return mapUTTypeToFormat(extType)
+                }
+                return nil
+            }()
+
+            if let format = sourceFormat,
+               let width = pixelWidth,
+               let height = pixelHeight,
+               width > 0,
+               height > 0,
+               max(width, height) <= maxDimension {
+                let data = try Data(contentsOf: url)
+                return SystemOneImage(data: data, format: format, identifier: resolvedIdentifier)
+            }
+
+            let thumbOptions: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceShouldCacheImmediately: true,
+                kCGImageSourceThumbnailMaxPixelSize: maxDimension
+            ]
+            let scaledImage: CGImage? = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbOptions as CFDictionary)
+                ?? CGImageSourceCreateImageAtIndex(source, 0, nil).flatMap { downscaleCGImage($0, maxDimension: maxDimension) }
+
+            guard let finalImage = scaledImage else {
+                throw SystemOneError.modelExecutionError("Failed to decode or downscale image file '\(url.lastPathComponent)'.")
+            }
+
+            let propHasAlpha = (properties?[kCGImagePropertyHasAlpha] as? Bool) ?? false
+            let preservesAlpha = propHasAlpha || hasAlphaChannel(finalImage)
+
+            if preservesAlpha {
+                guard let pngData = encodePNG(finalImage) else {
+                    throw SystemOneError.modelExecutionError("Failed to encode downscaled file image as PNG.")
+                }
+                return SystemOneImage(data: pngData, format: .png, identifier: resolvedIdentifier)
+            } else {
+                guard let jpegData = encodeJPEG(finalImage, quality: 0.8) else {
+                    throw SystemOneError.modelExecutionError("Failed to encode downscaled file image as JPEG.")
+                }
+                return SystemOneImage(data: jpegData, format: .jpeg, identifier: resolvedIdentifier)
+            }
         }
     }
 
@@ -76,53 +174,119 @@ public enum TranscriptAttachmentExtractor {
         maxDimension: Int = 1024,
         quality: Double = 0.8
     ) -> Data? {
-        let origWidth = cgImage.width
-        let origHeight = cgImage.height
+        guard let finalImage = downscaleCGImage(cgImage, maxDimension: maxDimension) else {
+            return nil
+        }
+        return encodeJPEG(finalImage, quality: quality)
+    }
 
-        let finalImage: CGImage
-        let maxDim = max(origWidth, origHeight)
-        if maxDim > maxDimension {
+    /// Scales down a `CGImage` if its maximum dimension exceeds `maxDimension` and encodes as lossless PNG.
+    public static func convertCGImageToPNG(
+        _ cgImage: CGImage,
+        maxDimension: Int = 1024
+    ) -> Data? {
+        guard let finalImage = downscaleCGImage(cgImage, maxDimension: maxDimension) else {
+            return nil
+        }
+        return encodePNG(finalImage)
+    }
+
+    // MARK: - Private Image Helpers
+
+    private static func withAutoreleasePool<T>(_ body: () throws -> T) rethrows -> T {
+        #if canImport(ObjectiveC)
+        return try autoreleasepool(invoking: body)
+        #else
+        return try body()
+        #endif
+    }
+
+    private static func downscaleCGImage(_ cgImage: CGImage, maxDimension: Int) -> CGImage? {
+        withAutoreleasePool {
+            let origWidth = cgImage.width
+            let origHeight = cgImage.height
+            let maxDim = max(origWidth, origHeight)
+            guard maxDim > maxDimension else {
+                return cgImage
+            }
+
             let scale = Double(maxDimension) / Double(maxDim)
             let targetWidth = max(1, Int((Double(origWidth) * scale).rounded()))
             let targetHeight = max(1, Int((Double(origHeight) * scale).rounded()))
 
-            let colorSpace = CGColorSpaceCreateDeviceRGB()
-            let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
-            guard let context = CGContext(
+            let fallbackSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+            let preferredSpace: CGColorSpace
+            if let sourceSpace = cgImage.colorSpace, sourceSpace.model == .rgb {
+                preferredSpace = sourceSpace
+            } else {
+                preferredSpace = fallbackSpace
+            }
+
+            let bitmapInfo = hasAlphaChannel(cgImage)
+                ? CGImageAlphaInfo.premultipliedLast.rawValue
+                : CGImageAlphaInfo.noneSkipLast.rawValue
+
+            let context = CGContext(
                 data: nil,
                 width: targetWidth,
                 height: targetHeight,
                 bitsPerComponent: 8,
                 bytesPerRow: 0,
-                space: colorSpace,
+                space: preferredSpace,
                 bitmapInfo: bitmapInfo
-            ) else {
+            ) ?? CGContext(
+                data: nil,
+                width: targetWidth,
+                height: targetHeight,
+                bitsPerComponent: 8,
+                bytesPerRow: 0,
+                space: fallbackSpace,
+                bitmapInfo: bitmapInfo
+            )
+
+            guard let context else {
                 return nil
             }
             context.interpolationQuality = .high
             context.draw(cgImage, in: CGRect(x: 0, y: 0, width: targetWidth, height: targetHeight))
-            guard let scaledImage = context.makeImage() else {
+            return context.makeImage()
+        }
+    }
+
+    private static func encodeJPEG(_ cgImage: CGImage, quality: Double) -> Data? {
+        withAutoreleasePool {
+            let mutableData = NSMutableData()
+            guard let destination = CGImageDestinationCreateWithData(
+                mutableData as CFMutableData,
+                UTType.jpeg.identifier as CFString,
+                1,
+                nil
+            ) else {
                 return nil
             }
-            finalImage = scaledImage
-        } else {
-            finalImage = cgImage
+            let options: [CFString: Any] = [
+                kCGImageDestinationLossyCompressionQuality: quality
+            ]
+            CGImageDestinationAddImage(destination, cgImage, options as CFDictionary)
+            guard CGImageDestinationFinalize(destination) else { return nil }
+            return mutableData as Data
         }
+    }
 
-        let mutableData = NSMutableData()
-        guard let destination = CGImageDestinationCreateWithData(
-            mutableData as CFMutableData,
-            UTType.jpeg.identifier as CFString,
-            1,
-            nil
-        ) else {
-            return nil
+    private static func encodePNG(_ cgImage: CGImage) -> Data? {
+        withAutoreleasePool {
+            let mutableData = NSMutableData()
+            guard let destination = CGImageDestinationCreateWithData(
+                mutableData as CFMutableData,
+                UTType.png.identifier as CFString,
+                1,
+                nil
+            ) else {
+                return nil
+            }
+            CGImageDestinationAddImage(destination, cgImage, nil)
+            guard CGImageDestinationFinalize(destination) else { return nil }
+            return mutableData as Data
         }
-        let options: [CFString: Any] = [
-            kCGImageDestinationLossyCompressionQuality: quality
-        ]
-        CGImageDestinationAddImage(destination, finalImage, options as CFDictionary)
-        guard CGImageDestinationFinalize(destination) else { return nil }
-        return mutableData as Data
     }
 }

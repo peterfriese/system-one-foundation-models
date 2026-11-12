@@ -43,6 +43,7 @@ public struct SettingsView: View {
     @KeychainStorage(.typesafeApiKey) private var typesafeApiKey = ""
     @KeychainStorage(.hostedVpcToken) private var hostedVpcToken = ""
     @KeychainStorage(.openaiApiKey) private var openaiApiKey = ""
+    @KeychainStorage(.geminiApiKey) private var geminiApiKey = ""
 
     public init() {}
 
@@ -430,7 +431,31 @@ public struct SettingsView: View {
             }
         }
 
-        // 6. Apple Intelligence Baseline
+        // 6. Google Gemini Decisions API
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Google Gemini Decisions API (gemini-decision-1)")
+                .font(.headline.weight(.bold))
+                .foregroundStyle(.primary)
+
+            SettingsCard {
+                SettingsRow(title: "API Key", subtitle: "Stored securely in Keychain") {
+                    SecureField("GEMINI_API_KEY", text: $geminiApiKey)
+                        .textFieldStyle(.roundedBorder)
+                        #if os(iOS)
+                        .textContentType(.password)
+                        .autocapitalization(.none)
+                        #endif
+                }
+
+                cardDivider
+
+                SettingsRow(title: "Connection Status") {
+                    probeRow(for: .geminiDecisions)
+                }
+            }
+        }
+
+        // 7. Apple Intelligence Baseline
         VStack(alignment: .leading, spacing: 8) {
             Text("Apple Intelligence (Baseline)")
                 .font(.headline.weight(.bold))
@@ -478,6 +503,7 @@ public struct SettingsView: View {
                         cloudflareAccountId = ""
                         cloudflareApiToken = ""
                         openaiApiKey = ""
+                        geminiApiKey = ""
                     }
                     .buttonStyle(.bordered)
                 }

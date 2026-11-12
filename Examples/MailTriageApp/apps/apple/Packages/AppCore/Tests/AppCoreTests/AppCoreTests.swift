@@ -128,7 +128,10 @@ struct AppCoreModelsTests {
     }
 }
 
-@Suite("MailStore State and Action Tests")
+@Suite("Serialized DI Container Tests", .serialized)
+enum SerializedContainerTests {
+
+@Suite("MailStore State and Action Tests", .serialized)
 @MainActor
 struct MailStoreTests {
     @Test("MailStore initial state loads emails and calculates counts")
@@ -621,9 +624,9 @@ struct TriageEngineTests {
         engine.clearCoreMLCache()
     }
 
-    @Test("TriageBackend enum defines all 7 architectures and their metadata")
+    @Test("TriageBackend enum defines all 8 architectures and their metadata")
     func testTriageBackendMetadata() {
-        #expect(TriageBackend.allCases.count == 7)
+        #expect(TriageBackend.allCases.count == 8)
 
         let coreML = TriageBackend.onDeviceCoreML
         #expect(coreML.iconName == "cpu.fill")
@@ -673,6 +676,18 @@ struct TriageEngineTests {
         #expect(openai.isDecisionModel == true)
         #expect(openai.supportsMultimodal == true)
         #expect(openai.pricePerMillionInputTokens == 0.10)
+
+        let gemini = TriageBackend.geminiDecisions
+        #expect(gemini.displayName == "Google Gemini Decisions")
+        #expect(gemini.shortName == "Gemini")
+        #expect(gemini.description == "Google Gemini Decisions API (gemini-decision-1) fast multimodal decision primitive at $0.10/1M tokens.")
+        #expect(gemini.iconName == "diamond.fill")
+        #expect(gemini.latencyTier == "< 150ms")
+        #expect(gemini.privacyLevel == .cloud)
+        #expect(gemini.isOffline == false)
+        #expect(gemini.isDecisionModel == true)
+        #expect(gemini.supportsMultimodal == true)
+        #expect(gemini.pricePerMillionInputTokens == 0.10)
 
         let baseline = TriageBackend.generativeBaseline
         #expect(baseline.iconName == "sparkles")
@@ -834,23 +849,28 @@ struct ConfigurationTests {
     @Test("BackendConfigurationStore loads TYPESAFE_API_KEY from environment and populates Keychain (SEC-2)")
     func testLoadDotEnvAndPopulateKeychain() {
         // SEC-2: If the required API keys are present in the environment, use them, otherwise fail the respective test
-        guard let envKey = ProcessInfo.processInfo.environment["TYPESAFE_API_KEY"], !envKey.isEmpty else {
+        guard let envKey = ProcessInfo.processInfo.environment["TYPESAFE_API_KEY"] ?? BackendConfigurationStore.loadKeyFromDotEnv("TYPESAFE_API_KEY"), !envKey.isEmpty else {
             withKnownIssue("Missing required TYPESAFE_API_KEY in environment") {
                 #expect(Bool(false), "Missing required TYPESAFE_API_KEY in environment")
             }
             return
         }
 
+        Container.shared.keychainService.reset()
+        defer { Container.shared.keychainService.reset() }
+
         #expect(envKey.starts(with: "apikey_") == true)
 
         let store = BackendConfigurationStore(userDefaults: UserDefaults())
         let key = store.typesafeApiKey
         #expect(!key.isEmpty)
-        #expect(key == envKey)
+        let matchesEnv = (key == envKey)
+        #expect(matchesEnv == true)
 
-        // Verify it was populated to keychain
+        // Verify it was populated to keychain without exposing raw secret in failure diffs
         let keychain = Container.shared.keychainService()
-        #expect(keychain.string(for: .typesafeApiKey) == envKey)
+        let matchesKeychain = (keychain.string(for: .typesafeApiKey) == envKey)
+        #expect(matchesKeychain == true)
     }
 
     @Test("BackendConfigurationStore normalizes System One endpoints to /v1/systemone")
@@ -1183,11 +1203,11 @@ struct HealthProbeTests {
         }
     }
 
-    @Test("probeAll probes all 7 backends concurrently")
+    @Test("probeAll probes all 8 backends concurrently")
     func testProbeAllConcurrently() async {
         let probe = BackendHealthProbeService()
         let results = await probe.probeAll()
-        #expect(results.count == 7)
+        #expect(results.count == 8)
     }
 
     @Test("BackendHealthStatus and BackendUnreachableError identify preparing state")
@@ -1268,6 +1288,14 @@ struct HealthProbeTests {
         )
         #expect(err6.errorDescription == "OpenAI Decisions Unreachable: Missing OpenAI API Key. Open Settings (⌘,) and paste your OPENAI_API_KEY.")
         #expect(err6.recoverySuggestion == "Open Settings (⌘,) and paste your OPENAI_API_KEY.")
+
+        let err7 = BackendUnreachableError(
+            backend: .geminiDecisions,
+            reason: "Missing Gemini API Key",
+            guidance: "Open Settings (⌘,) and paste your GEMINI_API_KEY."
+        )
+        #expect(err7.errorDescription == "Google Gemini Decisions Unreachable: Missing Gemini API Key. Open Settings (⌘,) and paste your GEMINI_API_KEY.")
+        #expect(err7.recoverySuggestion == "Open Settings (⌘,) and paste your GEMINI_API_KEY.")
     }
 
     @Test("OpenAI decisions probe sends valid payload and maps 200, 401, 429")
@@ -1332,29 +1360,153 @@ struct HealthProbeTests {
         #expect(store.openaiOrganization == "")
         #expect(store.openaiProject == "")
     }
+
+    @Test("Google Gemini decisions probe sends valid payload and maps 200, 401, 429, and timeout")
+    func testGeminiDecisionsProbeResponses() async throws {
+        let mockKeychain = MockKeychainService(initialStorage: [:])
+        try mockKeychain.set("AIzaSy-test-key-12345", for: .geminiApiKey)
+        let testConfigStore = BackendConfigurationStore(
+            userDefaults: UserDefaults(suiteName: "testGeminiProbeResponses_\(UUID().uuidString)")!,
+            keychain: mockKeychain
+        )
+
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockHTTPStatusURLProtocol.self]
+        let session = URLSession(configuration: config)
+        let probe = BackendHealthProbeService(session: session, configStore: testConfigStore)
+
+        MockHTTPStatusURLProtocol.mockStatusCode = 200
+        let status200 = await probe.probe(backend: .geminiDecisions)
+        #expect(status200.isHealthy == true)
+
+        MockHTTPStatusURLProtocol.mockStatusCode = 401
+        let status401 = await probe.probe(backend: .geminiDecisions)
+        #expect(status401.reason?.contains("Invalid API Key (HTTP 401)") == true || status401.guidance?.contains("GEMINI_API_KEY") == true)
+
+        MockHTTPStatusURLProtocol.mockStatusCode = 429
+        let status429 = await probe.probe(backend: .geminiDecisions)
+        #expect(status429.reason?.contains("Rate Limited (HTTP 429)") == true || status429.guidance?.contains("quota") == true)
+
+        MockHTTPStatusURLProtocol.mockError = URLError(.timedOut)
+        let statusTimeout = await probe.probe(backend: .geminiDecisions)
+        MockHTTPStatusURLProtocol.mockError = nil
+        #expect(statusTimeout.reason?.contains("Cannot connect to Google Gemini Decisions API") == true)
+        #expect(statusTimeout.guidance?.contains("Check your internet connection") == true)
+        #expect(statusTimeout.guidance?.contains("paste your GEMINI_API_KEY") == false)
+
+        MockHTTPStatusURLProtocol.mockError = URLError(.notConnectedToInternet)
+        let statusOffline = await probe.probe(backend: .geminiDecisions)
+        MockHTTPStatusURLProtocol.mockError = nil
+        #expect(statusOffline.guidance?.contains("Check your internet connection") == true)
+
+        MockHTTPStatusURLProtocol.mockError = URLError(.cancelled)
+        let statusCancelled = await probe.probe(backend: .geminiDecisions)
+        MockHTTPStatusURLProtocol.mockError = nil
+        #expect(statusCancelled.reason == "Health check cancelled")
+    }
+
+    @Test("BackendConfigurationStore correctly manages Google Gemini credentials without getter side effects and filters placeholders")
+    func testBackendConfigurationStoreGeminiProperties() async {
+        let mockKeychain = MockKeychainService()
+        let suite = "testGeminiConfig_\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = BackendConfigurationStore(userDefaults: defaults, keychain: mockKeychain)
+
+        store.geminiAPIKey = "AIzaSy-live-test"
+        #expect(store.geminiAPIKey == "AIzaSy-live-test")
+        #expect(mockKeychain.string(for: .geminiApiKey) == "AIzaSy-live-test")
+        #expect(mockKeychain.geminiAPIKey == "AIzaSy-live-test")
+
+        // Verify Bearer stripping from setter and getter without mutating raw Keychain entry on read
+        store.geminiAPIKey = "Bearer AIzaSy-bearer-token"
+        #expect(store.geminiAPIKey == "AIzaSy-bearer-token")
+
+        try? mockKeychain.set("Bearer AIzaSy-keychain-raw", for: .geminiApiKey)
+        #expect(store.geminiAPIKey == "AIzaSy-keychain-raw")
+        #expect(mockKeychain.string(for: .geminiApiKey) == "Bearer AIzaSy-keychain-raw")
+
+        store.resetToDefaults()
+        #expect(store.geminiAPIKey == "")
+
+        // Verify environment fallback does NOT side-effect into Keychain and filters placeholder strings
+        let envKeychain = MockKeychainService()
+        let envStore = BackendConfigurationStore(
+            userDefaults: defaults,
+            keychain: envKeychain,
+            environmentOverride: ["GEMINI_API_KEY": "AIzaSyFromEnvFallback"]
+        )
+        #expect(envStore.geminiAPIKey == "AIzaSyFromEnvFallback")
+        #expect(envKeychain.string(for: .geminiApiKey) == nil)
+
+        let placeholderStore = BackendConfigurationStore(
+            userDefaults: defaults,
+            keychain: MockKeychainService(),
+            environmentOverride: [
+                "GEMINI_API_KEY": "your_gemini_api_key_here",
+                "GOOGLE_API_KEY": "gemini_placeholder_token",
+                "OPENAI_API_KEY": "your_openai_api_key_here"
+            ]
+        )
+        #expect(placeholderStore.geminiAPIKey == "")
+        #expect(placeholderStore.openaiAPIKey == "")
+        #expect(BackendConfigurationStore.parseDotEnvContent("GEMINI_API_KEY=my_placeholder_key", key: "GEMINI_API_KEY") == nil)
+
+        // Verify concurrent NSLock-synchronized reads and writes across tasks
+        await withTaskGroup(of: Void.self) { group in
+            for idx in 0..<25 {
+                group.addTask {
+                    store.openaiOrganization = "org-\(idx)"
+                    _ = store.openaiOrganization
+                    _ = store.jevCloudURL
+                    _ = store.geminiAPIKey
+                }
+            }
+        }
+        #expect(store.openaiOrganization.hasPrefix("org-"))
+    }
 }
 
 private final class MockHTTPStatusURLProtocol: URLProtocol, @unchecked Sendable {
-    nonisolated(unsafe) static var mockStatusCode: Int = 200
-    nonisolated(unsafe) static var mockResponseData: Data = Data()
-    nonisolated(unsafe) static var mockError: Error?
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var _mockStatusCode: Int = 200
+    nonisolated(unsafe) private static var _mockResponseData: Data = Data()
+    nonisolated(unsafe) private static var _mockError: Error?
+
+    static var mockStatusCode: Int {
+        get { lock.withLock { _mockStatusCode } }
+        set { lock.withLock { _mockStatusCode = newValue } }
+    }
+
+    static var mockResponseData: Data {
+        get { lock.withLock { _mockResponseData } }
+        set { lock.withLock { _mockResponseData = newValue } }
+    }
+
+    static var mockError: Error? {
+        get { lock.withLock { _mockError } }
+        set { lock.withLock { _mockError = newValue } }
+    }
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
-        if let error = Self.mockError {
+        let (statusCode, responseData, error) = Self.lock.withLock {
+            (Self._mockStatusCode, Self._mockResponseData, Self._mockError)
+        }
+        if let error {
             client?.urlProtocol(self, didFailWithError: error)
             return
         }
         let response = HTTPURLResponse(
             url: request.url ?? URL(string: "http://127.0.0.1:8000")!,
-            statusCode: Self.mockStatusCode,
+            statusCode: statusCode,
             httpVersion: "HTTP/1.1",
             headerFields: nil
         )!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: Self.mockResponseData)
+        client?.urlProtocol(self, didLoad: responseData)
         client?.urlProtocolDidFinishLoading(self)
     }
 
@@ -2042,3 +2194,5 @@ struct BenchmarkSessionStoreTests {
         #expect(sessionStore.records[0].emailSubject == store.emails[0].subject)
     }
 }
+
+} // enum SerializedContainerTests

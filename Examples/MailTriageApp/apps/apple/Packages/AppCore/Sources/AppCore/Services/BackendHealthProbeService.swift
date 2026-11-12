@@ -6,6 +6,7 @@ import SystemOneCore
 import JevFoundationModels
 import ClefFoundationModels
 import OpenAIFoundationModels
+import GeminiFoundationModels
 
 /// Health status of a decision model inference backend.
 public enum BackendHealthStatus: Sendable, Equatable {
@@ -86,22 +87,16 @@ public protocol BackendHealthProbeServiceProtocol: Sendable {
 
 /// Production implementation of `BackendHealthProbeServiceProtocol`.
 /// Executes real network probes, system capability queries, and on-device filesystem checks.
-public final class BackendHealthProbeService: BackendHealthProbeServiceProtocol, @unchecked Sendable {
+public final class BackendHealthProbeService: BackendHealthProbeServiceProtocol, Sendable {
     private let customConfigStore: BackendConfigurationStore?
     private let customCoreMLManager: CoreMLModelManager?
 
-    @ObservationIgnored
-    @Injected(\.backendConfigurationStore) private var defaultStore
-
-    @ObservationIgnored
-    @Injected(\.coreMLModelManager) private var defaultCoreMLManager
-
     private var configStore: BackendConfigurationStore {
-        customConfigStore ?? defaultStore
+        customConfigStore ?? Container.shared.backendConfigurationStore()
     }
 
     private var coreMLManager: CoreMLModelManager {
-        customCoreMLManager ?? defaultCoreMLManager
+        customCoreMLManager ?? Container.shared.coreMLModelManager()
     }
 
     private let session: URLSession
@@ -134,6 +129,8 @@ public final class BackendHealthProbeService: BackendHealthProbeServiceProtocol,
             return await probeCloudflareClef()
         case .openaiDecisions:
             return await probeOpenAIDecisions()
+        case .geminiDecisions:
+            return await probeGeminiDecisions()
         case .generativeBaseline:
             return await probeBaseline()
         }
@@ -495,6 +492,117 @@ public final class BackendHealthProbeService: BackendHealthProbeServiceProtocol,
         }
     }
 
+    private func probeGeminiDecisions() async -> BackendHealthStatus {
+        var key = configStore.geminiAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        if key.hasPrefix("Bearer ") {
+            key = String(key.dropFirst("Bearer ".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard !key.isEmpty else {
+            return .unreachable(
+                reason: "Missing Gemini API Key",
+                guidance: "Open Settings (⌘,) and paste your GEMINI_API_KEY."
+            )
+        }
+
+        let clock = ContinuousClock()
+        let start = clock.now
+
+        var request = URLRequest(url: GeminiDecisionsEndpoint.defaultURL)
+        request.httpMethod = "POST"
+        request.setValue(key, forHTTPHeaderField: "x-goog-api-key")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 10.0
+
+        do {
+            let probeRequest = GeminiDecisionsRequest(
+                model: GeminiDecisionsEndpoint.defaultModel,
+                input: .text("Health check ping."),
+                questions: [
+                    "ok": GeminiDecisionsQuestion(
+                        type: "noul",
+                        instructions: "Return true."
+                    )
+                ]
+            )
+            request.httpBody = try JSONEncoder().encode(probeRequest)
+
+            let (data, response) = try await session.data(for: request)
+            let elapsed = start.duration(to: clock.now).asMilliseconds
+            guard let http = response as? HTTPURLResponse else {
+                return .unreachable(
+                    reason: "Unexpected response from Google Gemini Decisions API",
+                    guidance: "Check your internet connection or service status."
+                )
+            }
+
+            if (200...299).contains(http.statusCode) {
+                return .healthy(latencyMs: elapsed)
+            }
+
+            let serverMessage = parseServerErrorMessage(from: data)
+            if let serverMessage, !serverMessage.isEmpty {
+                let guidance: String
+                if http.statusCode == 401 || http.statusCode == 403 {
+                    guidance = "Open Settings (⌘,) and paste your GEMINI_API_KEY."
+                } else if http.statusCode == 429 {
+                    guidance = "Google Gemini Decisions API rate limited or quota exceeded."
+                } else {
+                    guidance = "Check Google Gemini service status."
+                }
+                return .unreachable(
+                    reason: "Gemini Error (HTTP \(http.statusCode)): \(serverMessage)",
+                    guidance: guidance
+                )
+            }
+
+            if http.statusCode == 401 || http.statusCode == 403 {
+                return .unreachable(
+                    reason: http.statusCode == 401 ? "Invalid API Key (HTTP 401)" : "Authentication Failed (HTTP 403)",
+                    guidance: "Open Settings (⌘,) and paste your GEMINI_API_KEY."
+                )
+            }
+
+            return evaluateHTTPStatus(http.statusCode, latencyMs: elapsed)
+        } catch is CancellationError {
+            return .unreachable(
+                reason: "Health check cancelled",
+                guidance: "Retry the connection check when ready."
+            )
+        } catch let urlError as URLError {
+            if urlError.code == .cancelled {
+                return .unreachable(
+                    reason: "Health check cancelled",
+                    guidance: "Retry the connection check when ready."
+                )
+            }
+            let connectivityCodes: Set<URLError.Code> = [
+                .notConnectedToInternet,
+                .networkConnectionLost,
+                .cannotFindHost,
+                .cannotConnectToHost,
+                .timedOut,
+                .dnsLookupFailed
+            ]
+            if connectivityCodes.contains(urlError.code) {
+                return .unreachable(
+                    reason: "Cannot connect to Google Gemini Decisions API: \(urlError.localizedDescription)",
+                    guidance: "Check your internet connection or Google Gemini service status."
+                )
+            }
+            print("⚠️ [probeGeminiDecisions] Failed with URLError: \(urlError)")
+            return .unreachable(
+                reason: "Cannot connect to Google Gemini Decisions API: \(urlError.localizedDescription)",
+                guidance: "Check your internet connection and verify your GEMINI_API_KEY in Settings (⌘,)."
+            )
+        } catch {
+            print("⚠️ [probeGeminiDecisions] Failed with error: \(error)")
+            return .unreachable(
+                reason: "Cannot connect to Google Gemini Decisions API: \(error.localizedDescription)",
+                guidance: "Check your internet connection and verify your GEMINI_API_KEY in Settings (⌘,)."
+            )
+        }
+    }
+
     private func parseServerErrorMessage(from data: Data) -> String? {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return nil
@@ -619,24 +727,38 @@ public final class BackendHealthProbeService: BackendHealthProbeServiceProtocol,
 }
 
 /// Mock health probe service for unit tests and previews.
+/// Thread-safety is enforced via `NSLock` protecting mutable override state (`@unchecked Sendable` per `AGENTS.md` Principle 2).
 public final class MockBackendHealthProbeService: BackendHealthProbeServiceProtocol, @unchecked Sendable {
-    public var statusOverride: [TriageBackend: BackendHealthStatus] = [:]
-    public var defaultStatus: BackendHealthStatus
+    private let lock = NSLock()
+    private var _statusOverride: [TriageBackend: BackendHealthStatus] = [:]
+    private var _defaultStatus: BackendHealthStatus
+
+    public var statusOverride: [TriageBackend: BackendHealthStatus] {
+        get { lock.withLock { _statusOverride } }
+        set { lock.withLock { _statusOverride = newValue } }
+    }
+
+    public var defaultStatus: BackendHealthStatus {
+        get { lock.withLock { _defaultStatus } }
+        set { lock.withLock { _defaultStatus = newValue } }
+    }
 
     public init(defaultStatus: BackendHealthStatus = .healthy(latencyMs: 8.0)) {
-        self.defaultStatus = defaultStatus
+        self._defaultStatus = defaultStatus
     }
 
     public func probe(backend: TriageBackend) async -> BackendHealthStatus {
-        statusOverride[backend] ?? defaultStatus
+        lock.withLock { _statusOverride[backend] ?? _defaultStatus }
     }
 
     public func probeAll() async -> [TriageBackend: BackendHealthStatus] {
-        var results: [TriageBackend: BackendHealthStatus] = [:]
-        for backend in TriageBackend.allCases {
-            results[backend] = statusOverride[backend] ?? defaultStatus
+        lock.withLock {
+            var results: [TriageBackend: BackendHealthStatus] = [:]
+            for backend in TriageBackend.allCases {
+                results[backend] = _statusOverride[backend] ?? _defaultStatus
+            }
+            return results
         }
-        return results
     }
 }
 

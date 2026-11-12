@@ -2,7 +2,7 @@
 
 `MailTriageApp` is the flagship native Apple reference application demonstrating end-to-end integration of **System One decision models** into Apple's **Foundation Models framework** (`LanguageModel`, `LanguageModelSession`, `@Generable`) on macOS 27+ and iOS 27+.
 
-Built with native Swift 6 and modern SwiftUI, `MailTriageApp` illustrates how to evaluate strongly typed decisions against email context in single-digit to low-double-digit milliseconds with calibrated confidence, zero text-generation hallucinations, and 6 hot-swappable execution backends.
+Built with native Swift 6 and modern SwiftUI, `MailTriageApp` illustrates how to evaluate strongly typed decisions against email context in single-digit to low-double-digit milliseconds with calibrated confidence, zero text-generation hallucinations, and 8 hot-swappable execution backends.
 
 ---
 
@@ -27,11 +27,11 @@ Built with native Swift 6 and modern SwiftUI, `MailTriageApp` illustrates how to
 - **Action Suggestions & Compose Integration**: Suggested actions (`Reply`, `Forward`, `Archive`, `Compose`) automatically pre-populate `ComposeMessageSheet` with the original sender, `Re:`/`Fwd:` subjects, and formatted quoted text bodies.
 - **Batch Triage Sheet**: Evaluate hundreds of inbox items concurrently with real-time progress bars, duration tracking, and cooperative cancellation (`Task.checkCancellation()`).
 - **Liquid Glass Header Banner**: Contextual triage results banner rendered with high-contrast native materials, displaying model confidence percentages, urgency badges, and quick-action triggers.
-- **6 Execution Topologies**: Seamlessly toggle between on-device Apple Neural Engine execution, local localhost daemons, enterprise VPC clusters, managed cloud SaaS, Cloudflare Workers AI global edge, and generative LLM baselines.
+- **8 Execution Topologies**: Seamlessly toggle between on-device Apple Neural Engine execution, local localhost daemons, enterprise VPC clusters, managed cloud SaaS, Cloudflare Workers AI global edge, OpenAI Decisions API, Google Gemini Decisions API, and generative LLM baselines.
 
 ---
 
-## 🔌 6 Selectable Execution Backends
+## 🔌 8 Selectable Execution Backends
 
 Switch backends dynamically via the **Approach dropdown** in the message list toolbar or in the **Settings** view (`Cmd + ,` on macOS) without restarting the application:
 
@@ -42,6 +42,8 @@ Switch backends dynamically via the **Approach dropdown** in the message list to
 | **Hosted VPC** | Enterprise HTTP | `LayaLanguageModel` to `https://api.impossibl.com/v1` | 40–70 ms | ✅ WAN | ❌ None | Private enterprise container deployment behind corporate firewall or internal VPC. |
 | **Jev Cloud API** | Cloud HTTPS | `JevLanguageModel` to `https://api.typesafe.ai` | 60–90 ms | ✅ Cloud | ✅ Key | TypeSafe AI managed cloud endpoints with automated exponential backoff retries. |
 | **Cloudflare Clef** | Edge HTTPS | `ClefLanguageModel` via Cloudflare Workers AI | < 100 ms | ✅ Edge | ✅ Token | Global serverless edge evaluation across 330+ cities using open-weight `@cf/cloudflare/clef-flash`. |
+| **OpenAI Decisions** | Cloud HTTPS | `OpenAIDecisionsLanguageModel` (`gpt-6-luna`) | 40–80 ms | ✅ Cloud | ✅ Key | Non-autoregressive decision computing at $0.10/1M input tokens and $0.00 output tokens. |
+| **Google Gemini Decisions** | Cloud HTTPS | `GeminiDecisionsLanguageModel` (`gemini-decision-1`) | 50–120 ms | ✅ Cloud | ✅ Key | Multimodal decision evaluation up to 256K context & 1,000 questions at $0.10/1M input tokens. |
 | **Generative Baseline** | On-Device LLM | `LanguageModelSession` via Apple Intelligence | 800–1,200 ms | ❌ None | ❌ None | Standard ~3B autoregressive text LLM for latency, token efficiency, and determinism comparisons. |
 
 > [!NOTE]
@@ -82,7 +84,7 @@ In the message list toolbar, open the **Approach** menu and select **Cloudflare 
 ## 💾 Pre-Seeded Fixtures & Reference Truth Benchmark
 
 - **10 Realistic Sample Emails**: Pre-loaded in the default store, spanning billing chargebacks, database connection timeouts, enterprise renewals, product feedback, and spam newsletters.
-- **500-Email Reference Benchmark**: Bundled in `AppCore` (`benchmark-truth.json`) with cryptographic integrity verification. Used by automated unit tests to ensure parity and verify accuracy across all 6 execution backends.
+- **500-Email Reference Benchmark**: Bundled in `AppCore` (`benchmark-truth.json`) with cryptographic integrity verification. Used by automated unit tests to ensure parity and verify accuracy across all 8 execution backends.
 - **Self-Healing Storage**: If local cached emails or Application Support benchmark files are ever corrupted, `BenchmarkTruthStore` automatically falls back to the immutable bundled reference in `Bundle.module`.
 
 ---

@@ -1,6 +1,6 @@
 import Foundation
 
-/// The six distinct runtime deployment topologies supported by MailTriage.
+/// The eight distinct runtime deployment topologies supported by MailTriage.
 public enum TriageBackend: String, Sendable, Hashable, Codable, CaseIterable, Identifiable, CodingKeyRepresentable {
     /// Backend 1: Core ML running locally on Apple Silicon ANE/GPU (LayaOnDevice).
     case onDeviceCoreML
@@ -21,7 +21,11 @@ public enum TriageBackend: String, Sendable, Hashable, Codable, CaseIterable, Id
     /// See tech-notes/0017-openai-decisions-api-architecture.md
     case openaiDecisions
 
-    /// Backend 7: Generative baseline (Apple Intelligence On-Device LLM).
+    /// Backend 7: Google Gemini Decisions API (gemini-decision-1).
+    /// See tech-notes/0018-gemini-decisions-api-architecture.md
+    case geminiDecisions
+
+    /// Backend 8: Generative baseline (Apple Intelligence On-Device LLM).
     case generativeBaseline
 
     public var id: String { rawValue }
@@ -40,6 +44,8 @@ public enum TriageBackend: String, Sendable, Hashable, Codable, CaseIterable, Id
             return "Cloudflare Clef"
         case .openaiDecisions:
             return "OpenAI Decisions"
+        case .geminiDecisions:
+            return "Google Gemini Decisions"
         case .generativeBaseline:
             return "Generative Baseline"
         }
@@ -59,6 +65,8 @@ public enum TriageBackend: String, Sendable, Hashable, Codable, CaseIterable, Id
             return "Clef Edge"
         case .openaiDecisions:
             return "OpenAI"
+        case .geminiDecisions:
+            return "Gemini"
         case .generativeBaseline:
             return "Apple LLM"
         }
@@ -78,6 +86,8 @@ public enum TriageBackend: String, Sendable, Hashable, Codable, CaseIterable, Id
             return "Cloudflare Workers AI multimodal edge decision model (9B / 27B)."
         case .openaiDecisions:
             return "OpenAI Decisions API (GPT-6 Luna) fast decision primitive at $0.10/1M tokens."
+        case .geminiDecisions:
+            return "Google Gemini Decisions API (gemini-decision-1) fast multimodal decision primitive at $0.10/1M tokens."
         case .generativeBaseline:
             return "Apple Intelligence on-device ~3B generative LLM baseline comparison."
         }
@@ -97,6 +107,8 @@ public enum TriageBackend: String, Sendable, Hashable, Codable, CaseIterable, Id
             return "bolt.shield.fill"
         case .openaiDecisions:
             return "sparkle.magnifyingglass"
+        case .geminiDecisions:
+            return "diamond.fill"
         case .generativeBaseline:
             return "sparkles"
         }
@@ -117,6 +129,8 @@ public enum TriageBackend: String, Sendable, Hashable, Codable, CaseIterable, Id
             return "< 100 ms"
         case .openaiDecisions:
             return "40–80 ms"
+        case .geminiDecisions:
+            return "50–120 ms"
         case .generativeBaseline:
             return "800–1,200 ms"
         }
@@ -137,6 +151,8 @@ public enum TriageBackend: String, Sendable, Hashable, Codable, CaseIterable, Id
             return "< 100ms"
         case .openaiDecisions:
             return "< 100ms"
+        case .geminiDecisions:
+            return "< 150ms"
         case .generativeBaseline:
             return "> 1000ms"
         }
@@ -161,7 +177,7 @@ public enum TriageBackend: String, Sendable, Hashable, Codable, CaseIterable, Id
             return .vpc
         case .cloudflareClef:
             return .edge
-        case .cloudAPI, .openaiDecisions:
+        case .cloudAPI, .openaiDecisions, .geminiDecisions:
             return .cloud
         }
     }
@@ -171,7 +187,7 @@ public enum TriageBackend: String, Sendable, Hashable, Codable, CaseIterable, Id
         switch self {
         case .onDeviceCoreML, .generativeBaseline:
             return true
-        case .localServe, .hostedVPC, .cloudAPI, .cloudflareClef, .openaiDecisions:
+        case .localServe, .hostedVPC, .cloudAPI, .cloudflareClef, .openaiDecisions, .geminiDecisions:
             return false
         }
     }
@@ -190,7 +206,7 @@ public enum TriageBackend: String, Sendable, Hashable, Codable, CaseIterable, Id
             return 0.20
         case .cloudflareClef:
             return 0.05
-        case .openaiDecisions:
+        case .openaiDecisions, .geminiDecisions:
             return 0.10
         }
     }
@@ -198,7 +214,7 @@ public enum TriageBackend: String, Sendable, Hashable, Codable, CaseIterable, Id
     /// Whether this backend supports multimodal inputs (visual image attachments).
     public var supportsMultimodal: Bool {
         switch self {
-        case .cloudflareClef, .openaiDecisions:
+        case .cloudflareClef, .openaiDecisions, .geminiDecisions:
             return true
         case .onDeviceCoreML, .localServe, .hostedVPC, .cloudAPI, .generativeBaseline:
             return false
