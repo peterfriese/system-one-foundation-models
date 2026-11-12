@@ -317,6 +317,69 @@ struct ClefLanguageModelTests {
         #expect(dims.height == 300)
     }
 
+    @Test("TranscriptAttachmentExtractor convertCGImageToPNG scales down large images and selects compact format for synthetic UI screenshots")
+    func testConvertCGImageToPNGAndCompactSelection() async throws {
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let ctx = CGContext(
+            data: nil,
+            width: 2048,
+            height: 1024,
+            bitsPerComponent: 8,
+            bytesPerRow: 2048 * 4,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        ctx.setFillColor(red: 0.12, green: 0.12, blue: 0.18, alpha: 1.0)
+        ctx.fill(CGRect(x: 0, y: 0, width: 2048, height: 1024))
+        let largeImage = ctx.makeImage()!
+
+        let pngData = try #require(TranscriptAttachmentExtractor.convertCGImageToPNG(largeImage, maxDimension: 1024))
+        let dims = try #require(SystemOneImage.extractDimensions(data: pngData, format: .png))
+
+        #expect(dims.width == 1024)
+        #expect(dims.height == 512)
+
+        // Synthetic UI screenshot (500x320 with sharp solid rectangles) should compress much smaller as PNG than JPEG
+        let uiCtx = CGContext(
+            data: nil,
+            width: 500,
+            height: 320,
+            bitsPerComponent: 8,
+            bytesPerRow: 500 * 4,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        uiCtx.setFillColor(red: 0.12, green: 0.12, blue: 0.18, alpha: 1.0)
+        uiCtx.fill(CGRect(x: 0, y: 0, width: 500, height: 320))
+        for i in 0..<6 {
+            uiCtx.setFillColor(red: 0.86, green: 0.15, blue: 0.15, alpha: 1.0)
+            uiCtx.fill(CGRect(x: 24, y: 40 + i * 30, width: 360, height: 8))
+        }
+        let uiImage = uiCtx.makeImage()!
+
+        let uiPNG = try #require(TranscriptAttachmentExtractor.convertCGImageToPNG(uiImage, maxDimension: 1024))
+        let uiJPEG = try #require(TranscriptAttachmentExtractor.convertCGImageToJPEG(uiImage, maxDimension: 1024, quality: 0.8))
+        #expect(uiPNG.count < uiJPEG.count)
+
+        MockClefLanguageModelProtocol.reset()
+        MockClefLanguageModelProtocol.enqueue(statusCode: 200, body: sampleInspectionJSON)
+
+        let backend = ClefHTTPBackend(
+            endpoint: .workersAI(accountID: "cf-acc", model: .clefFlash),
+            apiToken: "cf-token",
+            session: makeSession()
+        )
+        let config = ClefLanguageModel.Configuration(backend: backend)
+        let model = ClefLanguageModel(configuration: config)
+        let session = LanguageModelSession(model: model)
+        let prompt = Prompt {
+            "Inspect screenshot"
+            Attachment(uiImage)
+        }
+        let response = try await session.respond(to: prompt, generating: DefectInspectionDecision.self)
+        #expect(response.content.hasDefect == true)
+    }
+
     @Test("ItemCategory conforms to Choosable with optionIdentifier and optionDescription")
     func testItemCategoryChoosableConformance() {
         let category: any Choosable = ItemCategory.beverage
