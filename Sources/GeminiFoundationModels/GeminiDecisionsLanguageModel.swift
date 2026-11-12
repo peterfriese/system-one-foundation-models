@@ -61,6 +61,7 @@ public struct GeminiDecisionsLanguageModel: LanguageModel, Sendable {
 
     public init(
         apiKey: String? = nil,
+        model: String = GeminiDecisionsEndpoint.defaultModel,
         clientRequestID: String? = nil,
         endpoint: URL = GeminiDecisionsEndpoint.defaultURL,
         session: URLSession = .shared,
@@ -69,7 +70,7 @@ public struct GeminiDecisionsLanguageModel: LanguageModel, Sendable {
     ) {
         let ep = GeminiDecisionsEndpoint(
             url: endpoint,
-            model: GeminiDecisionsEndpoint.defaultModel,
+            model: model,
             clientRequestID: clientRequestID
         )
         self.executorConfiguration = Configuration(

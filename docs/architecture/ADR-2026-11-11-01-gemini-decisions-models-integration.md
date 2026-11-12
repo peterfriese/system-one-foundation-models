@@ -54,7 +54,7 @@ Integrating Google's Gemini Decisions API (`gemini-decision-1`) introduces sever
 ### Decision Area 1: Module Topology & Swift 6.1 Package Trait (`Package.swift`)
 
 - **Option 1A: Monolithic Inclusion in `SystemOneCore`**:
-  - *Description*: Embed all Gemini Decisions wire DTOs, `inline_data` serializers, Google RPC error parsers, and HTTP clients directly inside `SystemOneCore`.
+  - *Description*: Embed all Gemini Decisions wire DTOs, multimodal `ContentItem` serializers, Google RPC error parsers, and HTTP clients directly inside `SystemOneCore`.
   - *Pros*: Single module import for all consumers.
   - *Cons*: Pollutes the lightweight core module with Google-specific wire formats and authentication semantics; forces Gemini code onto developers who only deploy on-device Core ML Laya models; violates modular separation of concerns.
 - **Option 1B: Separate Package Repository (`gemini-foundation-models-swift`)**:
@@ -77,7 +77,7 @@ Integrating Google's Gemini Decisions API (`gemini-decision-1`) introduces sever
 - **Option 2A: Direct Raw Forwarding of `SystemOneRequest` and `SystemOneResponse`**:
   - *Description*: Send `SystemOneRequest` directly to the Gemini endpoint and decode `SystemOneResponse` without an intermediate wire DTO or adapter layer.
   - *Pros*: Minimal code footprint.
-  - *Cons*: Fails to serialize multimodal `SystemOneImage` values into Gemini's `[{"parts": [{"text": ...}, {"inline_data": ...}]}]` structure; fails when Google returns `"usageMetadata"` (`promptTokenCount`) instead of `"usage"` (`input_tokens`); fails when boolean answers use `"probability"` instead of `"noul"` or categorical answers use `"selected"` instead of `"choice"`; cannot inspect per-question safety refusals (`"refusal"`).
+  - *Cons*: Fails to serialize multimodal `SystemOneImage` values into Gemini Decisions' flat typed `[{"type": "text", ...}, {"type": "image", "mime_type": ..., "data": ...}]` `input` array; fails when Google returns `"usageMetadata"` (`promptTokenCount`) instead of `"usage"` (`input_tokens`); fails when boolean answers use `"probability"` instead of `"noul"` or categorical answers use `"selected"` instead of `"choice"`; cannot inspect per-question safety refusals (`"refusal"`).
 - **Option 2B: Dedicated `GeminiDecisionsWireDTOs` & `GeminiDecisionsPayloadAdapter` [Chosen]**:
   - *Description*:
     1. Define dedicated wire DTOs in `GeminiFoundationModels`: `GeminiDecisionsRequest`, `GeminiDecisionsQuestion`, `GeminiDecisionsResponse`, `GeminiDecisionsAnswer`, and `GeminiErrorEnvelope`.
@@ -157,17 +157,17 @@ Integrating Google's Gemini Decisions API (`gemini-decision-1`) introduces sever
 **Chosen Architecture**: The framework adopts **Option 1C**, **Option 2B**, **Option 3B**, **Option 4B**, **Option 5B**, and **Option 6B**.
 
 ### Rationale
-This architecture integrates Google's Gemini Decisions API (`gemini-decision-1`) into `SystemOneFoundationModels` with complete structural symmetry alongside `OpenAIFoundationModels` and `ClefFoundationModels`. By conforming `GeminiDecisionsHTTPBackend` and `MockGeminiDecisionsBackend` to `SystemOneBackend` and isolating Google's wire nuances (`inline_data` parts, flexible answer keys, `usageMetadata`, and Google RPC error envelopes) inside `GeminiDecisionsPayloadAdapter` and `GeminiDecisionsWireDTOs`, developers gain a drop-in Apple `LanguageModel` provider with zero third-party dependencies.
+This architecture integrates Google's Gemini Decisions API (`gemini-decision-1`) into `SystemOneFoundationModels` with complete structural symmetry alongside `OpenAIFoundationModels` and `ClefFoundationModels`. By conforming `GeminiDecisionsHTTPBackend` and `MockGeminiDecisionsBackend` to `SystemOneBackend` and isolating Google's wire nuances (flat typed multimodal `ContentItem` arrays `[{"type": "text", ...}, {"type": "image", "mime_type": ..., "data": ...}]` with legacy `parts`/`inline_data` decode fallback, flexible answer keys, `usageMetadata`, and Google RPC error envelopes) inside `GeminiDecisionsPayloadAdapter` and `GeminiDecisionsWireDTOs`, developers gain a drop-in Apple `LanguageModel` provider with zero third-party dependencies.
 
 ### Positive Consequences
 1. **Apple-Native Call-Site Ergonomics**: Developers use `LanguageModelSession(model: GeminiLanguageModel())` or `GeminiDecisionsLanguageModel()` with standard `@Generable` structs, `@Guide` annotations, and `Transcript` image attachments.
 2. **Native Dictionary Primitive Alignment**: Gemini Decisions natively evaluates dictionary-keyed `noul`, `choice`, and `score` questions in a single forward pass, mapping cleanly to `SystemOneCore` primitives.
 3. **Zero Output Token Accounting**: Enforces `output_tokens: 0` across all usage telemetry and executor channels, reflecting Google's non-autoregressive input-only billing model.
 4. **Dual Environment Variable Resolution**: Automatically resolves `GEMINI_API_KEY` or `GOOGLE_API_KEY` when no explicit key is passed, matching standard Google AI Studio and Vertex/Cloud SDK conventions.
-5. **Deterministic Offline CI**: `MockGeminiDecisionsBackend` enables thorough offline verification of schema translation, multimodal `inline_data` serialization, refusal handling, and retry logic.
+5. **Deterministic Offline CI**: `MockGeminiDecisionsBackend` enables thorough offline verification of schema translation, flat typed multimodal `ContentItem` serialization (and legacy `parts`/`inline_data` decode fallback), refusal handling, and retry logic.
 
 ### Negative Consequences / Trade-offs & Mitigations
-1. **Base64 Payload Overhead**: Multimodal `inline_data` encoding increases image byte size by ~33%.
+1. **Base64 Payload Overhead**: Multimodal raw Base64 image encoding (`{"type": "image", "mime_type": ..., "data": ...}`) increases image byte size by ~33%.
    - *Mitigation*: `GeminiDecisionsAttachmentValidator` and `SystemOneImage.validate(images:)` enforce a 16 MP resolution limit, 4-image count cap, and 13 MiB payload ceiling prior to network transmission.
 2. **Wire Response Variations**: Google's `v1beta` and `v1` endpoints may emit either `usage` or `usageMetadata`, and either `noul` or `probability`.
    - *Mitigation*: `GeminiDecisionsAnswer` and `GeminiDecisionsResponse` implement flexible custom `init(from: Decoder)` logic to normalize both shapes transparently.
@@ -1782,14 +1782,14 @@ flowchart TD
 
 ---
 
-### 5.2 Multimodal `inline_data` Wire Translation & Execution Pipeline
+### 5.2 Multimodal Typed `ContentItem` Wire Translation & Execution Pipeline
 
 ```mermaid
 flowchart LR
     A["Transcript Entry<br/>(Prompt Text + JPEG Data)"] --> B["GeminiDecisionsLanguageModel<br/>supportsDataAttachmentType(.jpeg) == true"]
     B --> C["TranscriptAttachmentExtractor<br/>Extracts PNG/JPEG/WebP Images"]
     C --> D["SchemaTranslator<br/>Translates @Generable to noul/choice/score"]
-    D --> E["GeminiDecisionsPayloadAdapter<br/>Maps to Dictionary Questions & inline_data Parts"]
+    D --> E["GeminiDecisionsPayloadAdapter<br/>Maps to Dictionary Questions & Typed ContentItems"]
     E --> F["GeminiDecisionsHTTPBackend<br/>Injects x-goog-api-key Header"]
     F --> G["Google Gemini Decisions API<br/>POST /v1beta/decisions (gemini-decision-1)"]
     G --> H["Single Forward Pass<br/>Zero Output Tokens (output_tokens: 0)"]
@@ -1833,9 +1833,9 @@ sequenceDiagram
     activate Backend
 
     Backend->>Adapter: adaptRequest(systemOneRequest)
-    Adapter-->>Backend: GeminiDecisionsRequest (parts + inline_data, questions dict)
+    Adapter-->>Backend: GeminiDecisionsRequest (typed ContentItems, questions dict)
 
-    Backend->>Gemini: POST /v1beta/decisions<br/>x-goog-api-key: AIza...<br/>Body: {model: "gemini-decision-1", input: [{parts: [...]}], questions: {...}}
+    Backend->>Gemini: POST /v1beta/decisions<br/>x-goog-api-key: AIza...<br/>Body: {model: "gemini-decision-1", input: [{type: "text", ...}, {type: "image", ...}], questions: {...}}
     activate Gemini
     Note over Gemini: Single Forward Pass<br/>Evaluates visual & text context<br/>Computes calibrated probabilities<br/>output_tokens: 0
     Gemini-->>Backend: 200 OK<br/>Body: {id, model, answers: {...}, usage: {input_tokens: 92, output_tokens: 0}}
@@ -1890,7 +1890,7 @@ sequenceDiagram
   - Implement `GeminiDecisionsExecutor` coordinating transcript extraction, backend evaluation, response synthesis, and dual-signal metadata emission.
 
 ### Phase 5: Deterministic Unit Testing Suite (`Tests/GeminiFoundationModelsTests/`)
-- Verify wire DTO serialization/deserialization (`noul`/`probability`, `choice`/`selected`, `score`, `usage`/`usageMetadata`, `inline_data` parts).
+- Verify wire DTO serialization/deserialization (`noul`/`probability`, `choice`/`selected`, `score`, `usage`/`usageMetadata`, flat typed `ContentItem` array + legacy `parts`/`inline_data` decode fallback).
 - Verify `GeminiDecisionsPayloadAdapter` request/response translation and refusal handling.
 - Verify `GeminiDecisionsHTTPBackend` `x-goog-api-key` header injection, `GEMINI_API_KEY` / `GOOGLE_API_KEY` fallback, HTTP 401/403/429/500 handling, and `Retry-After` backoff.
 - Verify end-to-end `@Generable` evaluation via `LanguageModelSession` with `MockGeminiDecisionsBackend`.

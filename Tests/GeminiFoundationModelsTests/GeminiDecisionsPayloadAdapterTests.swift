@@ -314,4 +314,97 @@ struct GeminiDecisionsPayloadAdapterTests {
             try GeminiDecisionsPayloadAdapter.adaptResponse(nonFiniteScore)
         }
     }
+
+    @Test("Adapt Response: Clamps epsilon confidence (1.0000001) so ScoreValue succeeds and rejects NaN or out-of-bounds confidence/probabilities")
+    func testAdaptResponseConfidenceAndProbabilitiesValidation() throws {
+        // 1. Floating-point epsilon confidence (1.0000001) and probability (-0.0000001) are clamped cleanly to [0, 1]
+        let epsilonResponse = GeminiDecisionsResponse(
+            id: "gem-epsilon",
+            model: "gemini-decision-1",
+            answers: [
+                "rating": GeminiDecisionsAnswer(
+                    type: "score",
+                    score: 2.0,
+                    confidence: 1.0000001,
+                    probabilities: [
+                        "0": -0.0000001,
+                        "1": 0.0,
+                        "2": 1.0000001
+                    ],
+                    legend: ["0": "Low", "1": "Med", "2": "High"]
+                )
+            ],
+            usage: .init(inputTokens: 12, outputTokens: 0)
+        )
+        let adapted = try GeminiDecisionsPayloadAdapter.adaptResponse(epsilonResponse)
+        let ratingAnswer = try #require(adapted.answers["rating"])
+        #expect(ratingAnswer.confidence == 1.0)
+        #expect(ratingAnswer.probabilities?["0"] == 0.0)
+        #expect(ratingAnswer.probabilities?["2"] == 1.0)
+        let scoreVal = try #require(ratingAnswer.scoreValue(minimum: 1.0, maximum: 3.0, isInteger: true))
+        #expect(scoreVal.confidence == 1.0)
+        #expect(scoreVal.rounded == 3)
+
+        // Ensure ResponseSynthesizer JSON serialization succeeds without trapping
+        let synthesizer = ResponseSynthesizer()
+        #expect(synthesizer.extractProbabilitiesJSON(from: adapted.answers) != nil)
+        #expect(synthesizer.extractConfidenceJSON(from: adapted.answers) != nil)
+
+        // 2. NaN confidence throws decodingError
+        let nanConfidence = GeminiDecisionsResponse(
+            id: "gem-nan-conf",
+            model: "gemini-decision-1",
+            answers: [
+                "dept": GeminiDecisionsAnswer(type: "choice", choice: "sales", confidence: .nan)
+            ]
+        )
+        #expect(throws: SystemOneError.self) {
+            try GeminiDecisionsPayloadAdapter.adaptResponse(nanConfidence)
+        }
+
+        // 3. Out-of-bounds confidence (1.5) throws decodingError
+        let outOfBoundsConfidence = GeminiDecisionsResponse(
+            id: "gem-oob-conf",
+            model: "gemini-decision-1",
+            answers: [
+                "rating": GeminiDecisionsAnswer(type: "score", score: 1.0, confidence: 1.5)
+            ]
+        )
+        #expect(throws: SystemOneError.self) {
+            try GeminiDecisionsPayloadAdapter.adaptResponse(outOfBoundsConfidence)
+        }
+
+        // 4. NaN or out-of-bounds entry in probabilities dictionary throws decodingError
+        let nanProbabilities = GeminiDecisionsResponse(
+            id: "gem-nan-probs",
+            model: "gemini-decision-1",
+            answers: [
+                "dept": GeminiDecisionsAnswer(
+                    type: "choice",
+                    choice: "sales",
+                    confidence: 0.9,
+                    probabilities: ["sales": .nan, "support": 0.1]
+                )
+            ]
+        )
+        #expect(throws: SystemOneError.self) {
+            try GeminiDecisionsPayloadAdapter.adaptResponse(nanProbabilities)
+        }
+
+        let outOfRangeProbabilities = GeminiDecisionsResponse(
+            id: "gem-oob-probs",
+            model: "gemini-decision-1",
+            answers: [
+                "dept": GeminiDecisionsAnswer(
+                    type: "choice",
+                    choice: "sales",
+                    confidence: 0.9,
+                    probabilities: ["sales": 2.0, "support": -0.5]
+                )
+            ]
+        )
+        #expect(throws: SystemOneError.self) {
+            try GeminiDecisionsPayloadAdapter.adaptResponse(outOfRangeProbabilities)
+        }
+    }
 }

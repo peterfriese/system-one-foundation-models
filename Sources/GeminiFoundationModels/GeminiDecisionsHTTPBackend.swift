@@ -89,35 +89,85 @@ public struct GeminiDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
         let data: Data
     }
 
-    private func resolveAPIKey() -> String? {
-        if let explicit = apiKey {
-            let trimmed = explicit.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
-                return trimmed
+    private static let maxRawErrorBodyCharacters = 512
+
+    private static let nonRetryableURLErrorCodes: Set<URLError.Code> = [
+        .badURL,
+        .unsupportedURL,
+        .appTransportSecurityRequiresSecureConnection,
+        .serverCertificateUntrusted,
+        .serverCertificateHasBadDate,
+        .serverCertificateHasUnknownRoot,
+        .serverCertificateNotYetValid,
+        .clientCertificateRejected,
+        .clientCertificateRequired
+    ]
+
+    private func validateEndpointURL(_ url: URL) throws {
+        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        if url.user != nil || url.password != nil || components?.user != nil || components?.password != nil {
+            throw SystemOneError.networkError("Gemini Decisions endpoint URL must not contain embedded user credentials.")
+        }
+
+        guard let scheme = url.scheme?.lowercased(),
+              let rawHost = (components?.host ?? url.host)?.lowercased(),
+              !rawHost.isEmpty else {
+            throw SystemOneError.networkError("Invalid Gemini Decisions endpoint URL '\(url.absoluteString)': missing scheme or host.")
+        }
+
+        let isLoopback = ["localhost", "127.0.0.1", "::1", "[::1]"].contains(rawHost)
+        guard scheme == "https" || (scheme == "http" && isLoopback) else {
+            throw SystemOneError.networkError(
+                "Insecure or unsupported endpoint URL '\(url.absoluteString)'; HTTPS is required for non-loopback Gemini Decisions endpoints."
+            )
+        }
+    }
+
+    private static func containsHeaderControlCharacters(_ value: String) -> Bool {
+        value.unicodeScalars.contains { scalar in
+            scalar == "\r" || scalar == "\n" || scalar.value == 0
+        }
+    }
+
+    private func resolveAPIKey() throws -> String {
+        func sanitizeKeyCandidate(_ candidate: String) throws -> String? {
+            if Self.containsHeaderControlCharacters(candidate) {
+                throw SystemOneError.authenticationFailed("Invalid Gemini API key: CR/LF header control characters are not permitted.")
             }
+            let trimmed = candidate.trimmingCharacters(in: .whitespaces)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+
+        if let explicit = apiKey, let valid = try sanitizeKeyCandidate(explicit) {
+            return valid
         }
         let env = environmentOverride ?? ProcessInfo.processInfo.environment
-        if let geminiKey = env["GEMINI_API_KEY"] {
-            let trimmed = geminiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
-                return trimmed
-            }
+        if let geminiKey = env["GEMINI_API_KEY"], let valid = try sanitizeKeyCandidate(geminiKey) {
+            return valid
         }
-        if let googleKey = env["GOOGLE_API_KEY"] {
-            let trimmed = googleKey.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
-                return trimmed
-            }
+        if let googleKey = env["GOOGLE_API_KEY"], let valid = try sanitizeKeyCandidate(googleKey) {
+            return valid
         }
-        return nil
+        throw SystemOneError.missingAPIKey
+    }
+
+    private func resolveClientRequestID() throws -> String? {
+        guard let rawID = endpoint.clientRequestID else {
+            return nil
+        }
+        if Self.containsHeaderControlCharacters(rawID) {
+            throw SystemOneError.networkError("Invalid X-Client-Request-Id: CR/LF header control characters are not permitted.")
+        }
+        let trimmed = rawID.trimmingCharacters(in: .whitespaces)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     private func evaluateWithTiming(
         request: GeminiDecisionsRequest
     ) async throws -> (response: GeminiDecisionsResponse, transportDurationMs: Double, serverDurationMs: Double?) {
-        guard let resolvedKey = resolveAPIKey() else {
-            throw SystemOneError.missingAPIKey
-        }
+        try validateEndpointURL(endpoint.url)
+        let resolvedKey = try resolveAPIKey()
+        let sanitizedClientRequestID = try resolveClientRequestID()
 
         var attempts = 0
         let maxAttempts = retryPolicy.maxAttempts
@@ -125,7 +175,11 @@ public struct GeminiDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
         while true {
             attempts += 1
             do {
-                return try await performSingleEvaluation(request: request, apiKey: resolvedKey)
+                return try await performSingleEvaluation(
+                    request: request,
+                    apiKey: resolvedKey,
+                    clientRequestID: sanitizedClientRequestID
+                )
             } catch is CancellationError {
                 throw CancellationError()
             } catch let resError as HTTPResponseError {
@@ -150,26 +204,25 @@ public struct GeminiDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
                     throw SystemOneError.apiError(statusCode: statusCode, message: errorMessage)
                 }
 
-                let delay: Duration
-                if statusCode == 429, let retryAfterDelay = retryPolicy.retryAfter(from: resError.httpResponse) {
-                    delay = retryAfterDelay
-                } else {
-                    delay = retryPolicy.backoff(afterAttempt: attempts)
-                }
+                let delay = retryPolicy.retryAfter(from: resError.httpResponse)
+                    ?? retryPolicy.backoff(afterAttempt: attempts)
 
+                try await Task.sleep(for: delay)
+                continue
+            } catch let urlError as URLError {
+                if urlError.code == .cancelled {
+                    throw CancellationError()
+                }
+                if Self.nonRetryableURLErrorCodes.contains(urlError.code) || attempts >= maxAttempts || Task.isCancelled {
+                    throw SystemOneError.networkError(urlError.localizedDescription)
+                }
+                let delay = retryPolicy.backoff(afterAttempt: attempts)
                 try await Task.sleep(for: delay)
                 continue
             } catch let error as SystemOneError {
                 switch error {
                 case .networkError:
                     if attempts < maxAttempts && !Task.isCancelled {
-                        let delay = retryPolicy.backoff(afterAttempt: attempts)
-                        try await Task.sleep(for: delay)
-                        continue
-                    }
-                    throw error
-                case .apiError(let statusCode, _):
-                    if retryPolicy.retryableStatuses.contains(statusCode), attempts < maxAttempts {
                         let delay = retryPolicy.backoff(afterAttempt: attempts)
                         try await Task.sleep(for: delay)
                         continue
@@ -191,7 +244,8 @@ public struct GeminiDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
 
     private func performSingleEvaluation(
         request: GeminiDecisionsRequest,
-        apiKey: String
+        apiKey: String,
+        clientRequestID: String?
     ) async throws -> (response: GeminiDecisionsResponse, transportDurationMs: Double, serverDurationMs: Double?) {
         var urlRequest = URLRequest(url: endpoint.url)
         urlRequest.httpMethod = "POST"
@@ -200,8 +254,8 @@ public struct GeminiDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
         urlRequest.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
         urlRequest.timeoutInterval = timeoutInterval
 
-        if let clientReqID = endpoint.clientRequestID, !clientReqID.isEmpty {
-            urlRequest.setValue(clientReqID, forHTTPHeaderField: "X-Client-Request-Id")
+        if let clientRequestID {
+            urlRequest.setValue(clientRequestID, forHTTPHeaderField: "X-Client-Request-Id")
         }
 
         do {
@@ -218,12 +272,12 @@ public struct GeminiDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
             (data, urlResponse) = try await session.data(for: urlRequest)
         } catch is CancellationError {
             throw CancellationError()
-        } catch let urlError as URLError where urlError.code == .cancelled {
-            throw CancellationError()
-        } catch {
-            if (error as? URLError)?.code == .cancelled || error is CancellationError {
+        } catch let urlError as URLError {
+            if urlError.code == .cancelled {
                 throw CancellationError()
             }
+            throw urlError
+        } catch {
             throw SystemOneError.networkError(error.localizedDescription)
         }
 
@@ -272,6 +326,9 @@ public struct GeminiDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
             return message
         }
         if let rawString = String(data: data, encoding: .utf8), !rawString.isEmpty {
+            if rawString.count > Self.maxRawErrorBodyCharacters {
+                return String(rawString.prefix(Self.maxRawErrorBodyCharacters))
+            }
             return rawString
         }
         return "HTTP error \(fallbackCode)"

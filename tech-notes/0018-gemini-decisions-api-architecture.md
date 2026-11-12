@@ -24,7 +24,7 @@ Google's **Gemini Decisions API** (`POST https://generativelanguage.googleapis.c
 - Priced at **$0.10 per 1M input tokens** and **$0.00 per 1M output tokens** (`output_tokens: 0` / `candidatesTokenCount: 0`).
 - Uses native System One dictionary-keyed `questions: [String: Question]` and `answers: [String: Answer]` wire structures (`noul`, `choice`, `score`).
 
-This tech note documents the wire protocol, dictionary-keyed primitive alignment, multimodal `parts` / `inline_data` raw Base64 extraction, `usage` vs. `usageMetadata` normalization, and Google RPC error envelope handling in `GeminiFoundationModels`.
+This tech note documents the wire protocol, dictionary-keyed primitive alignment, flat typed multimodal `input` array (`[{"type": "text", ...}, {"type": "image", "mime_type": ..., "data": ...}]`) raw Base64 extraction (with legacy `parts` / `inline_data` decode fallback), `usage` vs. `usageMetadata` normalization, and Google RPC error envelope handling in `GeminiFoundationModels`.
 
 ---
 
@@ -109,7 +109,7 @@ Error responses from `generativelanguage.googleapis.com` follow the Google Cloud
    let response = try await session.respond(to: prompt, generating: ExpenseAuditDecision.self)
    ```
 2. **Swift 6.1 Package Trait Isolation**: The `Gemini` trait enables `GeminiFoundationModels` in both `Remote` and `All` trait bundles while keeping `OnDevice` builds free of remote client code.
-3. **Hermetic Offline Testing**: `MockGeminiDecisionsBackend` records both `lastRequest: SystemOneRequest?` and `lastGeminiRequest: GeminiDecisionsRequest?`, enabling complete offline unit testing of multimodal `parts` and `@Generable` synthesis.
+3. **Hermetic Offline Testing**: `MockGeminiDecisionsBackend` records both `lastRequest: SystemOneRequest?` and `lastGeminiRequest: GeminiDecisionsRequest?`, enabling complete offline unit testing of multimodal typed `ContentItem` arrays (with legacy `parts`/`inline_data` decode fallback) and `@Generable` synthesis.
 
 ---
 

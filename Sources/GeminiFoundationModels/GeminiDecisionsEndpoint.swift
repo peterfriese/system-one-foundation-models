@@ -10,14 +10,14 @@ public enum GeminiDecisionsEndpoint: Hashable, Sendable {
         clientRequestID: String? = nil
     )
 
-    /// Custom HTTP or HTTPS endpoint (e.g. enterprise reverse proxy or Vertex/Cloud gateway).
+    /// Custom HTTPS endpoint (or local loopback HTTP endpoint) such as an enterprise reverse proxy or Vertex/Cloud gateway.
     case custom(
         URL,
         model: String = GeminiDecisionsEndpoint.defaultModel,
         clientRequestID: String? = nil
     )
 
-    /// Custom HTTP or HTTPS endpoint with labeled `url:`.
+    /// Custom HTTPS endpoint (or local loopback HTTP endpoint) with labeled `url:`.
     public static func custom(
         url: URL,
         model: String = GeminiDecisionsEndpoint.defaultModel,
@@ -62,16 +62,33 @@ public enum GeminiDecisionsEndpoint: Hashable, Sendable {
         }
     }
 
-    /// Creates an endpoint with optional parameters.
+    /// Creates an endpoint with optional parameters, normalizing trailing slashes against `defaultURL`.
     public init(
         url: URL = GeminiDecisionsEndpoint.defaultURL,
         model: String = GeminiDecisionsEndpoint.defaultModel,
         clientRequestID: String? = nil
     ) {
-        if url == Self.defaultURL {
+        if Self.matchesDefaultHostedURL(url) {
             self = .hosted(model: model, clientRequestID: clientRequestID)
         } else {
             self = .custom(url, model: model, clientRequestID: clientRequestID)
         }
+    }
+
+    private static func matchesDefaultHostedURL(_ url: URL) -> Bool {
+        if url == Self.defaultURL {
+            return true
+        }
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              components.query == nil,
+              components.fragment == nil,
+              components.user == nil,
+              components.password == nil else {
+            return false
+        }
+        while components.path.count > 1 && components.path.hasSuffix("/") {
+            components.path.removeLast()
+        }
+        return components.url == Self.defaultURL
     }
 }

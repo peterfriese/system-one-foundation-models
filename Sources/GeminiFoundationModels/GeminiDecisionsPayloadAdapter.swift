@@ -98,36 +98,43 @@ public enum GeminiDecisionsPayloadAdapter {
                 throw SystemOneError.safetyRefusal(reason: reason, questionName: name)
             }
 
+            let explicitConfidence = try ans.confidence.map {
+                try validateUnitInterval($0, field: "confidence", questionName: name)
+            }
+            let sanitizedProbabilities = try validateProbabilities(
+                ans.probabilities,
+                questionName: name
+            )
+
             if let prob = ans.noul ?? ans.probability {
-                guard prob.isFinite && (0.0...1.0).contains(prob) else {
-                    throw SystemOneError.decodingError(
-                        "Invalid noul probability \(prob) for question '\(name)'; expected finite value in 0.0...1.0."
-                    )
-                }
-                let conf = ans.confidence ?? max(prob, 1.0 - prob)
+                let clampedProb = try validateUnitInterval(
+                    prob,
+                    field: "noul probability",
+                    questionName: name
+                )
+                let conf = explicitConfidence ?? max(clampedProb, 1.0 - clampedProb)
                 var probsDict: [String: Double] = [
-                    "true": prob,
-                    "false": max(0.0, 1.0 - prob)
+                    "true": clampedProb,
+                    "false": max(0.0, 1.0 - clampedProb)
                 ]
-                if let distribution = ans.probabilities {
+                if let distribution = sanitizedProbabilities {
                     for (k, v) in distribution {
                         probsDict[k] = v
                     }
                 }
                 answers[name] = SystemOneAnswer(
                     type: "noul",
-                    noul: prob,
+                    noul: clampedProb,
                     confidence: conf,
                     probabilities: probsDict
                 )
             } else if let ch = ans.choice ?? ans.selected {
-                let probsDict = ans.probabilities
-                let conf = ans.confidence ?? probsDict?[ch] ?? 1.0
+                let conf = explicitConfidence ?? sanitizedProbabilities?[ch] ?? 1.0
                 answers[name] = SystemOneAnswer(
                     type: "choice",
                     choice: ch,
                     confidence: conf,
-                    probabilities: probsDict
+                    probabilities: sanitizedProbabilities
                 )
             } else if let sc = ans.score {
                 guard sc.isFinite else {
@@ -138,8 +145,8 @@ public enum GeminiDecisionsPayloadAdapter {
                 answers[name] = SystemOneAnswer(
                     type: "score",
                     score: sc,
-                    confidence: ans.confidence ?? 1.0,
-                    probabilities: ans.probabilities,
+                    confidence: explicitConfidence ?? 1.0,
+                    probabilities: sanitizedProbabilities,
                     legend: ans.legend
                 )
             } else {
@@ -183,6 +190,42 @@ public enum GeminiDecisionsPayloadAdapter {
             transportDurationMs: transportDurationMs,
             serverDurationMs: serverDurationMs
         )
+    }
+
+    // MARK: - Private Validation Helpers
+
+    private static let unitIntervalTolerance: Double = 1e-6
+
+    private static func validateUnitInterval(
+        _ value: Double,
+        field: String,
+        questionName: String
+    ) throws -> Double {
+        guard value.isFinite,
+              value >= -unitIntervalTolerance,
+              value <= 1.0 + unitIntervalTolerance else {
+            throw SystemOneError.decodingError(
+                "Invalid \(field) \(value) for question '\(questionName)'; expected finite value in 0.0...1.0."
+            )
+        }
+        return min(max(value, 0.0), 1.0)
+    }
+
+    private static func validateProbabilities(
+        _ probabilities: [String: Double]?,
+        questionName: String
+    ) throws -> [String: Double]? {
+        guard let probabilities else { return nil }
+        var sanitized: [String: Double] = [:]
+        sanitized.reserveCapacity(probabilities.count)
+        for (option, prob) in probabilities {
+            sanitized[option] = try validateUnitInterval(
+                prob,
+                field: "probability[\(option)]",
+                questionName: questionName
+            )
+        }
+        return sanitized
     }
 }
 

@@ -135,79 +135,36 @@ This guarantees that `SystemOneRequest` serializes image attachments as:
 
 Cloudflare Workers AI detects the direct Data URL format and routes the attachment straight into Clef's vision patch encoder.
 
-### 2. Camera Frame Downscaling & Lossy JPEG Compression
+### 2. Camera Frame Downscaling & Alpha-Aware Single-Pass Encoding
 
-In `Sources/SystemOneCore/Attachment/TranscriptAttachmentExtractor.swift`, the attachment processing pipeline extracts `CGImage` attachments and scales them down prior to wire transmission:
+In `Sources/SystemOneCore/Attachment/TranscriptAttachmentExtractor.swift`, the attachment processing pipeline extracts `CGImage` and file-backed `URL` attachments, downscaling any image above `1024px` while preserving RGB color spaces (such as Display P3 or sRGB) and selecting the encoding format in a single pass based on `cgImage.alphaInfo`:
+
+- **Opaque Camera Frames & Photos (`.none`, `.noneSkipFirst`, `.noneSkipLast`)**: Standard iOS/macOS `CVPixelBuffer` (`32BGRA` -> `.noneSkipFirst`) camera frames and decoded JPEG/HEIC photos fast-path directly to single-pass lossy JPEG (`quality: 0.8`), avoiding redundant PNG compression on live camera buffers.
+- **Alpha-Bearing Graphics & UI Screenshots (`.premultipliedLast`, `.premultipliedFirst`, `.first`, `.last`, `.alphaOnly`)**: Encoded in a single pass as lossless PNG, preserving 100% alpha channel transparency (preventing JPEG black-background compositing) while maintaining compact lossless sizes on sharp UI screenshots and icons.
+- **File-Backed `imageAttachment.url` Attachments**: Header dimensions are inspected via `CGImageSourceCopyPropertiesAtIndex` without decoding pixels; files already in `PNG`/`JPEG`/`WebP` at `<= 1024px` pass through untouched, while oversized multi-megapixel files are subsampled via `CGImageSourceCreateThumbnailAtIndex` to `1024px`.
 
 ```swift
 case .image(let imageAttachment):
-    if let url = imageAttachment.url, let image = try? SystemOneImage(fileURL: url, identifier: attachmentSegment.label) {
+    if let url = imageAttachment.url,
+       let image = try? extractImage(fromFileURL: url, identifier: attachmentSegment.label, maxDimension: 1024) {
         return image
     }
-    let cgImage = imageAttachment.cgImage
-    guard let jpegData = convertCGImageToJPEG(cgImage, maxDimension: 1024, quality: 0.8) else {
-        throw SystemOneError.modelExecutionError("Failed to convert image attachment to JPEG data.")
+    let sourceImage = imageAttachment.cgImage
+    let preservesAlpha = hasAlphaChannel(sourceImage)
+    guard let scaledImage = downscaleCGImage(sourceImage, maxDimension: 1024) else {
+        throw SystemOneError.modelExecutionError("Failed to downscale image attachment.")
     }
-    return SystemOneImage(data: jpegData, format: .jpeg, identifier: attachmentSegment.label)
-```
-
-The downscaling implementation `convertCGImageToJPEG` applies CoreGraphics scaling and lossy JPEG compression:
-
-```swift
-public static func convertCGImageToJPEG(
-    _ cgImage: CGImage,
-    maxDimension: Int = 1024,
-    quality: Double = 0.8
-) -> Data? {
-    let origWidth = cgImage.width
-    let origHeight = cgImage.height
-
-    let finalImage: CGImage
-    let maxDim = max(origWidth, origHeight)
-    if maxDim > maxDimension {
-        let scale = Double(maxDimension) / Double(maxDim)
-        let targetWidth = max(1, Int((Double(origWidth) * scale).rounded()))
-        let targetHeight = max(1, Int((Double(origHeight) * scale).rounded()))
-
-        let colorSpace = CGColorSpaceCreateDeviceRGB()
-        let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
-        guard let context = CGContext(
-            data: nil,
-            width: targetWidth,
-            height: targetHeight,
-            bitsPerComponent: 8,
-            bytesPerRow: 0,
-            space: colorSpace,
-            bitmapInfo: bitmapInfo
-        ) else {
-            return nil
+    if preservesAlpha {
+        guard let pngData = encodePNG(scaledImage) else {
+            throw SystemOneError.modelExecutionError("Failed to convert alpha image attachment to PNG data.")
         }
-        context.interpolationQuality = .high
-        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: targetWidth, height: targetHeight))
-        guard let scaledImage = context.makeImage() else {
-            return nil
-        }
-        finalImage = scaledImage
+        return SystemOneImage(data: pngData, format: .png, identifier: attachmentSegment.label)
     } else {
-        finalImage = cgImage
+        guard let jpegData = encodeJPEG(scaledImage, quality: 0.8) else {
+            throw SystemOneError.modelExecutionError("Failed to convert opaque image attachment to JPEG data.")
+        }
+        return SystemOneImage(data: jpegData, format: .jpeg, identifier: attachmentSegment.label)
     }
-
-    let mutableData = NSMutableData()
-    guard let destination = CGImageDestinationCreateWithData(
-        mutableData as CFMutableData,
-        UTType.jpeg.identifier as CFString,
-        1,
-        nil
-    ) else {
-        return nil
-    }
-    let options: [CFString: Any] = [
-        kCGImageDestinationLossyCompressionQuality: quality
-    ]
-    CGImageDestinationAddImage(destination, finalImage, options as CFDictionary)
-    guard CGImageDestinationFinalize(destination) else { return nil }
-    return mutableData as Data
-}
 ```
 
 ---

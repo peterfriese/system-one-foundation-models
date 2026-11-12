@@ -180,21 +180,27 @@ struct GeminiDemo {
               • sentimentScore:   Level \(decision.sentimentScore) / 5
             """)
 
-            // Operational Confidence Routing
+            // Operational Confidence Routing (See tech-notes/0006-http-resilience-and-confidence-routing.md)
             let policy = RoutingPolicy(escalateBelow: 0.60, autoAtOrAbove: 0.85)
-            print("Operational Confidence Routing (Policy: auto ≥ \(formatPercentage(policy.autoAtOrAbove)), escalate < \(formatPercentage(policy.escalateBelow))):")
+            print("Operational Confidence Routing (Policy: auto ≥ \(formatPercentage(policy.autoAtOrAbove)), escalate < \(formatPercentage(policy.escalateBelow)), undecided: \(formatPercentage(policy.undecidedBand.lowerBound))–\(formatPercentage(policy.undecidedBand.upperBound))):")
             print("--------------------------------------------------------------")
 
             let urgentProb = response.probability(for: "isUrgent")
             let urgentProbStr = urgentProb.map(formatPercentage) ?? "n/a"
-            if let p = urgentProb {
-                if p >= policy.autoAtOrAbove {
-                    print("  • Urgency Judgement:   [AUTO-ESCALATE] ──► Confidently urgent (Prob: \(urgentProbStr))")
-                } else if p < policy.escalateBelow {
-                    print("  • Urgency Judgement:   [AUTO-NORMAL]   ──► Confidently non-urgent (Prob: \(urgentProbStr))")
+            let judgement = response.judgement(for: "isUrgent", policy: policy)
+            let decisivenessStr = formatPercentage(judgement.decisiveness)
+            switch judgement.decision {
+            case .auto:
+                if judgement.answer == true {
+                    print("  • Urgency Judgement:   [AUTO-ESCALATE] ──► Confidently urgent (Prob: \(urgentProbStr), Decisiveness: \(decisivenessStr))")
                 } else {
-                    print("  • Urgency Judgement:   [CONFIRM]       ──► Borderline urgency (Prob: \(urgentProbStr))")
+                    print("  • Urgency Judgement:   [AUTO-NORMAL]   ──► Confidently non-urgent (Prob: \(urgentProbStr), Decisiveness: \(decisivenessStr))")
                 }
+            case .confirm:
+                let leaning = judgement.answer == true ? "urgent" : "non-urgent"
+                print("  • Urgency Judgement:   [CONFIRM]       ──► Leaning \(leaning), human review advised (Prob: \(urgentProbStr), Decisiveness: \(decisivenessStr))")
+            case .escalate:
+                print("  • Urgency Judgement:   [ESCALATE]      ──► Undecided / low decisiveness, manual triage required (Prob: \(urgentProbStr), Decisiveness: \(decisivenessStr))")
             }
 
             let deptConf = response.confidence(for: "department")
@@ -202,7 +208,7 @@ struct GeminiDemo {
             print("  • Department Routing:  \(decision.department.displayName) (Confidence: \(deptConfStr))")
 
             if let scoreVal = response.scoreValue(for: "sentimentScore") {
-                print("  • Sentiment Score:     \(scoreVal.value) / 5 (Confidence: \(formatPercentage(scoreVal.confidence)))")
+                print("  • Sentiment Score:     \(String(format: "%.2f", scoreVal.value)) / 5 (Rounded: \(scoreVal.rounded), Confidence: \(formatPercentage(scoreVal.confidence)))")
             }
 
             // Usage & Telemetry

@@ -563,11 +563,42 @@ public final class BackendHealthProbeService: BackendHealthProbeServiceProtocol,
             }
 
             return evaluateHTTPStatus(http.statusCode, latencyMs: elapsed)
+        } catch is CancellationError {
+            return .unreachable(
+                reason: "Health check cancelled",
+                guidance: "Retry the connection check when ready."
+            )
+        } catch let urlError as URLError {
+            if urlError.code == .cancelled {
+                return .unreachable(
+                    reason: "Health check cancelled",
+                    guidance: "Retry the connection check when ready."
+                )
+            }
+            let connectivityCodes: Set<URLError.Code> = [
+                .notConnectedToInternet,
+                .networkConnectionLost,
+                .cannotFindHost,
+                .cannotConnectToHost,
+                .timedOut,
+                .dnsLookupFailed
+            ]
+            if connectivityCodes.contains(urlError.code) {
+                return .unreachable(
+                    reason: "Cannot connect to Google Gemini Decisions API: \(urlError.localizedDescription)",
+                    guidance: "Check your internet connection or Google Gemini service status."
+                )
+            }
+            print("⚠️ [probeGeminiDecisions] Failed with URLError: \(urlError)")
+            return .unreachable(
+                reason: "Cannot connect to Google Gemini Decisions API: \(urlError.localizedDescription)",
+                guidance: "Check your internet connection and verify your GEMINI_API_KEY in Settings (⌘,)."
+            )
         } catch {
             print("⚠️ [probeGeminiDecisions] Failed with error: \(error)")
             return .unreachable(
                 reason: "Cannot connect to Google Gemini Decisions API: \(error.localizedDescription)",
-                guidance: "Open Settings (⌘,) and paste your GEMINI_API_KEY."
+                guidance: "Check your internet connection and verify your GEMINI_API_KEY in Settings (⌘,)."
             )
         }
     }

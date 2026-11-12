@@ -1391,29 +1391,79 @@ struct HealthProbeTests {
         let statusTimeout = await probe.probe(backend: .geminiDecisions)
         MockHTTPStatusURLProtocol.mockError = nil
         #expect(statusTimeout.reason?.contains("Cannot connect to Google Gemini Decisions API") == true)
-        #expect(statusTimeout.guidance?.contains("GEMINI_API_KEY") == true)
+        #expect(statusTimeout.guidance?.contains("Check your internet connection") == true)
+        #expect(statusTimeout.guidance?.contains("paste your GEMINI_API_KEY") == false)
+
+        MockHTTPStatusURLProtocol.mockError = URLError(.notConnectedToInternet)
+        let statusOffline = await probe.probe(backend: .geminiDecisions)
+        MockHTTPStatusURLProtocol.mockError = nil
+        #expect(statusOffline.guidance?.contains("Check your internet connection") == true)
+
+        MockHTTPStatusURLProtocol.mockError = URLError(.cancelled)
+        let statusCancelled = await probe.probe(backend: .geminiDecisions)
+        MockHTTPStatusURLProtocol.mockError = nil
+        #expect(statusCancelled.reason == "Health check cancelled")
     }
 
-    @Test("BackendConfigurationStore correctly manages Google Gemini credentials")
-    func testBackendConfigurationStoreGeminiProperties() {
+    @Test("BackendConfigurationStore correctly manages Google Gemini credentials without getter side effects and filters placeholders")
+    func testBackendConfigurationStoreGeminiProperties() async {
         let mockKeychain = MockKeychainService()
         let suite = "testGeminiConfig_\(UUID().uuidString)"
-        let store = BackendConfigurationStore(userDefaults: UserDefaults(suiteName: suite)!, keychain: mockKeychain)
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = BackendConfigurationStore(userDefaults: defaults, keychain: mockKeychain)
 
         store.geminiAPIKey = "AIzaSy-live-test"
         #expect(store.geminiAPIKey == "AIzaSy-live-test")
         #expect(mockKeychain.string(for: .geminiApiKey) == "AIzaSy-live-test")
         #expect(mockKeychain.geminiAPIKey == "AIzaSy-live-test")
 
-        // Verify Bearer stripping from setter and getter
+        // Verify Bearer stripping from setter and getter without mutating raw Keychain entry on read
         store.geminiAPIKey = "Bearer AIzaSy-bearer-token"
         #expect(store.geminiAPIKey == "AIzaSy-bearer-token")
 
         try? mockKeychain.set("Bearer AIzaSy-keychain-raw", for: .geminiApiKey)
         #expect(store.geminiAPIKey == "AIzaSy-keychain-raw")
+        #expect(mockKeychain.string(for: .geminiApiKey) == "Bearer AIzaSy-keychain-raw")
 
         store.resetToDefaults()
         #expect(store.geminiAPIKey == "")
+
+        // Verify environment fallback does NOT side-effect into Keychain and filters placeholder strings
+        let envKeychain = MockKeychainService()
+        let envStore = BackendConfigurationStore(
+            userDefaults: defaults,
+            keychain: envKeychain,
+            environmentOverride: ["GEMINI_API_KEY": "AIzaSyFromEnvFallback"]
+        )
+        #expect(envStore.geminiAPIKey == "AIzaSyFromEnvFallback")
+        #expect(envKeychain.string(for: .geminiApiKey) == nil)
+
+        let placeholderStore = BackendConfigurationStore(
+            userDefaults: defaults,
+            keychain: MockKeychainService(),
+            environmentOverride: [
+                "GEMINI_API_KEY": "your_gemini_api_key_here",
+                "GOOGLE_API_KEY": "gemini_placeholder_token",
+                "OPENAI_API_KEY": "your_openai_api_key_here"
+            ]
+        )
+        #expect(placeholderStore.geminiAPIKey == "")
+        #expect(placeholderStore.openaiAPIKey == "")
+        #expect(BackendConfigurationStore.parseDotEnvContent("GEMINI_API_KEY=my_placeholder_key", key: "GEMINI_API_KEY") == nil)
+
+        // Verify concurrent NSLock-synchronized reads and writes across tasks
+        await withTaskGroup(of: Void.self) { group in
+            for idx in 0..<25 {
+                group.addTask {
+                    store.openaiOrganization = "org-\(idx)"
+                    _ = store.openaiOrganization
+                    _ = store.jevCloudURL
+                    _ = store.geminiAPIKey
+                }
+            }
+        }
+        #expect(store.openaiOrganization.hasPrefix("org-"))
     }
 }
 
