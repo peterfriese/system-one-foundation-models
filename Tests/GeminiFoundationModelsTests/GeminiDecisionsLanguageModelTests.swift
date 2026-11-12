@@ -205,6 +205,21 @@ struct GeminiDecisionsLanguageModelTests {
         #expect(scoreResult.levels == ["Low", "Medium", "High"])
     }
 
+    @Test("GeminiDecisionsLanguageModel supports proxyEndpoint with credential and trailing-closure authorize")
+    func testProxyEndpointInitializers() {
+        let proxyURL = URL(string: "https://us-central1-myapp.cloudfunctions.net/geminiProxy")!
+        let model1 = GeminiLanguageModel(
+            proxyEndpoint: proxyURL,
+            credential: .appCheck { "token-1" }
+        )
+        #expect(model1.executorConfiguration.endpoint.url == proxyURL)
+
+        let model2 = GeminiLanguageModel(proxyEndpoint: proxyURL) { request in
+            request.setValue("token-2", forHTTPHeaderField: "X-Firebase-AppCheck")
+        }
+        #expect(model2.executorConfiguration.endpoint.url == proxyURL)
+    }
+
     @Test("GeminiDecisionsExecutor rejects unstructured free-form text requests")
     func testStructuredOutputRequired() async throws {
         let model = GeminiDecisionsLanguageModel(backend: MockGeminiDecisionsBackend())

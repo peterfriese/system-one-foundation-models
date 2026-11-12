@@ -81,7 +81,7 @@ struct InvalidProseStruct {
 
 // MARK: - Test Suite
 
-@Suite("Jev Foundation Models Unit & Integration Tests")
+@Suite("Jev Foundation Models Unit & Integration Tests", .serialized)
 struct JevFoundationModelsTests {
 
     // MARK: - DTO and Model Capabilities
@@ -541,7 +541,10 @@ struct JevFoundationModelsTests {
 
     // MARK: - Live API Integration Test
 
-    @Test("Live TypeSafe AI API integration test (runs when TYPESAFE_API_KEY is available)")
+    @Test(
+        "Live TypeSafe AI API integration test (runs when RUN_LIVE_API_TESTS=1)",
+        .enabled(if: ProcessInfo.processInfo.environment["RUN_LIVE_API_TESTS"] == "1")
+    )
     func testLiveTypeSafeAPIIntegration() async throws {
         let apiKey: String? = {
             if let envKey = ProcessInfo.processInfo.environment["TYPESAFE_API_KEY"],

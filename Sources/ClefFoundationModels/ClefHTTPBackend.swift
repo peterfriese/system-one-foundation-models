@@ -5,6 +5,7 @@ import SystemOneCore
 public struct ClefHTTPBackend: SystemOneBackend, Sendable, Hashable {
     public let endpoint: ClefEndpoint
     public let apiToken: String?
+    public let proxyCredential: ProxyCredential?
     public let session: URLSession
     public let timeoutInterval: TimeInterval
     public let retryPolicy: RetryPolicy
@@ -12,42 +13,90 @@ public struct ClefHTTPBackend: SystemOneBackend, Sendable, Hashable {
     public init(
         endpoint: ClefEndpoint,
         apiToken: String? = nil,
+        proxyCredential: ProxyCredential? = nil,
         session: URLSession = .shared,
         timeoutInterval: TimeInterval = 45,
         retryPolicy: RetryPolicy = .default
     ) {
         self.endpoint = endpoint
         self.apiToken = apiToken
+        self.proxyCredential = proxyCredential
         self.session = session
         self.timeoutInterval = timeoutInterval
         self.retryPolicy = retryPolicy
     }
 
+    public init(
+        proxyEndpoint: URL,
+        model: ClefModel = .clefFlash,
+        credential: ProxyCredential,
+        session: URLSession = .shared,
+        timeoutInterval: TimeInterval = 45,
+        retryPolicy: RetryPolicy = .default
+    ) {
+        self.endpoint = .custom(proxyEndpoint, model: model)
+        self.apiToken = nil
+        self.proxyCredential = credential
+        self.session = session
+        self.timeoutInterval = timeoutInterval
+        self.retryPolicy = retryPolicy
+    }
+
+    public init(
+        proxyEndpoint: URL,
+        credential: ProxyCredential,
+        model: ClefModel,
+        session: URLSession = .shared,
+        timeoutInterval: TimeInterval = 45,
+        retryPolicy: RetryPolicy = .default
+    ) {
+        self.init(
+            proxyEndpoint: proxyEndpoint,
+            model: model,
+            credential: credential,
+            session: session,
+            timeoutInterval: timeoutInterval,
+            retryPolicy: retryPolicy
+        )
+    }
+
     public func evaluate(request: SystemOneRequest) async throws -> SystemOneResponse {
+        if proxyCredential != nil {
+            try ProxyEndpointValidator.validate(endpoint.url)
+        }
+
+        let requestData: Data
+        do {
+            requestData = try JSONEncoder().encode(request)
+        } catch {
+            throw SystemOneError.decodingError("Failed to serialize SystemOneRequest: \(error.localizedDescription)")
+        }
+
         var attempts = 0
-        let maxAttempts = retryPolicy.maxAttempts
+        let maxAttempts = max(1, retryPolicy.maxAttempts)
 
         while true {
             attempts += 1
             do {
-                return try await performSingleEvaluation(request: request)
+                return try await performSingleEvaluation(requestData: requestData)
             } catch is CancellationError {
                 throw CancellationError()
             } catch let resError as HTTPResponseError {
                 let statusCode = resError.httpResponse.statusCode
+                let body = String(data: resError.data, encoding: .utf8) ?? "Unknown error"
+
+                if statusCode == 401 || statusCode == 403 {
+                    throw SystemOneError.authenticationFailed(body)
+                }
+
                 let isLastAttempt = attempts >= maxAttempts
 
                 guard retryPolicy.retryableStatuses.contains(statusCode), !isLastAttempt else {
-                    let body = String(data: resError.data, encoding: .utf8) ?? "Unknown error"
                     throw SystemOneError.apiError(statusCode: statusCode, message: body)
                 }
 
-                let delay: Duration
-                if statusCode == 429, let retryAfterDelay = retryPolicy.retryAfter(from: resError.httpResponse) {
-                    delay = retryAfterDelay
-                } else {
-                    delay = retryPolicy.backoff(afterAttempt: attempts)
-                }
+                let delay = retryPolicy.retryAfter(from: resError.httpResponse)
+                    ?? retryPolicy.backoff(afterAttempt: attempts)
 
                 try await Task.sleep(for: delay)
                 continue
@@ -86,13 +135,12 @@ public struct ClefHTTPBackend: SystemOneBackend, Sendable, Hashable {
         let data: Data
     }
 
-    private func performSingleEvaluation(request: SystemOneRequest) async throws -> SystemOneResponse {
+    private func performSingleEvaluation(requestData: Data) async throws -> SystemOneResponse {
         var urlRequest = URLRequest(url: endpoint.url)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        urlRequest.timeoutInterval = timeoutInterval
 
-        if let token = apiToken, !token.isEmpty {
+        if proxyCredential == nil, let token = apiToken, !token.isEmpty {
             urlRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
 
@@ -101,13 +149,29 @@ public struct ClefHTTPBackend: SystemOneBackend, Sendable, Hashable {
             urlRequest.setValue("clef-multimodal", forHTTPHeaderField: "cf-aig-metadata-tag")
         }
 
-        do {
-            urlRequest.httpBody = try JSONEncoder().encode(request)
-        } catch {
-            throw SystemOneError.decodingError("Failed to serialize SystemOneRequest: \(error.localizedDescription)")
+        urlRequest.timeoutInterval = timeoutInterval
+        urlRequest.httpBody = requestData
+
+        if let proxyCredential {
+            do {
+                try await proxyCredential.apply(to: &urlRequest)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch let urlError as URLError where urlError.code == .cancelled {
+                throw CancellationError()
+            } catch {
+                if Task.isCancelled {
+                    throw CancellationError()
+                }
+                if let sysError = error as? SystemOneError {
+                    throw sysError
+                }
+                throw SystemOneError.authenticationFailed("Failed to acquire proxy credential: \(error.localizedDescription)")
+            }
         }
 
-        let networkStartTime = CFAbsoluteTimeGetCurrent()
+        let clock = ContinuousClock()
+        let networkStart = clock.now
         let data: Data
         let response: URLResponse
         do {
@@ -123,7 +187,9 @@ public struct ClefHTTPBackend: SystemOneBackend, Sendable, Hashable {
             throw SystemOneError.networkError(error.localizedDescription)
         }
 
-        let transportDuration = (CFAbsoluteTimeGetCurrent() - networkStartTime) * 1000.0
+        let elapsed = networkStart.duration(to: clock.now)
+        let transportDuration = Double(elapsed.components.seconds) * 1000.0
+            + Double(elapsed.components.attoseconds) / 1_000_000_000_000_000.0
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw SystemOneError.networkError("Invalid HTTP response received from server.")

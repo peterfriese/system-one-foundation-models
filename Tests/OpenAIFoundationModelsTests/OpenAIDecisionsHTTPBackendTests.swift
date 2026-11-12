@@ -144,11 +144,12 @@ struct OpenAIDecisionsHTTPBackendTests {
 
     @Test("HTTP Backend throws missingAPIKey when no key is configured")
     func testMissingAPIKeyThrows() async throws {
-        // Construct backend with empty key
+        // Construct backend with empty key and isolated empty environmentOverride
         let backend = OpenAIDecisionsHTTPBackend(
             endpoint: .hosted(),
-            apiKey: "",
-            session: makeSession()
+            apiKey: "   ",
+            session: makeSession(),
+            environmentOverride: [:]
         )
 
         let request = SystemOneRequest(
@@ -315,5 +316,94 @@ struct OpenAIDecisionsHTTPBackendTests {
 
         // Verify it failed fast without retrying despite retryPolicy allowing 3 attempts
         #expect(MockOpenAIURLProtocol.recordedRequests.count == 1)
+    }
+
+    @Test("HTTP Backend with ProxyCredential suppresses master keys, exposes httpBody for signing, and rotates token per retry attempt")
+    func testProxyCredentialAndPerAttemptTokenRotation() async throws {
+        actor TokenCounter {
+            private var count = 0
+            private(set) var observedBodySizes: [Int] = []
+            func next(bodySize: Int) -> String {
+                count += 1
+                observedBodySizes.append(bodySize)
+                return "openai-appcheck-\(count)"
+            }
+        }
+
+        MockOpenAIURLProtocol.reset()
+        MockOpenAIURLProtocol.enqueue(
+            statusCode: 429,
+            headers: ["Retry-After": "0"],
+            body: """
+            {"error": {"message": "Rate limit exceeded", "type": "rate_limit_error"}}
+            """.data(using: .utf8)!
+        )
+        MockOpenAIURLProtocol.enqueue(
+            statusCode: 200,
+            headers: ["openai-processing-ms": "14.0"],
+            body: sampleResponseJSON
+        )
+
+        let counter = TokenCounter()
+        let proxyURL = URL(string: "https://us-central1-myapp.cloudfunctions.net/openAIProxy")!
+        let backend = OpenAIDecisionsHTTPBackend(
+            endpoint: .custom(
+                proxyURL,
+                organization: "org-must-not-leak",
+                project: "proj-must-not-leak",
+                clientRequestID: "trace-openai-proxy"
+            ),
+            apiKey: "sk-must-not-leak-explicit",
+            proxyCredential: .custom { req in
+                let bodyCount = req.httpBody?.count ?? 0
+                let tok = await counter.next(bodySize: bodyCount)
+                req.setValue(tok, forHTTPHeaderField: "X-Firebase-AppCheck")
+            },
+            session: makeSession(),
+            retryPolicy: RetryPolicy(maxAttempts: 2, initialDelay: .zero),
+            environmentOverride: ["OPENAI_API_KEY": "sk-must-not-leak-env"]
+        )
+
+        let request = SystemOneRequest(
+            state: "Proxy test",
+            questions: ["isSafe": .noul(instructions: "Is safe?")]
+        )
+
+        let response = try await backend.evaluate(request: request)
+        #expect(response.answers["isSafe"]?.noul == 0.98)
+
+        let bodySizes = await counter.observedBodySizes
+        #expect(bodySizes.count == 2)
+        #expect(bodySizes.allSatisfy { $0 > 0 })
+
+        let recorded = MockOpenAIURLProtocol.recordedRequests
+        #expect(recorded.count == 2)
+        #expect(recorded[0].url == proxyURL)
+        #expect(recorded[0].value(forHTTPHeaderField: "Authorization") == nil)
+        #expect(recorded[1].value(forHTTPHeaderField: "Authorization") == nil)
+        #expect(recorded[0].value(forHTTPHeaderField: "OpenAI-Organization") == nil)
+        #expect(recorded[0].value(forHTTPHeaderField: "OpenAI-Project") == nil)
+        #expect(recorded[0].value(forHTTPHeaderField: "X-Client-Request-Id") == "trace-openai-proxy")
+        #expect(recorded[0].value(forHTTPHeaderField: "X-Firebase-AppCheck") == "openai-appcheck-1")
+        #expect(recorded[1].value(forHTTPHeaderField: "X-Firebase-AppCheck") == "openai-appcheck-2")
+    }
+
+    @Test("HTTP Backend with ProxyCredential rejects insecure remote HTTP endpoint")
+    func testProxyCredentialRejectsRemoteHTTP() async throws {
+        let insecureURL = URL(string: "http://remote-gateway.example.com/v1/decisions")!
+        let backend = OpenAIDecisionsHTTPBackend(
+            proxyEndpoint: insecureURL,
+            credential: .bearer { "token" },
+            session: makeSession()
+        )
+
+        let request = SystemOneRequest(
+            state: "Test",
+            questions: ["isSafe": .noul(instructions: "Is safe?")]
+        )
+
+        await #expect(throws: SystemOneError.self) {
+            _ = try await backend.evaluate(request: request)
+        }
     }
 }

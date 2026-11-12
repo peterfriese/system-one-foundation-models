@@ -145,15 +145,22 @@ struct ProxyTransportTests {
         #expect(recorded.first?.value(forHTTPHeaderField: "X-Firebase-AppCheck") == "app-check-token-xyz")
     }
 
-    @Test("ProxyTransport custom modifier transforms request")
+    @Test("ProxyTransport custom modifier observes populated httpBody and transforms request")
     func testCustomCredentialModifier() async throws {
+        actor BodyBox {
+            private(set) var len = 0
+            func set(_ v: Int) { len = v }
+        }
+
         MockProxyURLProtocol.reset()
         MockProxyURLProtocol.enqueue(statusCode: 200, body: sampleResponseData)
 
+        let box = BodyBox()
         let proxyURL = URL(string: "https://gateway.example.com/api")!
         let transport = ProxyTransport(
             proxyEndpoint: proxyURL,
             credential: .custom { req in
+                await box.set(req.httpBody?.count ?? 0)
                 req.setValue("tenant-42", forHTTPHeaderField: "X-Tenant-ID")
                 req.setValue("sig-999", forHTTPHeaderField: "X-Signature")
             },
@@ -161,11 +168,40 @@ struct ProxyTransportTests {
         )
 
         let request = JevRequest(state: "Test", model: "jev-latest", questions: [:])
-        _ = try await transport.send(request: request, apiKey: nil, endpoint: proxyURL)
+        _ = try await transport.send(request: request, apiKey: "must-not-leak", endpoint: proxyURL)
 
+        let observedBodyLen = await box.len
+        #expect(observedBodyLen > 0)
         let recorded = MockProxyURLProtocol.recordedRequests
+        #expect(recorded.first?.value(forHTTPHeaderField: "Authorization") == nil)
         #expect(recorded.first?.value(forHTTPHeaderField: "X-Tenant-ID") == "tenant-42")
         #expect(recorded.first?.value(forHTTPHeaderField: "X-Signature") == "sig-999")
+    }
+
+    @Test("ProxyTransport maps HTTP 401 and 403 immediately to authenticationFailed without retrying")
+    func testProxyTransport401And403MappedToAuthenticationFailed() async throws {
+        let proxyURL = URL(string: "https://gateway.example.com/api")!
+        let request = JevRequest(state: "Auth test", model: "jev-latest", questions: [:])
+
+        for statusCode in [401, 403] {
+            MockProxyURLProtocol.reset()
+            MockProxyURLProtocol.enqueue(statusCode: statusCode, body: Data("Gateway denied (\(statusCode))".utf8))
+
+            let transport = ProxyTransport(
+                proxyEndpoint: proxyURL,
+                credential: .appCheck { "invalid-tok" },
+                session: makeSession(),
+                retryPolicy: RetryPolicy(maxAttempts: 3, initialDelay: .zero)
+            )
+
+            do {
+                _ = try await transport.send(request: request, apiKey: nil, endpoint: proxyURL)
+                Issue.record("Expected authenticationFailed for HTTP \(statusCode)")
+            } catch let JevError.authenticationFailed(msg) {
+                #expect(msg.contains("Gateway denied (\(statusCode))"))
+            }
+            #expect(MockProxyURLProtocol.recordedRequests.count == 1)
+        }
     }
 
     @Test("ProxyTransport retries on 429 and succeeds on subsequent attempt")
@@ -225,5 +261,37 @@ struct ProxyTransportTests {
         let request = JevRequest(state: "Test", model: "jev-latest", questions: [:])
         let response = try await transport.send(request: request, apiKey: nil, endpoint: localURL)
         #expect(response.answers.count == 1)
+    }
+
+    @Test("JevLanguageModel supports proxyEndpoint with ProxyCredential (.appCheck) and trailing-closure authorize")
+    func testJevLanguageModelProxyInitializers() async throws {
+        MockProxyURLProtocol.reset()
+        MockProxyURLProtocol.enqueue(statusCode: 200, body: sampleResponseData)
+
+        let proxyURL = URL(string: "https://my-app.cloudfunctions.net/jevProxy")!
+        let model1 = JevLanguageModel(
+            proxyEndpoint: proxyURL,
+            credential: .appCheck { "jev-appcheck-token" },
+            session: makeSession()
+        )
+        #expect(model1.executorConfiguration.endpoint == proxyURL)
+        #expect(model1.executorConfiguration.apiKey == nil)
+
+        let model2 = JevLanguageModel(
+            proxyEndpoint: proxyURL,
+            session: makeSession()
+        ) { req in
+            req.setValue("jev-custom-appcheck", forHTTPHeaderField: "X-Firebase-AppCheck")
+        }
+        #expect(model2.executorConfiguration.endpoint == proxyURL)
+
+        let request = JevRequest(state: "Test", model: "jev-latest", questions: [:])
+        let response = try await model2.executorConfiguration.transport.send(
+            request: request,
+            apiKey: nil,
+            endpoint: proxyURL
+        )
+        #expect(response.answers.count == 1)
+        #expect(MockProxyURLProtocol.recordedRequests.first?.value(forHTTPHeaderField: "X-Firebase-AppCheck") == "jev-custom-appcheck")
     }
 }

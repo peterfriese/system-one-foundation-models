@@ -131,6 +131,20 @@ struct ClefLanguageModelTests {
         let model = ClefLanguageModel(endpoint: .local())
         #expect(model.capabilities.contains(.guidedGeneration))
         #expect(model.capabilities.contains(.vision))
+
+        let proxyURL = URL(string: "https://clef-gateway.company.com/v1/evaluate")!
+        let proxyModel1 = ClefLanguageModel(
+            proxyEndpoint: proxyURL,
+            model: .clefFlash,
+            credential: .appCheck { "tok-1" }
+        )
+        #expect(proxyModel1.executorConfiguration.endpoint.url == proxyURL)
+
+        let proxyModel2 = ClefLanguageModel(proxyEndpoint: proxyURL, model: .clef) { req in
+            req.setValue("tok-2", forHTTPHeaderField: "X-Firebase-AppCheck")
+        }
+        #expect(proxyModel2.executorConfiguration.endpoint.url == proxyURL)
+        #expect(proxyModel2.executorConfiguration.modelID == ClefModel.clef.rawValue)
     }
 
     @Test("ClefLanguageModel supports PNG, JPEG, and WebP data attachment types")

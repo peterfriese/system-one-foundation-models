@@ -7,6 +7,7 @@ import SystemOneCore
 public struct GeminiDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
     public let endpoint: GeminiDecisionsEndpoint
     public let apiKey: String?
+    public let proxyCredential: ProxyCredential?
     public let session: URLSession
     public let timeoutInterval: TimeInterval
     public let retryPolicy: RetryPolicy
@@ -15,12 +16,14 @@ public struct GeminiDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
     public init(
         endpoint: GeminiDecisionsEndpoint = .hosted(),
         apiKey: String? = nil,
+        proxyCredential: ProxyCredential? = nil,
         session: URLSession = .shared,
         timeoutInterval: TimeInterval = 30,
         retryPolicy: RetryPolicy = .default
     ) {
         self.endpoint = endpoint
         self.apiKey = apiKey
+        self.proxyCredential = proxyCredential
         self.session = session
         self.timeoutInterval = timeoutInterval
         self.retryPolicy = retryPolicy
@@ -30,6 +33,7 @@ public struct GeminiDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
     internal init(
         endpoint: GeminiDecisionsEndpoint = .hosted(),
         apiKey: String? = nil,
+        proxyCredential: ProxyCredential? = nil,
         session: URLSession = .shared,
         timeoutInterval: TimeInterval = 30,
         retryPolicy: RetryPolicy = .default,
@@ -37,6 +41,7 @@ public struct GeminiDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
     ) {
         self.endpoint = endpoint
         self.apiKey = apiKey
+        self.proxyCredential = proxyCredential
         self.session = session
         self.timeoutInterval = timeoutInterval
         self.retryPolicy = retryPolicy
@@ -56,6 +61,29 @@ public struct GeminiDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
             clientRequestID: clientRequestID
         )
         self.apiKey = apiKey
+        self.proxyCredential = nil
+        self.session = session
+        self.timeoutInterval = timeoutInterval
+        self.retryPolicy = retryPolicy
+        self.environmentOverride = nil
+    }
+
+    public init(
+        proxyEndpoint: URL,
+        credential: ProxyCredential,
+        model: String = GeminiDecisionsEndpoint.defaultModel,
+        clientRequestID: String? = nil,
+        session: URLSession = .shared,
+        timeoutInterval: TimeInterval = 30,
+        retryPolicy: RetryPolicy = .default
+    ) {
+        self.endpoint = .custom(
+            proxyEndpoint,
+            model: model,
+            clientRequestID: clientRequestID
+        )
+        self.apiKey = nil
+        self.proxyCredential = credential
         self.session = session
         self.timeoutInterval = timeoutInterval
         self.retryPolicy = retryPolicy
@@ -103,33 +131,17 @@ public struct GeminiDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
         .clientCertificateRequired
     ]
 
-    private func validateEndpointURL(_ url: URL) throws {
-        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-        if url.user != nil || url.password != nil || components?.user != nil || components?.password != nil {
-            throw SystemOneError.networkError("Gemini Decisions endpoint URL must not contain embedded user credentials.")
-        }
-
-        guard let scheme = url.scheme?.lowercased(),
-              let rawHost = (components?.host ?? url.host)?.lowercased(),
-              !rawHost.isEmpty else {
-            throw SystemOneError.networkError("Invalid Gemini Decisions endpoint URL '\(url.absoluteString)': missing scheme or host.")
-        }
-
-        let isLoopback = ["localhost", "127.0.0.1", "::1", "[::1]"].contains(rawHost)
-        guard scheme == "https" || (scheme == "http" && isLoopback) else {
-            throw SystemOneError.networkError(
-                "Insecure or unsupported endpoint URL '\(url.absoluteString)'; HTTPS is required for non-loopback Gemini Decisions endpoints."
-            )
-        }
-    }
-
     private static func containsHeaderControlCharacters(_ value: String) -> Bool {
         value.unicodeScalars.contains { scalar in
             scalar == "\r" || scalar == "\n" || scalar.value == 0
         }
     }
 
-    private func resolveAPIKey() throws -> String {
+    private func resolveAPIKey() throws -> String? {
+        if proxyCredential != nil {
+            return nil
+        }
+
         func sanitizeKeyCandidate(_ candidate: String) throws -> String? {
             if Self.containsHeaderControlCharacters(candidate) {
                 throw SystemOneError.authenticationFailed("Invalid Gemini API key: CR/LF header control characters are not permitted.")
@@ -165,18 +177,25 @@ public struct GeminiDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
     private func evaluateWithTiming(
         request: GeminiDecisionsRequest
     ) async throws -> (response: GeminiDecisionsResponse, transportDurationMs: Double, serverDurationMs: Double?) {
-        try validateEndpointURL(endpoint.url)
+        try ProxyEndpointValidator.validate(endpoint.url)
         let resolvedKey = try resolveAPIKey()
         let sanitizedClientRequestID = try resolveClientRequestID()
 
+        let requestData: Data
+        do {
+            requestData = try JSONEncoder().encode(request)
+        } catch {
+            throw SystemOneError.decodingError("Failed to serialize GeminiDecisionsRequest: \(error.localizedDescription)")
+        }
+
         var attempts = 0
-        let maxAttempts = retryPolicy.maxAttempts
+        let maxAttempts = max(1, retryPolicy.maxAttempts)
 
         while true {
             attempts += 1
             do {
                 return try await performSingleEvaluation(
-                    request: request,
+                    requestData: requestData,
                     apiKey: resolvedKey,
                     clientRequestID: sanitizedClientRequestID
                 )
@@ -243,25 +262,39 @@ public struct GeminiDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
     }
 
     private func performSingleEvaluation(
-        request: GeminiDecisionsRequest,
-        apiKey: String,
+        requestData: Data,
+        apiKey: String?,
         clientRequestID: String?
     ) async throws -> (response: GeminiDecisionsResponse, transportDurationMs: Double, serverDurationMs: Double?) {
         var urlRequest = URLRequest(url: endpoint.url)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
-        urlRequest.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
-        urlRequest.timeoutInterval = timeoutInterval
-
+        if proxyCredential == nil, let apiKey {
+            urlRequest.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
+        }
         if let clientRequestID {
             urlRequest.setValue(clientRequestID, forHTTPHeaderField: "X-Client-Request-Id")
         }
+        urlRequest.timeoutInterval = timeoutInterval
+        urlRequest.httpBody = requestData
 
-        do {
-            urlRequest.httpBody = try JSONEncoder().encode(request)
-        } catch {
-            throw SystemOneError.decodingError("Failed to serialize GeminiDecisionsRequest: \(error.localizedDescription)")
+        if let proxyCredential {
+            do {
+                try await proxyCredential.apply(to: &urlRequest)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch let urlError as URLError where urlError.code == .cancelled {
+                throw CancellationError()
+            } catch {
+                if Task.isCancelled {
+                    throw CancellationError()
+                }
+                if let sysError = error as? SystemOneError {
+                    throw sysError
+                }
+                throw SystemOneError.authenticationFailed("Failed to acquire proxy credential: \(error.localizedDescription)")
+            }
         }
 
         let clock = ContinuousClock()

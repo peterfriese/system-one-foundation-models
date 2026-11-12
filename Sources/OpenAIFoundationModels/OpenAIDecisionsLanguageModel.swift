@@ -3,6 +3,9 @@ import FoundationModels
 import UniformTypeIdentifiers
 @_exported import SystemOneCore
 
+/// Ergonomic shorthand alias for `OpenAIDecisionsLanguageModel`.
+public typealias OpenAILanguageModel = OpenAIDecisionsLanguageModel
+
 /// An Apple Foundation Models provider for the OpenAI Decisions API (`gpt-6-luna`).
 ///
 /// See tech-notes/0017-openai-decisions-api-architecture.md
@@ -17,6 +20,7 @@ public struct OpenAIDecisionsLanguageModel: LanguageModel, Sendable {
         public init(
             endpoint: OpenAIDecisionsEndpoint = .hosted(),
             apiKey: String? = nil,
+            proxyCredential: ProxyCredential? = nil,
             session: URLSession = .shared,
             timeoutInterval: TimeInterval = 30,
             retryPolicy: RetryPolicy = .default
@@ -26,6 +30,7 @@ public struct OpenAIDecisionsLanguageModel: LanguageModel, Sendable {
             let httpBackend = OpenAIDecisionsHTTPBackend(
                 endpoint: endpoint,
                 apiKey: apiKey,
+                proxyCredential: proxyCredential,
                 session: session,
                 timeoutInterval: timeoutInterval,
                 retryPolicy: retryPolicy
@@ -85,6 +90,7 @@ public struct OpenAIDecisionsLanguageModel: LanguageModel, Sendable {
     public init(
         endpoint: OpenAIDecisionsEndpoint,
         apiKey: String? = nil,
+        proxyCredential: ProxyCredential? = nil,
         session: URLSession = .shared,
         timeoutInterval: TimeInterval = 30,
         retryPolicy: RetryPolicy = .default
@@ -92,6 +98,59 @@ public struct OpenAIDecisionsLanguageModel: LanguageModel, Sendable {
         self.executorConfiguration = Configuration(
             endpoint: endpoint,
             apiKey: apiKey,
+            proxyCredential: proxyCredential,
+            session: session,
+            timeoutInterval: timeoutInterval,
+            retryPolicy: retryPolicy
+        )
+    }
+
+    public init(
+        proxyEndpoint: URL,
+        credential: ProxyCredential,
+        model: String = OpenAIDecisionsEndpoint.defaultModel,
+        organization: String? = nil,
+        project: String? = nil,
+        clientRequestID: String? = nil,
+        session: URLSession = .shared,
+        timeoutInterval: TimeInterval = 30,
+        retryPolicy: RetryPolicy = .default
+    ) {
+        let ep = OpenAIDecisionsEndpoint.custom(
+            proxyEndpoint,
+            model: model,
+            organization: organization,
+            project: project,
+            clientRequestID: clientRequestID
+        )
+        self.executorConfiguration = Configuration(
+            endpoint: ep,
+            apiKey: nil,
+            proxyCredential: credential,
+            session: session,
+            timeoutInterval: timeoutInterval,
+            retryPolicy: retryPolicy
+        )
+    }
+
+    public init(
+        proxyEndpoint: URL,
+        model: String = OpenAIDecisionsEndpoint.defaultModel,
+        organization: String? = nil,
+        project: String? = nil,
+        clientRequestID: String? = nil,
+        session: URLSession = .shared,
+        timeoutInterval: TimeInterval = 30,
+        retryPolicy: RetryPolicy = .default,
+        authorize: @escaping @Sendable (inout URLRequest) async throws -> Void
+    ) {
+        self.init(
+            proxyEndpoint: proxyEndpoint,
+            credential: .custom(authorize),
+            model: model,
+            organization: organization,
+            project: project,
+            clientRequestID: clientRequestID,
             session: session,
             timeoutInterval: timeoutInterval,
             retryPolicy: retryPolicy

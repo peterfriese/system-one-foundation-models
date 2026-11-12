@@ -20,6 +20,7 @@ public struct GeminiDecisionsLanguageModel: LanguageModel, Sendable {
         public init(
             endpoint: GeminiDecisionsEndpoint = .hosted(),
             apiKey: String? = nil,
+            proxyCredential: ProxyCredential? = nil,
             session: URLSession = .shared,
             timeoutInterval: TimeInterval = 30,
             retryPolicy: RetryPolicy = .default
@@ -29,6 +30,7 @@ public struct GeminiDecisionsLanguageModel: LanguageModel, Sendable {
             let httpBackend = GeminiDecisionsHTTPBackend(
                 endpoint: endpoint,
                 apiKey: apiKey,
+                proxyCredential: proxyCredential,
                 session: session,
                 timeoutInterval: timeoutInterval,
                 retryPolicy: retryPolicy
@@ -85,6 +87,7 @@ public struct GeminiDecisionsLanguageModel: LanguageModel, Sendable {
     public init(
         endpoint: GeminiDecisionsEndpoint,
         apiKey: String? = nil,
+        proxyCredential: ProxyCredential? = nil,
         session: URLSession = .shared,
         timeoutInterval: TimeInterval = 30,
         retryPolicy: RetryPolicy = .default
@@ -92,6 +95,51 @@ public struct GeminiDecisionsLanguageModel: LanguageModel, Sendable {
         self.executorConfiguration = Configuration(
             endpoint: endpoint,
             apiKey: apiKey,
+            proxyCredential: proxyCredential,
+            session: session,
+            timeoutInterval: timeoutInterval,
+            retryPolicy: retryPolicy
+        )
+    }
+
+    public init(
+        proxyEndpoint: URL,
+        credential: ProxyCredential,
+        model: String = GeminiDecisionsEndpoint.defaultModel,
+        clientRequestID: String? = nil,
+        session: URLSession = .shared,
+        timeoutInterval: TimeInterval = 30,
+        retryPolicy: RetryPolicy = .default
+    ) {
+        let ep = GeminiDecisionsEndpoint.custom(
+            proxyEndpoint,
+            model: model,
+            clientRequestID: clientRequestID
+        )
+        self.executorConfiguration = Configuration(
+            endpoint: ep,
+            apiKey: nil,
+            proxyCredential: credential,
+            session: session,
+            timeoutInterval: timeoutInterval,
+            retryPolicy: retryPolicy
+        )
+    }
+
+    public init(
+        proxyEndpoint: URL,
+        model: String = GeminiDecisionsEndpoint.defaultModel,
+        clientRequestID: String? = nil,
+        session: URLSession = .shared,
+        timeoutInterval: TimeInterval = 30,
+        retryPolicy: RetryPolicy = .default,
+        authorize: @escaping @Sendable (inout URLRequest) async throws -> Void
+    ) {
+        self.init(
+            proxyEndpoint: proxyEndpoint,
+            credential: .custom(authorize),
+            model: model,
+            clientRequestID: clientRequestID,
             session: session,
             timeoutInterval: timeoutInterval,
             retryPolicy: retryPolicy

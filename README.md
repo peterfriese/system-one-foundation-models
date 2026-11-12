@@ -20,12 +20,12 @@ Evaluate strongly typed `@Generable` structs and enums against application state
 
 > [!WARNING]
 > **Security Advisory: Never Embed API Keys in Mobile Apps**
-> Cloud API keys (`TYPESAFE_API_KEY`) must **never** be hardcoded or bundled inside client-side iOS, iPadOS, watchOS, or visionOS application binaries. Anyone can inspect or decompile mobile apps to extract embedded secrets.
+> Cloud API keys (`GEMINI_API_KEY`, `OPENAI_API_KEY`, `CLOUDFLARE_API_TOKEN`, `TYPESAFE_API_KEY`) must **never** be hardcoded or bundled inside client-side iOS, iPadOS, watchOS, or visionOS application binaries. Anyone can inspect or decompile mobile apps to extract embedded secrets.
 >
 > **Safe Deployment Patterns:**
 > - **On-Device Core ML (`LayaOnDevice`)**: Run models locally on hardware with 100% offline privacy and zero secrets required.
-> - **Backend / Server / CLI**: Use `LayaLanguageModel` or `JevLanguageModel` directly in server-side Swift services or CLI tools where environment variables remain server-side.
-> - **Mobile Applications with Cloud APIs**: Route mobile requests through your own authenticated reverse proxy protected by Apple App Attest and Firebase App Check using the built-in `ProxyTransport` (see [Mobile Security Guide](docs/mobile-security.md) and [Tech Note 0010](tech-notes/0010-proxy-transport-and-dynamic-attestation.md)).
+> - **Backend / Server / CLI**: Use `GeminiLanguageModel`, `OpenAILanguageModel`, `ClefLanguageModel`, `LayaLanguageModel`, or `JevLanguageModel` directly in server-side Swift services or CLI tools where environment variables remain server-side.
+> - **Mobile Applications with Cloud APIs**: Route mobile requests through your own authenticated reverse proxy protected by Apple App Attest and Firebase App Check using universal `ProxyCredential` (`.appCheck`, `.header`, `.bearer`, `.custom`, or inline `authorize:` closures) and `SystemOneProxyBackend` (see [Mobile Security Guide](docs/mobile-security.md), [ADR-2026-11-12-01](docs/architecture/ADR-2026-11-12-01-universal-proxy-credentials.md), and [Tech Note 0010](tech-notes/0010-proxy-transport-and-dynamic-attestation.md)).
 
 ---
 
@@ -182,7 +182,7 @@ import FoundationModels
 import OpenAIFoundationModels
 
 // 1. Connect to OpenAI Decisions API with optional enterprise headers
-let openai = OpenAIDecisionsLanguageModel(
+let openai = OpenAILanguageModel(
     apiKey: ProcessInfo.processInfo.environment["OPENAI_API_KEY"]!,
     organization: ProcessInfo.processInfo.environment["OPENAI_ORGANIZATION"],
     project: ProcessInfo.processInfo.environment["OPENAI_PROJECT"]
@@ -198,7 +198,7 @@ import FoundationModels
 import GeminiFoundationModels
 
 // 1. Connect to Google Gemini Decisions API (resolves GEMINI_API_KEY or GOOGLE_API_KEY)
-let gemini = GeminiDecisionsLanguageModel(
+let gemini = GeminiLanguageModel(
     apiKey: ProcessInfo.processInfo.environment["GEMINI_API_KEY"]
 )
 
@@ -206,24 +206,43 @@ let gemini = GeminiDecisionsLanguageModel(
 let session = LanguageModelSession(model: gemini)
 ```
 
-#### Option G: Mobile Reverse Proxy with `ProxyTransport` (Zero Bundled Secrets)
+#### Option G: Mobile Security & Zero-Secret App Check Gateways (`ProxyCredential` & `SystemOneProxyBackend`)
+Every hosted System One model (`GeminiLanguageModel`, `OpenAILanguageModel`, `ClefLanguageModel`, `LayaLanguageModel`, `JevLanguageModel`, and vendor-agnostic `SystemOneLanguageModel`) supports dynamic, per-attempt credential injection (`.appCheck`, `.header`, `.bearer`, `.custom`, or inline `authorize:` trailing closures) with zero third-party SDK dependencies in `SystemOneFoundationModels`:
+
 ```swift
 import FoundationModels
-import JevFoundationModels
-import FirebaseAppCheck // or Apple App Attest / OAuth 2.0
+import GeminiFoundationModels // or OpenAIFoundationModels / ClefFoundationModels / LayaFoundationModels / JevFoundationModels
+import FirebaseAppCheck       // or Apple App Attest / OAuth 2.0
 
-// 1. Route mobile requests through your reverse proxy with dynamic device attestation
-let proxyURL = URL(string: "https://us-central1-myproject.cloudfunctions.net/systemone")!
-let transport = ProxyTransport(
-    proxyEndpoint: proxyURL,
-    credential: .header(name: "X-Firebase-AppCheck") {
-        try await AppCheck.appCheck().token(forcingRefresh: false).token
-    }
+// 1. Reusable zero-dependency App Check credential (resolved on every attempt inside the retry loop)
+let appCheck = ProxyCredential.appCheck {
+    try await AppCheck.appCheck().token(forcingRefresh: false).token
+}
+
+// Pattern A: Provider-specific passthrough proxy (works identically across Gemini, OpenAI, Clef, Laya, and Jev)
+let gemini = GeminiLanguageModel(
+    proxyEndpoint: URL(string: "https://us-central1-myproject.cloudfunctions.net/geminiDecisions")!,
+    credential: appCheck
 )
-let jev = JevLanguageModel(transport: transport)
+
+// Pattern B: Vendor-agnostic gateway (server routes between Gemini, OpenAI, Clef, Jev, or Laya)
+let gatewayModel = SystemOneLanguageModel(
+    proxyEndpoint: URL(string: "https://us-central1-myproject.cloudfunctions.net/systemone")!,
+    credential: appCheck,
+    modelID: "gemini-decision-1"
+)
+
+// Or use the inline trailing-closure `authorize:` syntax for multi-header gateways (App Check + User JWT):
+let customAuthModel = OpenAILanguageModel(
+    proxyEndpoint: URL(string: "https://api.mycompany.com/v1/decisions")!
+) { request in
+    let attestToken = try await AppCheck.appCheck().token(forcingRefresh: false).token
+    request.setValue(attestToken, forHTTPHeaderField: "X-Firebase-AppCheck")
+    request.setValue("Bearer \(try await AuthManager.shared.validAccessToken())", forHTTPHeaderField: "Authorization")
+}
 
 // 2. Initialize native Apple Foundation Models session
-let session = LanguageModelSession(model: jev)
+let session = LanguageModelSession(model: gemini)
 ```
 
 ### 3. Define Your Decision Type & Evaluate
@@ -406,6 +425,7 @@ Explore [`Examples/MailTriageApp`](Examples/MailTriageApp/README.md), a complete
 │     ├── ClefHTTPBackend: Cloudflare Workers AI / Gateway / Local       │
 │     ├── OpenAIDecisionsHTTPBackend: POST https://api.openai.com/...    │
 │     ├── GeminiDecisionsHTTPBackend: POST https://generativelanguage... │
+│     ├── SystemOneProxyBackend: Canonical Vendor-Agnostic Proxy Gateway │
 │     └── JevBackend: POST https://api.typesafe.ai/v1/systemone          │
 │  • ResponseSynthesizer: converts answers into canonical JSON / enums   │
 └───────────────────────────────────┬────────────────────────────────────┘
@@ -428,11 +448,13 @@ For more in-depth documentation, see:
   * [ADR: Cloudflare Clef Foundation Models Integration](docs/architecture/ADR-2026-10-03-01-clef-foundation-models-integration.md)
   * [ADR: OpenAI Decisions API Integration](docs/architecture/ADR-2026-10-08-01-openai-decisions-models-integration.md)
   * [ADR: Google Gemini Decisions API Integration](docs/architecture/ADR-2026-11-11-01-gemini-decisions-models-integration.md)
+  * [ADR: Universal Proxy Credentials & Hardware-Attested Gateways](docs/architecture/ADR-2026-11-12-01-universal-proxy-credentials.md)
 * [Product Requirements Documents (PRDs)](docs/prd/)
   * [PRD: Mail Triage Engine](docs/prd/PRD-2026-09-25-mail-triage-system-one-engine.md)
   * [PRD: Clef Multimodal Decision Models](docs/prd/PRD-2026-10-03-clef-decision-models.md)
   * [PRD: OpenAI Decisions Models (`gpt-6-luna`)](docs/prd/PRD-2026-10-08-openai-decisions-models.md)
   * [PRD: Google Gemini Decisions Models (`gemini-decision-1`)](docs/prd/PRD-2026-11-11-gemini-decisions-models.md)
+  * [PRD: Universal Proxy Credentials & Hardware-Attested Gateways](docs/prd/PRD-2026-11-12-universal-proxy-credentials.md)
 * [Repository Audit Sweep & Remediation Report](docs/plans/AUDIT-SWEEP-2026-10-09.md)
 * [CLI & Server Deployment Guide](docs/laya-cli-guide.md)
 * [Mobile Deployment & Core ML Guide](docs/laya-mobile-guide.md)

@@ -14,6 +14,7 @@ public struct ClefLanguageModel: LanguageModel, Sendable {
         public init(
             endpoint: ClefEndpoint,
             apiToken: String? = nil,
+            proxyCredential: ProxyCredential? = nil,
             session: URLSession = .shared,
             timeoutInterval: TimeInterval = 45,
             retryPolicy: RetryPolicy = .default
@@ -24,6 +25,7 @@ public struct ClefLanguageModel: LanguageModel, Sendable {
             self.backend = ClefHTTPBackend(
                 endpoint: endpoint,
                 apiToken: apiToken,
+                proxyCredential: proxyCredential,
                 session: session,
                 timeoutInterval: timeoutInterval,
                 retryPolicy: retryPolicy
@@ -52,6 +54,7 @@ public struct ClefLanguageModel: LanguageModel, Sendable {
     public init(
         endpoint: ClefEndpoint,
         apiToken: String? = nil,
+        proxyCredential: ProxyCredential? = nil,
         session: URLSession = .shared,
         timeoutInterval: TimeInterval = 45,
         retryPolicy: RetryPolicy = .default
@@ -59,6 +62,61 @@ public struct ClefLanguageModel: LanguageModel, Sendable {
         self.executorConfiguration = Configuration(
             endpoint: endpoint,
             apiToken: apiToken,
+            proxyCredential: proxyCredential,
+            session: session,
+            timeoutInterval: timeoutInterval,
+            retryPolicy: retryPolicy
+        )
+    }
+
+    public init(
+        proxyEndpoint: URL,
+        model: ClefModel = .clefFlash,
+        credential: ProxyCredential,
+        session: URLSession = .shared,
+        timeoutInterval: TimeInterval = 45,
+        retryPolicy: RetryPolicy = .default
+    ) {
+        self.executorConfiguration = Configuration(
+            endpoint: .custom(proxyEndpoint, model: model),
+            apiToken: nil,
+            proxyCredential: credential,
+            session: session,
+            timeoutInterval: timeoutInterval,
+            retryPolicy: retryPolicy
+        )
+    }
+
+    public init(
+        proxyEndpoint: URL,
+        credential: ProxyCredential,
+        model: ClefModel,
+        session: URLSession = .shared,
+        timeoutInterval: TimeInterval = 45,
+        retryPolicy: RetryPolicy = .default
+    ) {
+        self.init(
+            proxyEndpoint: proxyEndpoint,
+            model: model,
+            credential: credential,
+            session: session,
+            timeoutInterval: timeoutInterval,
+            retryPolicy: retryPolicy
+        )
+    }
+
+    public init(
+        proxyEndpoint: URL,
+        model: ClefModel = .clefFlash,
+        session: URLSession = .shared,
+        timeoutInterval: TimeInterval = 45,
+        retryPolicy: RetryPolicy = .default,
+        authorize: @escaping @Sendable (inout URLRequest) async throws -> Void
+    ) {
+        self.init(
+            proxyEndpoint: proxyEndpoint,
+            model: model,
+            credential: .custom(authorize),
             session: session,
             timeoutInterval: timeoutInterval,
             retryPolicy: retryPolicy

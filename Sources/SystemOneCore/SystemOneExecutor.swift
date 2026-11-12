@@ -32,14 +32,18 @@ public final class SystemOneExecutor: LanguageModelExecutor, Sendable {
         // 1. Extract context/prompt from transcript as state
         let stateText = extractState(from: request.transcript)
 
-        // 2. Translate schema into System One questions (noul / choice / score)
+        // 2. Extract and validate image attachments if present
+        let images = try TranscriptAttachmentExtractor.extractImages(from: request.transcript)
+
+        // 3. Translate schema into System One questions (noul / choice / score)
         let translation = try translator.translate(schema)
 
-        // 3. Dispatch to System One backend
+        // 4. Dispatch to System One backend
         let systemOneRequest = SystemOneRequest(
             state: stateText,
             model: configuration.modelID,
-            questions: translation.questions
+            questions: translation.questions,
+            images: images.isEmpty ? nil : images
         )
 
         let response = try await configuration.backend.evaluate(request: systemOneRequest)
