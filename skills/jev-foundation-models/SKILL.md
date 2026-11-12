@@ -6,17 +6,18 @@ description: >-
   Models framework in Swift 6. Use when building iOS 27+, macOS 27+, or visionOS 27+
   apps that evaluate strongly-typed @Generable structs and enums using LanguageModelSession,
   implementing confidence routing (RoutingPolicy, NoulJudgement, ScoreValue), configuring
-  resilient network retries (RetryPolicy), securing mobile traffic via App Check proxy transports,
-  or writing deterministic offline unit tests with MockJevTransport.
+  resilient network retries (RetryPolicy), securing mobile traffic via zero-dependency
+  ProxyCredential / ProxyTransport and Firebase App Check gateways, or writing deterministic
+  offline unit tests with MockJevTransport.
 metadata:
   author: peterfriese
-  version: "1.1"
+  version: "1.2"
 ---
 
 # Jev Foundation Models Bridge
 
 > [!TIP]
-> **Modern Multi-Backend Standard**: For projects requiring on-device inference via Core ML (`LayaOnDevice`) or local self-hosted evaluation (`LayaFoundationModels`) alongside TypeSafe Jev cloud, refer to the unified `system-one-foundation-models` skill and package target. This skill remains focused on TypeSafe Jev cloud evaluation, resilience policies, and App Check security proxy architectures.
+> **Modern Multi-Backend Standard**: For projects combining TypeSafe Jev with on-device Core ML (`LayaOnDevice`), self-hosted `laya-serve` (`LayaFoundationModels`), Cloudflare Clef multimodal (`ClefFoundationModels`), OpenAI Decisions (`OpenAIFoundationModels`), Google Gemini Decisions (`GeminiFoundationModels`), or vendor-agnostic gateways (`SystemOneLanguageModel`), refer to the unified `system-one-foundation-models` skill. This skill focuses on TypeSafe Jev cloud evaluation, `RetryPolicy` resilience, and hardened App Check reverse-proxy architectures.
 
 This skill guides the design, implementation, and testing of applications integrating **TypeSafe AI's Jev System One decision model** via **Apple's Foundation Models framework** (`FoundationModels`) in Swift 6.
 
@@ -29,7 +30,7 @@ Jev is a **System One decision model**, not a text-generating LLM. It evaluates 
 - **Prompt $\to$ Application State**: The text passed to `session.respond(to:)` represents current application context (support tickets, sensor readings, transaction logs, user inputs, or parsed documents).
 - **`@Generable` Type $\to$ Decision Questions**: The struct or enum defines the typed questions being asked over that state.
 - **Dual Signal Output**:
-  1. **The Answer**: *What* the model judged (`response.content` containing typed enum choices, booleans, or rubric scores).
+  1. **The Answer**: *What* the model judged (`response.content` containing typed enum choices, booleans, or rubric scores). For `Bool` fields this decode is a hard `0.5` cutoff — see §3; decisions must consume `response.probability(for:)` / `response.judgement(for:policy:)`.
   2. **The Calibrated Confidence / Probability**: *Whether* to automate the action (`response.judgement(...)`, `response.decision(...)`, `response.scoreValue(...)`).
 
 ---
@@ -77,6 +78,10 @@ struct TriageDecision: Sendable {
 }
 ```
 
+### Batched Questions Must Self-Identify
+
+When a single `@Generable` type emits **multiple questions in one call** (e.g. two `Bool` fields → two batched nouls), each question's `@Guide(description:)` MUST name the entity it targets ("Candidate A", "transaction #8491"). Observably **identical instruction text collapses the batch** — Jev cannot discriminate between two questions that read exactly the same, and both answers land near 0.5 (observed live in a duplicate-detection integration: 0.77/0.79 before naming the candidates, 0.94/0.01 after). The library's `Examples/DuplicateArticleDemo` sidesteps the problem by evaluating **one question per request** (a task group of separate `respond` calls), which is simpler but forfeits the single-call batching contract — prefer self-identifying guides when one call must answer many questions.
+
 ---
 
 ## 3. Canonical Call-Site, Telemetry & Confidence Routing
@@ -104,6 +109,9 @@ print("Department:", decision.department)       // .billing
 print("Is Urgent:", decision.isUrgent)           // true
 print("Frustration:", decision.frustrationLevel) // 3
 ```
+
+> [!WARNING]
+> **`response.content` is a hard 0.5 cutoff for `Bool` fields.** The synthesized decode (`ResponseSynthesizer`) maps a noul probability to a Swift `Bool` with `noul >= 0.5` — p = 0.55 decodes `true`, p = 0.45 decodes `false`, regardless of how decisive the model actually was. Treat `response.content` as display/fallback material only. All decisions must consume the **calibrated signal** — `response.probability(for:)` and `response.judgement(for:policy:)` — and route through a `RoutingPolicy`; never gate automation on a decoded content `Bool`.
 
 ### Confidence Routing with `RoutingPolicy`
 
@@ -167,25 +175,38 @@ if let score = response.scoreValue(for: "frustrationLevel") {
 
 ## 4. HTTP Resilience & Swift 6 Cooperative Cancellation
 
-Configure automated retry backoff via `RetryPolicy` on `JevLanguageModel`:
+Configure automated retry backoff via `RetryPolicy` (`SystemOneCore`) on `JevLanguageModel`:
 
 ```swift
 let retryPolicy = RetryPolicy(
-    maxAttempts: 3,                  // Initial attempt + up to 2 retries
-    initialDelay: .milliseconds(500), // First retry delay
-    multiplier: 2.0,                 // Exponential backoff
-    jitter: 0.2,                     // +/- 20% random jitter to avoid thundering herds
-    retryableStatuses: [429, 529],   // Retry rate-limits and temporary capacity limits
-    maxRetryAfter: .seconds(60)      // Respects RFC 9110 Retry-After headers
+    maxAttempts: 3,                                          // Initial attempt + up to 2 retries
+    initialDelay: .milliseconds(500),                        // First retry delay
+    multiplier: 2.0,                                         // Exponential backoff
+    jitter: 0.2,                                             // +/- 20% random jitter to avoid thundering herds
+    retryableStatuses: RetryPolicy.defaultRetryableStatuses, // [408, 429, 500, 502, 503, 504, 524, 529]
+    maxRetryAfter: .seconds(60)                              // Respects RFC 9110 Retry-After headers
 )
 
+// Server / CLI with direct API key (uses URLSessionTransport):
 let model = JevLanguageModel(apiKey: apiKey, retryPolicy: retryPolicy)
+
+// Mobile / Client via proxy (forwards retryPolicy directly to ProxyTransport):
+let proxyModel = JevLanguageModel(
+    proxyEndpoint: proxyURL,
+    credential: appCheckCredential,
+    retryPolicy: retryPolicy
+)
 ```
+
+- **Default Retryable Statuses**: `RetryPolicy.defaultRetryableStatuses` retries `[408, 429, 500, 502, 503, 504, 524, 529]` — covering request timeouts (`408`), rate limits (`429`), transient 5xx/proxy errors (`500`, `502`, `503`, `504`), Cloudflare origin timeouts (`524`), and upstream capacity overload (`529`).
+- **Authentication Fail-Fast**: On `ProxyTransport` (and `SystemOneProxyBackend`), HTTP `401` / `403` responses and non-cancellation `ProxyCredential` provider errors fail fast immediately on attempt 1 with `JevError.authenticationFailed` (`SystemOneError.authenticationFailed`) without burning retries. On retryable statuses, the `ProxyCredential` closure re-executes before every attempt so short-lived or single-use tokens (`limitedUseToken()`) are minted fresh.
+
+> [!NOTE]
+> **Low-level `transport:` override caveat**: While `JevLanguageModel(apiKey:retryPolicy:)` and `JevLanguageModel(proxyEndpoint:credential:retryPolicy:)` (plus trailing-closure `authorize:`) wire `retryPolicy:` automatically, calling the low-level `JevLanguageModel(apiKey:modelID:endpoint:transport:retryPolicy:)` initializer with a non-`nil` `transport:` ignores the model-level `retryPolicy:` parameter because the pre-built transport already owns its retry state. When constructing `ProxyTransport` manually, pass `retryPolicy:` to `ProxyTransport(proxyEndpoint:credential:retryPolicy:)`.
 
 ### Cooperative Cancellation
 In Swift 6 concurrency, task cancellation must never be swallowed or converted into a generic error:
-- **`CancellationError` is NEVER wrapped in `JevError`**: If a parent `Task` is cancelled (e.g., user navigates away in SwiftUI), `CancellationError` propagates directly.
-- Retry sleeps abort immediately upon cancellation.
+- **`CancellationError` is NEVER wrapped in `JevError`**: If a parent `Task` is cancelled (or `URLSession` throws `URLError(.cancelled)` — e.g., user navigates away in SwiftUI), `CancellationError` propagates directly, including during `ProxyCredential` token acquisition and retry backoff sleeps.
 
 ```swift
 let task = Task {
@@ -206,30 +227,68 @@ do {
 
 ---
 
-## 5. Production Mobile Architecture (`JevTransport`)
+## 5. Production Mobile Architecture (`ProxyCredential` & `ProxyTransport`)
 
-**Never embed `TYPESAFE_API_KEY` inside client application binaries.** 
+**Never embed `TYPESAFE_API_KEY` inside client application binaries.**
 
-In production iOS, macOS, or visionOS apps, route requests through a backend reverse proxy (such as a Firebase Cloud Function, Vapor backend, or Cloudflare Worker) protected by **Apple App Attest / Firebase App Check**.
+In production iOS, macOS, or visionOS apps, route requests through a backend reverse proxy (such as a Firebase Cloud Function 2nd Gen `onRequest` handler, Vapor service, or Cloudflare Worker) protected by **Apple App Attest / Firebase App Check**.
 
-The repository includes a ready-to-use reference transport in `Integrations/FirebaseAppCheckProxy/FirebaseAppCheckTransport.swift`:
+### Recommended Zero-Dependency Setup (`ProxyCredential`)
+
+`JevFoundationModels` re-exports `ProxyCredential` from `SystemOneCore` so your app target links `FirebaseAppCheck` (or any OAuth / attestation SDK) while the Swift package core retains zero third-party dependencies:
 
 ```swift
+import Foundation
+import FoundationModels
 import JevFoundationModels
+import FirebaseCore
+import FirebaseAppCheck
 
-// 1. Configure the proxy transport (supports .cached or .singleUse replay-protected tokens)
-let transport = FirebaseAppCheckTransport(
-    proxyEndpoint: URL(string: "https://your-cloud-function.cloudfunctions.net/triageProxy")!,
-    tokenStrategy: .cached // < 1ms cached hardware token lookup
-)
+let proxyURL = URL(string: "https://us-central1-your-project.cloudfunctions.net/systemone")!
 
-// 2. Initialize model without apiKey (authentication handled by App Check + backend proxy secret)
+// 1. Dynamic App Check credential (resolved on every attempt inside ProxyTransport's retry loop)
+let appCheckCredential = ProxyCredential.appCheck {
+    guard FirebaseApp.app() != nil else {
+        #if DEBUG
+        return "dev-monitor-placeholder"
+        #else
+        throw JevError.authenticationFailed("FirebaseApp is not configured.")
+        #endif
+    }
+    return try await AppCheck.appCheck().token(forcingRefresh: false).token
+}
+
+// 2. Initialize JevLanguageModel without an API key (forwards retryPolicy to ProxyTransport)
 let model = JevLanguageModel(
-    endpoint: URL(string: "https://your-cloud-function.cloudfunctions.net/triageProxy")!,
-    transport: transport
+    proxyEndpoint: proxyURL,
+    credential: appCheckCredential,
+    retryPolicy: .default
 )
 let session = LanguageModelSession(model: model)
 ```
+
+- **Multi-Header & HMAC Signing (`authorize:` / `.custom`)**: Use `JevLanguageModel(proxyEndpoint: proxyURL) { request in ... }` (or `ProxyCredential.custom`) when attaching both `X-Firebase-AppCheck` and `Authorization: Bearer <firebaseAuthIDToken>`, or computing an HMAC signature — `ProxyTransport` populates `request.httpBody` **before** invoking the credential modifier, and `.appCheck` / `.header` / `.bearer` automatically reject empty strings or CR/LF/NUL header-injection characters with `JevError.authenticationFailed`.
+- **SwiftUI Identity Lifecycle**: Each `ProxyCredential` factory call mints a new `UUID` for `Hashable` synthesis unless an explicit `id:` is supplied. Store your `ProxyCredential`, `JevLanguageModel`, or `LanguageModelSession` in `@State`, an `@Observable` ViewModel, or your DI container rather than recreating it inside `View.body` on every render.
+- **Standalone Reference Transport**: A copy-pasteable `JevTransport` sample is also available in `Integrations/FirebaseAppCheckProxy/FirebaseAppCheckTransport.swift` (`tokenStrategy: .cached` or `.singleUse`), though `JevLanguageModel(proxyEndpoint:credential:retryPolicy:)` is preferred because it includes built-in `RetryPolicy` backoff, `ProxyEndpointValidator` HTTPS enforcement, and fail-fast auth handling.
+
+> [!WARNING]
+> **App Check token acquisition can crash with an Objective-C exception or fail on unattested hosts.** Calling `AppCheck.appCheck()` before `FirebaseApp.configure()` throws an **uncaught Objective-C `NSException`** — Swift `do/catch` and `try?` **cannot** intercept it — and token requests fail on iOS Simulators without `AppCheckDebugProviderFactory` or in hosted unit-test runners that skip app initialization. Always guard with `FirebaseApp.app() != nil` before touching `AppCheck.appCheck()`, register `AppCheckDebugProviderFactory` in `#if DEBUG`, and roll out your backend proxy in **Monitor mode** (logging missing/invalid tokens without rejecting) until every active client version is attested.
+
+### Server-Side Proxy Contract
+
+Your proxy endpoint should be a plain HTTPS `POST` reverse proxy (`onRequest`), **NOT a Firebase Callable (`onCall`)** (`enforceAppCheck: true` applies only to `onCall` functions; `onRequest` handlers must verify `X-Firebase-AppCheck` explicitly via `firebase-admin/app-check`):
+
+- **POST-only `onRequest`**: Return `405` (`Allow: POST`) for non-`POST` methods. Forward the validated JSON payload to `POST https://api.typesafe.ai/v1/systemone` with the server-managed secret injected as `Authorization: Bearer <TYPESAFE_API_KEY>` — no callable envelope or schema transformation.
+- **App Check Verification & Replay-Protection Pairing (`alreadyConsumed` + `.singleUse` vs `.cached`)**:
+  - Read the raw token from `X-Firebase-AppCheck`. Support **Monitor mode** during rollout (e.g. `APP_CHECK_ENFORCE === "true"` flips from logging invalid/missing tokens to rejecting with `401` before any upstream work).
+  - **Mandatory `alreadyConsumed` check when `{ consume: true }` is enabled**: In `firebase-admin/app-check`, `await getAppCheck().verifyToken(token, { consume: true })` **does NOT throw** when a token has already been spent — it resolves normally with `{ alreadyConsumed: true }`. Your handler **MUST** explicitly check `if (verified.alreadyConsumed) { res.status(401).json({ error: "Unauthorized" }); return; }`; omitting that check makes replay protection a silent no-op!
+  - **Attestation Provider Support**: Apple **App Attest** (`DCAppAttestService`) *does* support single-use token consumption; only legacy **DeviceCheck** lacks limited-use replay protection.
+  - **Strict Client/Server Strategy Pairing**: Server-side `{ consume: true }` + `alreadyConsumed` rejection **MUST** be paired with client-side `AppCheck.appCheck().limitedUseToken()` (single-use per attempt, minted fresh on each retry by `ProxyCredential`), **NEVER** with cached `token(forcingRefresh: false)` (1-hour TTL — every request after the first within an hour would fail fast with `401`). For standard low-latency interactive UI using cached tokens (`token(forcingRefresh: false)`), call `verifyToken(token)` *without* `{ consume: true }`.
+- **Cost Gates BEFORE Billing**: Reject non-object bodies, empty `state`, or empty `questions` with `400`, and oversized bodies with `413` before contacting TypeSafe AI.
+- **Rate Limiting — NEVER Key Per-User Limits on App Check `appId` Alone**:
+  - In an App Check token, `verified.appId` (`sub`) is the **global Firebase App ID** shared by 100% of users and physical devices running your app (App Check claims contain no per-device or per-user ID). Keying a per-caller limiter solely on `verified.appId` places every user into a single global bucket, allowing one noisy client to DoS your entire user base!
+  - Key per-caller limits on **verified Firebase Auth `uid`** when user authentication is present, or deploy a **two-tier limiter** for attest-only endpoints: a per-client IP limit (from Cloud Run / Cloud Functions' trusted `X-Forwarded-For` entry) beneath a high global `verified.appId` ceiling, with unverified/garbage tokens in Monitor mode routed to a tight shared `anonymous` bucket so token rotation cannot reset budgets. Return `429` with `Retry-After`.
+- **Upstream Passthrough & `502` Retry Interaction**: Pass through upstream status, body, `Content-Type`, timing headers (`x-envoy-upstream-service-time`, `server-timing`), and `Retry-After` (on `429`/`503`). On upstream fetch/timeout/read failure, log details server-side only and return a generic `502`. Because `502` is included in `RetryPolicy.defaultRetryableStatuses` (`[408, 429, 500, 502, 503, 504, 524, 529]`), a `502` triggers client exponential backoff (up to `maxAttempts = 3`) and re-invokes `ProxyCredential` on each attempt (rotating `limitedUseToken()` automatically), whereas `401`/`403` fails fast on attempt 1 with `JevError.authenticationFailed`.
 
 ---
 
@@ -296,6 +355,7 @@ struct TriageWorkflowTests {
 | :--- | :--- | :--- |
 | `JevError.invalidSchema` | `@Generable` type contains an unconstrained `String` or unsupported collection. | Convert `String` to `enum: String`, `Bool`, or numeric `@Guide(.range(...))`. |
 | `JevError.structuredOutputRequired` | `session.respond(to:)` was called without a `generating:` schema. | Always pass a `@Generable` type to `generating:`. |
+| `JevError.authenticationFailed` | Proxy returned `401`/`403` (e.g. `alreadyConsumed` when pairing `{ consume: true }` with a cached token), or `ProxyCredential` threw / returned an empty or CR/LF token. | Fails fast on attempt 1 without retry. Pair `{ consume: true }` strictly with `limitedUseToken()`, guard `FirebaseApp.app() != nil`, and ensure non-empty tokens. |
 | `response.probability(...)` or `confidence(...)` returns `nil` | Question key does not match schema convention. | **Key Resolution Matrix**:<br>• Struct field: `"propertyName"` (e.g. `"isUrgent"`)<br>• Nested struct: `"parent.child"` (e.g. `"metadata.priority"`)<br>• Root `@Generable enum`: `"choice"`<br>• Root `Bool` or score: `"root"` |
 | Root Enum Decoding (`Fatal error: Unexpected rawValue`) | Apple Foundation Models expects bare strings for root `@Generable enum`s (e.g. `billing`), not JSON quotes (`"\"billing\""`). | Handled automatically by `ResponseSynthesizer` (Tech Note 0002). |
 | `NoulJudgement.answer` is `nil` | Probability fell within the undecided band ($0.35 \dots 0.65$). | Expected behavior. Handle `decision == .escalate` and route to human review or fallback logic. |
