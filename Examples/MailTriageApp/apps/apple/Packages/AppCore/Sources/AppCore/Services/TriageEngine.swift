@@ -48,6 +48,7 @@ extension TriageEngineProtocol {
 /// Production implementation of `TriageEngineProtocol`.
 /// Executes real inference across Apple Foundation Models, Core ML (ANE),
 /// local laya-serve daemon, hosted VPC, and TypeSafe Jev Cloud API.
+/// Thread-safety for `cachedCoreMLEngine` is synchronized via `coreMLEngineLock: NSLock` (`@unchecked Sendable` per `AGENTS.md` Principle 2).
 public final class TriageEngine: TriageEngineProtocol, @unchecked Sendable {
     private let maxParallelism: Int
     private let coreMLEngineLock = NSLock()
@@ -202,8 +203,10 @@ public final class TriageEngine: TriageEngineProtocol, @unchecked Sendable {
                     guidance: "Open Settings (⌘,) and paste your TYPESAFE_API_KEY."
                 )
             }
-            let urlString = configStore.jevCloudURL.trimmingCharacters(in: .whitespacesAndNewlines)
-            let endpointURL = URL(string: urlString) ?? URL(string: "https://api.typesafe.ai/v1/systemone")!
+            let endpointURL = BackendConfigurationStore.normalizeSystemOneEndpoint(
+                configStore.jevCloudURL,
+                defaultURL: BackendConfigurationStore.defaultJevCloudURL
+            )
             let model = JevLanguageModel(apiKey: apiKey, endpoint: endpointURL)
             let session = LanguageModelSession(model: model)
             let response = try await session.respond(to: prompt, generating: EmailTriageDecision.self)
@@ -577,26 +580,47 @@ public final class TriageEngine: TriageEngineProtocol, @unchecked Sendable {
 }
 
 /// Deterministic mock triage engine for unit testing and SwiftUI previews.
+/// Deterministic mock engine for SwiftUI Previews and fast unit tests.
+/// Thread-safety is enforced via `NSLock` protecting mutable mock configuration (`@unchecked Sendable` per `AGENTS.md` Principle 2).
 public final class MockTriageEngine: TriageEngineProtocol, @unchecked Sendable {
-    public var cannedResult: TriageResult?
-    public var shouldThrowError: Error?
-    public var latencyMs: Double
+    private let lock = NSLock()
+    private var _cannedResult: TriageResult?
+    private var _shouldThrowError: Error?
+    private var _latencyMs: Double
+
+    public var cannedResult: TriageResult? {
+        get { lock.withLock { _cannedResult } }
+        set { lock.withLock { _cannedResult = newValue } }
+    }
+
+    public var shouldThrowError: Error? {
+        get { lock.withLock { _shouldThrowError } }
+        set { lock.withLock { _shouldThrowError = newValue } }
+    }
+
+    public var latencyMs: Double {
+        get { lock.withLock { _latencyMs } }
+        set { lock.withLock { _latencyMs = newValue } }
+    }
 
     public init(
         cannedResult: TriageResult? = nil,
         shouldThrowError: Error? = nil,
         latencyMs: Double = 2.0
     ) {
-        self.cannedResult = cannedResult
-        self.shouldThrowError = shouldThrowError
-        self.latencyMs = latencyMs
+        self._cannedResult = cannedResult
+        self._shouldThrowError = shouldThrowError
+        self._latencyMs = latencyMs
     }
 
     public func triage(email: Email, backend: TriageBackend, skipProbe: Bool = false) async throws -> TriageResult {
-        if let error = shouldThrowError {
+        let (error, canned, currentLatency) = lock.withLock {
+            (_shouldThrowError, _cannedResult, _latencyMs)
+        }
+        if let error {
             throw error
         }
-        if let canned = cannedResult {
+        if let canned {
             return canned
         }
         let decision = EmailTriageDecision(
@@ -610,7 +634,7 @@ public final class MockTriageEngine: TriageEngineProtocol, @unchecked Sendable {
             confidenceScore: 0.90,
             decisiveness: 0.90,
             routingTier: .auto,
-            latencyMs: latencyMs,
+            latencyMs: currentLatency,
             backendUsed: backend
         )
     }
@@ -621,7 +645,7 @@ public final class MockTriageEngine: TriageEngineProtocol, @unchecked Sendable {
         progress: (@Sendable (Int, Int) -> Void)? = nil,
         onItemCompleted: (@Sendable (Email, TriageResult) -> Void)? = nil
     ) async throws -> BatchTriageReport {
-        if let error = shouldThrowError {
+        if let error = lock.withLock({ _shouldThrowError }) {
             throw error
         }
 
@@ -638,7 +662,7 @@ public final class MockTriageEngine: TriageEngineProtocol, @unchecked Sendable {
         return BatchTriageReport(
             totalProcessed: emails.count,
             totalDurationSeconds: 0.05,
-            averageLatencyMs: latencyMs,
+            averageLatencyMs: lock.withLock { _latencyMs },
             actionBreakdown: [.scheduleTask: emails.count],
             routingBreakdown: [.auto: emails.count],
             backend: backend

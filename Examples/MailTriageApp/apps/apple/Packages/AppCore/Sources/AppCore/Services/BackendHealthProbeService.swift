@@ -87,7 +87,7 @@ public protocol BackendHealthProbeServiceProtocol: Sendable {
 
 /// Production implementation of `BackendHealthProbeServiceProtocol`.
 /// Executes real network probes, system capability queries, and on-device filesystem checks.
-public final class BackendHealthProbeService: BackendHealthProbeServiceProtocol, @unchecked Sendable {
+public final class BackendHealthProbeService: BackendHealthProbeServiceProtocol, Sendable {
     private let customConfigStore: BackendConfigurationStore?
     private let customCoreMLManager: CoreMLModelManager?
 
@@ -696,24 +696,38 @@ public final class BackendHealthProbeService: BackendHealthProbeServiceProtocol,
 }
 
 /// Mock health probe service for unit tests and previews.
+/// Thread-safety is enforced via `NSLock` protecting mutable override state (`@unchecked Sendable` per `AGENTS.md` Principle 2).
 public final class MockBackendHealthProbeService: BackendHealthProbeServiceProtocol, @unchecked Sendable {
-    public var statusOverride: [TriageBackend: BackendHealthStatus] = [:]
-    public var defaultStatus: BackendHealthStatus
+    private let lock = NSLock()
+    private var _statusOverride: [TriageBackend: BackendHealthStatus] = [:]
+    private var _defaultStatus: BackendHealthStatus
+
+    public var statusOverride: [TriageBackend: BackendHealthStatus] {
+        get { lock.withLock { _statusOverride } }
+        set { lock.withLock { _statusOverride = newValue } }
+    }
+
+    public var defaultStatus: BackendHealthStatus {
+        get { lock.withLock { _defaultStatus } }
+        set { lock.withLock { _defaultStatus = newValue } }
+    }
 
     public init(defaultStatus: BackendHealthStatus = .healthy(latencyMs: 8.0)) {
-        self.defaultStatus = defaultStatus
+        self._defaultStatus = defaultStatus
     }
 
     public func probe(backend: TriageBackend) async -> BackendHealthStatus {
-        statusOverride[backend] ?? defaultStatus
+        lock.withLock { _statusOverride[backend] ?? _defaultStatus }
     }
 
     public func probeAll() async -> [TriageBackend: BackendHealthStatus] {
-        var results: [TriageBackend: BackendHealthStatus] = [:]
-        for backend in TriageBackend.allCases {
-            results[backend] = statusOverride[backend] ?? defaultStatus
+        lock.withLock {
+            var results: [TriageBackend: BackendHealthStatus] = [:]
+            for backend in TriageBackend.allCases {
+                results[backend] = _statusOverride[backend] ?? _defaultStatus
+            }
+            return results
         }
-        return results
     }
 }
 

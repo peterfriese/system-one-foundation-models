@@ -387,17 +387,17 @@ public final class BackendConfigurationStore: @unchecked Sendable {
         }
 
         let storedCoreML = userDefaults.string(forKey: Keys.coreMLDownloadURL)
-        if storedCoreML == nil
-            || storedCoreML?.contains("typesafe/laya-421m-coreml") == true
-            || storedCoreML?.contains("LayaModernBERT.mlmodelc.zip") == true
-            || storedCoreML == "https://huggingface.co/aac6fef/laya-mlx"
-            || storedCoreML == "https://huggingface.co/aac6fef/laya-mlx/" {
+        if let storedCoreML,
+           !storedCoreML.contains("typesafe/laya-421m-coreml"),
+           !storedCoreML.contains("LayaModernBERT.mlmodelc.zip"),
+           storedCoreML != "https://huggingface.co/aac6fef/laya-mlx",
+           storedCoreML != "https://huggingface.co/aac6fef/laya-mlx/" {
+            self.coreMLDownloadURL = storedCoreML
+        } else {
             self.coreMLDownloadURL = Self.defaultCoreMLDownloadURL
             if storedCoreML != nil {
                 userDefaults.set(Self.defaultCoreMLDownloadURL, forKey: Keys.coreMLDownloadURL)
             }
-        } else {
-            self.coreMLDownloadURL = storedCoreML!
         }
 
         self.openaiOrganization = userDefaults.string(forKey: Keys.openaiOrganization) ?? ""

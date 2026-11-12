@@ -33,7 +33,6 @@ let package = Package(
             name: "BenchmarkCLI",
             dependencies: [
                 "AppCore",
-                .product(name: "GeminiFoundationModels", package: "SystemOneFoundationModels"),
                 .product(name: "FactoryKit", package: "Factory")
             ],
             path: "Sources/BenchmarkCLI"

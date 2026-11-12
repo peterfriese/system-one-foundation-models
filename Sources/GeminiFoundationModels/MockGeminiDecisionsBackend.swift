@@ -39,7 +39,7 @@ public final class MockGeminiDecisionsBackend: SystemOneBackend, @unchecked Send
     }
 
     public func evaluate(request: SystemOneRequest) async throws -> SystemOneResponse {
-        let adapted = try? GeminiDecisionsPayloadAdapter.adaptRequest(request)
+        let adapted = try GeminiDecisionsPayloadAdapter.adaptRequest(request)
         lock.withLock {
             _lastRequest = request
             _lastGeminiRequest = adapted
@@ -75,16 +75,21 @@ public final class MockGeminiDecisionsBackend: SystemOneBackend, @unchecked Send
                     probabilities: probs
                 )
             case .score(_, let criteria):
-                let score = criteria.isEmpty ? 4.5 : Double(criteria.count)
+                let maxIndex = max(0, criteria.count - 1)
+                let score = criteria.isEmpty ? 0.0 : Double(maxIndex)
                 var probs: [String: Double] = [:]
-                for (i, c) in criteria.enumerated() {
-                    probs[c] = (i == criteria.count - 1) ? 0.90 : (0.10 / Double(max(1, criteria.count - 1)))
+                var legend: [String: String] = [:]
+                for (idx, c) in criteria.enumerated() {
+                    let key = "\(idx)"
+                    probs[key] = (idx == maxIndex) ? 0.90 : (0.10 / Double(max(1, criteria.count - 1)))
+                    legend[key] = c
                 }
                 answers[name] = SystemOneAnswer(
                     type: "score",
                     score: score,
                     confidence: 0.95,
-                    probabilities: probs.isEmpty ? nil : probs
+                    probabilities: probs.isEmpty ? nil : probs,
+                    legend: legend.isEmpty ? nil : legend
                 )
             }
         }

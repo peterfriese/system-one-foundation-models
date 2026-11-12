@@ -156,7 +156,8 @@ struct GeminiDemo {
         )
         let session = LanguageModelSession(model: languageModel)
 
-        let startTime = CFAbsoluteTimeGetCurrent()
+        let clock = ContinuousClock()
+        let startTime = clock.now
 
         do {
             let response = try await session.respond(
@@ -164,7 +165,8 @@ struct GeminiDemo {
                 generating: InboundEmailTriageDecision.self
             )
 
-            let totalDurationMs = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0
+            let elapsed = startTime.duration(to: clock.now)
+            let totalDurationMs = Double(elapsed.components.seconds) * 1000.0 + Double(elapsed.components.attoseconds) / 1e15
             let decision = response.content
 
             print("""

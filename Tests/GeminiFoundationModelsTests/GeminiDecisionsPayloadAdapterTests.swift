@@ -262,4 +262,56 @@ struct GeminiDecisionsPayloadAdapterTests {
             }
         }
     }
+
+    @Test("Adapt Request: Enforces 1...1000 question count bounds")
+    func testAdaptRequestQuestionCountBounds() throws {
+        let emptyRequest = SystemOneRequest(
+            state: "Empty questions test",
+            model: "gemini-decision-1",
+            questions: [:]
+        )
+        #expect(throws: SystemOneError.self) {
+            try GeminiDecisionsPayloadAdapter.adaptRequest(emptyRequest)
+        }
+
+        var tooManyQuestions: [String: SystemOneQuestion] = [:]
+        for idx in 0...1_000 {
+            tooManyQuestions["q_\(idx)"] = .noul(instructions: "Question \(idx)")
+        }
+        let oversizedRequest = SystemOneRequest(
+            state: "Oversized questions test",
+            model: "gemini-decision-1",
+            questions: tooManyQuestions
+        )
+        #expect(throws: SystemOneError.self) {
+            try GeminiDecisionsPayloadAdapter.adaptRequest(oversizedRequest)
+        }
+    }
+
+    @Test("Adapt Response: Rejects out-of-range noul probability and non-finite score")
+    func testAdaptResponseNumericGuardrails() throws {
+        let outOfRangeNoul = GeminiDecisionsResponse(
+            id: "gem-invalid-noul",
+            model: "gemini-decision-1",
+            answers: [
+                "badNoul": GeminiDecisionsAnswer(type: "noul", noul: 1.5, confidence: 0.9)
+            ],
+            usage: .init(inputTokens: 10, outputTokens: 0)
+        )
+        #expect(throws: SystemOneError.self) {
+            try GeminiDecisionsPayloadAdapter.adaptResponse(outOfRangeNoul)
+        }
+
+        let nonFiniteScore = GeminiDecisionsResponse(
+            id: "gem-invalid-score",
+            model: "gemini-decision-1",
+            answers: [
+                "badScore": GeminiDecisionsAnswer(type: "score", score: .nan, confidence: 0.9)
+            ],
+            usage: .init(inputTokens: 10, outputTokens: 0)
+        )
+        #expect(throws: SystemOneError.self) {
+            try GeminiDecisionsPayloadAdapter.adaptResponse(nonFiniteScore)
+        }
+    }
 }

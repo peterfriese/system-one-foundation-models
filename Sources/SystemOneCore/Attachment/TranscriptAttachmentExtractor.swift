@@ -51,9 +51,11 @@ public enum TranscriptAttachmentExtractor {
             if let url = imageAttachment.url, let image = try? SystemOneImage(fileURL: url, identifier: attachmentSegment.label) {
                 return image
             }
-            let cgImage = imageAttachment.cgImage
-            let jpegData = convertCGImageToJPEG(cgImage, maxDimension: 1024, quality: 0.8)
-            let pngData = convertCGImageToPNG(cgImage, maxDimension: 1024)
+            guard let scaledImage = downscaleCGImage(imageAttachment.cgImage, maxDimension: 1024) else {
+                throw SystemOneError.modelExecutionError("Failed to downscale image attachment.")
+            }
+            let jpegData = encodeJPEG(scaledImage, quality: 0.8)
+            let pngData = encodePNG(scaledImage)
             if let png = pngData, let jpeg = jpegData {
                 if png.count <= jpeg.count {
                     return SystemOneImage(data: png, format: .png, identifier: attachmentSegment.label)
@@ -86,39 +88,56 @@ public enum TranscriptAttachmentExtractor {
         maxDimension: Int = 1024,
         quality: Double = 0.8
     ) -> Data? {
+        guard let finalImage = downscaleCGImage(cgImage, maxDimension: maxDimension) else {
+            return nil
+        }
+        return encodeJPEG(finalImage, quality: quality)
+    }
+
+    /// Scales down a `CGImage` if its maximum dimension exceeds `maxDimension` and encodes as lossless PNG.
+    public static func convertCGImageToPNG(
+        _ cgImage: CGImage,
+        maxDimension: Int = 1024
+    ) -> Data? {
+        guard let finalImage = downscaleCGImage(cgImage, maxDimension: maxDimension) else {
+            return nil
+        }
+        return encodePNG(finalImage)
+    }
+
+    // MARK: - Private Image Helpers
+
+    private static func downscaleCGImage(_ cgImage: CGImage, maxDimension: Int) -> CGImage? {
         let origWidth = cgImage.width
         let origHeight = cgImage.height
-
-        let finalImage: CGImage
         let maxDim = max(origWidth, origHeight)
-        if maxDim > maxDimension {
-            let scale = Double(maxDimension) / Double(maxDim)
-            let targetWidth = max(1, Int((Double(origWidth) * scale).rounded()))
-            let targetHeight = max(1, Int((Double(origHeight) * scale).rounded()))
-
-            let colorSpace = CGColorSpaceCreateDeviceRGB()
-            let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
-            guard let context = CGContext(
-                data: nil,
-                width: targetWidth,
-                height: targetHeight,
-                bitsPerComponent: 8,
-                bytesPerRow: 0,
-                space: colorSpace,
-                bitmapInfo: bitmapInfo
-            ) else {
-                return nil
-            }
-            context.interpolationQuality = .high
-            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: targetWidth, height: targetHeight))
-            guard let scaledImage = context.makeImage() else {
-                return nil
-            }
-            finalImage = scaledImage
-        } else {
-            finalImage = cgImage
+        guard maxDim > maxDimension else {
+            return cgImage
         }
 
+        let scale = Double(maxDimension) / Double(maxDim)
+        let targetWidth = max(1, Int((Double(origWidth) * scale).rounded()))
+        let targetHeight = max(1, Int((Double(origHeight) * scale).rounded()))
+
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
+        guard let context = CGContext(
+            data: nil,
+            width: targetWidth,
+            height: targetHeight,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: colorSpace,
+            bitmapInfo: bitmapInfo
+        ) else {
+            return nil
+        }
+        context.interpolationQuality = .high
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: targetWidth, height: targetHeight))
+        return context.makeImage()
+    }
+
+    private static func encodeJPEG(_ cgImage: CGImage, quality: Double) -> Data? {
         let mutableData = NSMutableData()
         guard let destination = CGImageDestinationCreateWithData(
             mutableData as CFMutableData,
@@ -131,49 +150,12 @@ public enum TranscriptAttachmentExtractor {
         let options: [CFString: Any] = [
             kCGImageDestinationLossyCompressionQuality: quality
         ]
-        CGImageDestinationAddImage(destination, finalImage, options as CFDictionary)
+        CGImageDestinationAddImage(destination, cgImage, options as CFDictionary)
         guard CGImageDestinationFinalize(destination) else { return nil }
         return mutableData as Data
     }
 
-    /// Scales down a `CGImage` if its maximum dimension exceeds `maxDimension` and encodes as lossless PNG.
-    public static func convertCGImageToPNG(
-        _ cgImage: CGImage,
-        maxDimension: Int = 1024
-    ) -> Data? {
-        let origWidth = cgImage.width
-        let origHeight = cgImage.height
-
-        let finalImage: CGImage
-        let maxDim = max(origWidth, origHeight)
-        if maxDim > maxDimension {
-            let scale = Double(maxDimension) / Double(maxDim)
-            let targetWidth = max(1, Int((Double(origWidth) * scale).rounded()))
-            let targetHeight = max(1, Int((Double(origHeight) * scale).rounded()))
-
-            let colorSpace = CGColorSpaceCreateDeviceRGB()
-            let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
-            guard let context = CGContext(
-                data: nil,
-                width: targetWidth,
-                height: targetHeight,
-                bitsPerComponent: 8,
-                bytesPerRow: 0,
-                space: colorSpace,
-                bitmapInfo: bitmapInfo
-            ) else {
-                return nil
-            }
-            context.interpolationQuality = .high
-            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: targetWidth, height: targetHeight))
-            guard let scaledImage = context.makeImage() else {
-                return nil
-            }
-            finalImage = scaledImage
-        } else {
-            finalImage = cgImage
-        }
-
+    private static func encodePNG(_ cgImage: CGImage) -> Data? {
         let mutableData = NSMutableData()
         guard let destination = CGImageDestinationCreateWithData(
             mutableData as CFMutableData,
@@ -183,7 +165,7 @@ public enum TranscriptAttachmentExtractor {
         ) else {
             return nil
         }
-        CGImageDestinationAddImage(destination, finalImage, nil)
+        CGImageDestinationAddImage(destination, cgImage, nil)
         guard CGImageDestinationFinalize(destination) else { return nil }
         return mutableData as Data
     }

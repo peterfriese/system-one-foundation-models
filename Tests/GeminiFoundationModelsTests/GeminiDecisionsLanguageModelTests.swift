@@ -139,7 +139,7 @@ struct GeminiDecisionsLanguageModelTests {
         let session = LanguageModelSession(model: model)
 
         let colorSpace = CGColorSpaceCreateDeviceRGB()
-        let ctx = CGContext(
+        let ctx = try #require(CGContext(
             data: nil,
             width: 16,
             height: 16,
@@ -147,8 +147,8 @@ struct GeminiDecisionsLanguageModelTests {
             bytesPerRow: 64,
             space: colorSpace,
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        )!
-        let cgImage = ctx.makeImage()!
+        ))
+        let cgImage = try #require(ctx.makeImage())
 
         let prompt = Prompt {
             "Inspect receipt photo"
@@ -258,7 +258,10 @@ struct GeminiDecisionsLanguageModelTests {
 
     // MARK: - Live API Integration Test
 
-    @Test("Live Google Gemini Decisions API integration test (runs when GEMINI_API_KEY is available)")
+    @Test(
+        "Live Google Gemini Decisions API integration test (runs when RUN_LIVE_GEMINI_TESTS=1)",
+        .enabled(if: ProcessInfo.processInfo.environment["RUN_LIVE_GEMINI_TESTS"] == "1" || ProcessInfo.processInfo.environment["RUN_LIVE_API_TESTS"] == "1")
+    )
     func testLiveGeminiDecisionsAPIIntegration() async throws {
         let apiKey: String? = {
             if let envKey = ProcessInfo.processInfo.environment["GEMINI_API_KEY"],
@@ -312,7 +315,7 @@ struct GeminiDecisionsLanguageModelTests {
 
         // Live multimodal image test against https://generativelanguage.googleapis.com/v1beta/decisions
         let colorSpace = CGColorSpaceCreateDeviceRGB()
-        let ctx = CGContext(
+        let ctx = try #require(CGContext(
             data: nil,
             width: 16,
             height: 16,
@@ -320,8 +323,8 @@ struct GeminiDecisionsLanguageModelTests {
             bytesPerRow: 64,
             space: colorSpace,
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        )!
-        let cgImage = ctx.makeImage()!
+        ))
+        let cgImage = try #require(ctx.makeImage())
 
         let multimodalSession = LanguageModelSession(model: model)
         let multimodalPrompt = Prompt {

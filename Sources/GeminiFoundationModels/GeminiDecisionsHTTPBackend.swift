@@ -10,6 +10,7 @@ public struct GeminiDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
     public let session: URLSession
     public let timeoutInterval: TimeInterval
     public let retryPolicy: RetryPolicy
+    internal var environmentOverride: [String: String]? = nil
 
     public init(
         endpoint: GeminiDecisionsEndpoint = .hosted(),
@@ -23,6 +24,23 @@ public struct GeminiDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
         self.session = session
         self.timeoutInterval = timeoutInterval
         self.retryPolicy = retryPolicy
+        self.environmentOverride = nil
+    }
+
+    internal init(
+        endpoint: GeminiDecisionsEndpoint = .hosted(),
+        apiKey: String? = nil,
+        session: URLSession = .shared,
+        timeoutInterval: TimeInterval = 30,
+        retryPolicy: RetryPolicy = .default,
+        environmentOverride: [String: String]?
+    ) {
+        self.endpoint = endpoint
+        self.apiKey = apiKey
+        self.session = session
+        self.timeoutInterval = timeoutInterval
+        self.retryPolicy = retryPolicy
+        self.environmentOverride = environmentOverride
     }
 
     public init(
@@ -41,6 +59,7 @@ public struct GeminiDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
         self.session = session
         self.timeoutInterval = timeoutInterval
         self.retryPolicy = retryPolicy
+        self.environmentOverride = nil
     }
 
     // MARK: - SystemOneBackend Conformance
@@ -73,9 +92,11 @@ public struct GeminiDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
     private func resolveAPIKey() -> String? {
         if let explicit = apiKey {
             let trimmed = explicit.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? nil : trimmed
+            if !trimmed.isEmpty {
+                return trimmed
+            }
         }
-        let env = ProcessInfo.processInfo.environment
+        let env = environmentOverride ?? ProcessInfo.processInfo.environment
         if let geminiKey = env["GEMINI_API_KEY"] {
             let trimmed = geminiKey.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
@@ -189,7 +210,8 @@ public struct GeminiDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
             throw SystemOneError.decodingError("Failed to serialize GeminiDecisionsRequest: \(error.localizedDescription)")
         }
 
-        let networkStartTime = CFAbsoluteTimeGetCurrent()
+        let clock = ContinuousClock()
+        let networkStart = clock.now
         let data: Data
         let urlResponse: URLResponse
         do {
@@ -205,7 +227,8 @@ public struct GeminiDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
             throw SystemOneError.networkError(error.localizedDescription)
         }
 
-        let transportDuration = (CFAbsoluteTimeGetCurrent() - networkStartTime) * 1000.0
+        let elapsed = networkStart.duration(to: clock.now)
+        let transportDuration = Double(elapsed.components.seconds) * 1000.0 + Double(elapsed.components.attoseconds) / 1e15
 
         guard let httpResponse = urlResponse as? HTTPURLResponse else {
             throw SystemOneError.networkError("Invalid HTTP response received from Google Gemini Decisions API.")

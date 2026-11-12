@@ -137,50 +137,67 @@ struct GeminiDecisionsHTTPBackendTests {
         #expect(sentRequest.value(forHTTPHeaderField: "X-Client-Request-Id") == "req-gemini-123")
     }
 
-    @Test("HTTP Backend resolves GEMINI_API_KEY and GOOGLE_API_KEY from environment")
+    @Test("HTTP Backend resolves GEMINI_API_KEY and GOOGLE_API_KEY from environment and falls through whitespace apiKey")
     func testEnvironmentVariableResolution() async throws {
-        let originalGemini = getenv("GEMINI_API_KEY").map { String(cString: $0) }
-        let originalGoogle = getenv("GOOGLE_API_KEY").map { String(cString: $0) }
-        defer {
-            if let originalGemini { setenv("GEMINI_API_KEY", originalGemini, 1) } else { unsetenv("GEMINI_API_KEY") }
-            if let originalGoogle { setenv("GOOGLE_API_KEY", originalGoogle, 1) } else { unsetenv("GOOGLE_API_KEY") }
-        }
-
-        // 1. Test GEMINI_API_KEY takes priority
-        setenv("GEMINI_API_KEY", "AIzaFromGeminiEnv", 1)
-        setenv("GOOGLE_API_KEY", "AIzaFromGoogleEnv", 1)
-
-        MockGeminiURLProtocol.reset()
-        MockGeminiURLProtocol.enqueue(statusCode: 200, body: sampleResponseJSON)
-
-        let backend = GeminiDecisionsHTTPBackend(
-            endpoint: .hosted(),
-            apiKey: nil,
-            session: makeSession()
-        )
         let request = SystemOneRequest(
             state: "Env test",
             questions: ["isSafe": .noul(instructions: "Is safe?")]
         )
 
-        _ = try await backend.evaluate(request: request)
-        #expect(MockGeminiURLProtocol.recordedRequests.first?.value(forHTTPHeaderField: "x-goog-api-key") == "AIzaFromGeminiEnv")
-
-        // 2. Test GOOGLE_API_KEY fallback when GEMINI_API_KEY is unset
-        unsetenv("GEMINI_API_KEY")
+        // 1. Test GEMINI_API_KEY takes priority when apiKey is nil
         MockGeminiURLProtocol.reset()
         MockGeminiURLProtocol.enqueue(statusCode: 200, body: sampleResponseJSON)
 
-        _ = try await backend.evaluate(request: request)
+        let backend1 = GeminiDecisionsHTTPBackend(
+            endpoint: .hosted(),
+            apiKey: nil,
+            session: makeSession(),
+            environmentOverride: [
+                "GEMINI_API_KEY": "AIzaFromGeminiEnv",
+                "GOOGLE_API_KEY": "AIzaFromGoogleEnv"
+            ]
+        )
+        _ = try await backend1.evaluate(request: request)
+        #expect(MockGeminiURLProtocol.recordedRequests.first?.value(forHTTPHeaderField: "x-goog-api-key") == "AIzaFromGeminiEnv")
+
+        // 2. Test empty/whitespace-only apiKey falls through to GEMINI_API_KEY
+        MockGeminiURLProtocol.reset()
+        MockGeminiURLProtocol.enqueue(statusCode: 200, body: sampleResponseJSON)
+
+        let backendWhitespace = GeminiDecisionsHTTPBackend(
+            endpoint: .hosted(),
+            apiKey: "   ",
+            session: makeSession(),
+            environmentOverride: [
+                "GEMINI_API_KEY": "AIzaFromGeminiAfterTrim"
+            ]
+        )
+        _ = try await backendWhitespace.evaluate(request: request)
+        #expect(MockGeminiURLProtocol.recordedRequests.first?.value(forHTTPHeaderField: "x-goog-api-key") == "AIzaFromGeminiAfterTrim")
+
+        // 3. Test GOOGLE_API_KEY fallback when GEMINI_API_KEY is absent
+        MockGeminiURLProtocol.reset()
+        MockGeminiURLProtocol.enqueue(statusCode: 200, body: sampleResponseJSON)
+
+        let backendGoogle = GeminiDecisionsHTTPBackend(
+            endpoint: .hosted(),
+            apiKey: nil,
+            session: makeSession(),
+            environmentOverride: [
+                "GOOGLE_API_KEY": "AIzaFromGoogleEnv"
+            ]
+        )
+        _ = try await backendGoogle.evaluate(request: request)
         #expect(MockGeminiURLProtocol.recordedRequests.first?.value(forHTTPHeaderField: "x-goog-api-key") == "AIzaFromGoogleEnv")
     }
 
-    @Test("HTTP Backend throws missingAPIKey when no key is configured")
+    @Test("HTTP Backend throws missingAPIKey when no key is configured in apiKey or environment")
     func testMissingAPIKeyThrows() async throws {
         let backend = GeminiDecisionsHTTPBackend(
             endpoint: .hosted(),
-            apiKey: "",
-            session: makeSession()
+            apiKey: "   ",
+            session: makeSession(),
+            environmentOverride: [:]
         )
 
         let request = SystemOneRequest(

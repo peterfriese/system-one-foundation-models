@@ -144,7 +144,9 @@ final class BenchmarkRunner: Sendable {
             print("  1. Start local laya-serve:   laya-serve --port 8000")
             print("  2. Or configure TypeSafe:    export TYPESAFE_API_KEY=\"...\"")
             print("  3. Or configure Cloudflare:  export CLOUDFLARE_API_TOKEN=\"...\" CLOUDFLARE_ACCOUNT_ID=\"...\"")
-            print("  4. Or compile Core ML model: xcrun coremlc compile LayaDecisionModel.mlmodelc")
+            print("  4. Or configure OpenAI:      export OPENAI_API_KEY=\"...\"")
+            print("  5. Or configure Gemini:      export GEMINI_API_KEY=\"...\"")
+            print("  6. Or compile Core ML model: xcrun coremlc compile LayaDecisionModel.mlmodelc")
             print("================================================================================")
             exit(1)
         }

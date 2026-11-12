@@ -35,9 +35,8 @@ public final class GeminiDecisionsExecutor: LanguageModelExecutor, Sendable {
         // 1. Extract context text and prompt from transcript
         let stateText = extractState(from: request.transcript)
 
-        // 2. Extract and validate image attachments
+        // 2. Extract image attachments (validated during payload adaptation)
         let images = try TranscriptAttachmentExtractor.extractImages(from: request.transcript)
-        try GeminiDecisionsAttachmentValidator.validate(attachments: images)
 
         // 3. Translate schema into System One questions
         let translation = try translator.translate(schema)

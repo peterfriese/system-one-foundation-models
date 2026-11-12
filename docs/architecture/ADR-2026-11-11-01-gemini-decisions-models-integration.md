@@ -426,21 +426,81 @@ public struct GeminiDecisionsRequest: Codable, Sendable, Equatable {
         self.questions = questions
     }
 
-    /// Input payload representation: either a plain text string or Gemini multimodal content blocks with `parts`.
+    /// Input payload representation: either a plain text string or a flat array of typed multimodal content items (`{"type": "text", ...}`, `{"type": "image", ...}`).
     public enum InputPayload: Codable, Sendable, Equatable {
         case text(String)
-        case multimodal([Content])
+        case multimodal([ContentItem])
 
-        public struct Content: Codable, Sendable, Equatable {
-            public let role: String?
-            public let parts: [Part]
+        public typealias Content = ContentItem
 
-            public init(role: String? = "user", parts: [Part]) {
-                self.role = role
-                self.parts = parts
+        public enum ContentItem: Codable, Sendable, Equatable {
+            case text(String)
+            case image(mimeType: String, data: String)
+
+            private enum CodingKeys: String, CodingKey {
+                case type
+                case text
+                case mimeType = "mime_type"
+                case data
+                case inlineData = "inline_data"
+            }
+
+            public func encode(to encoder: Encoder) throws {
+                var container = encoder.container(keyedBy: CodingKeys.self)
+                switch self {
+                case .text(let text):
+                    try container.encode("text", forKey: .type)
+                    try container.encode(text, forKey: .text)
+                case .image(let mimeType, let data):
+                    try container.encode("image", forKey: .type)
+                    try container.encode(mimeType, forKey: .mimeType)
+                    try container.encode(data, forKey: .data)
+                }
+            }
+
+            public init(from decoder: Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                if let type = try container.decodeIfPresent(String.self, forKey: .type) {
+                    switch type {
+                    case "text":
+                        let text = try container.decode(String.self, forKey: .text)
+                        self = .text(text)
+                    case "image":
+                        if let data = try container.decodeIfPresent(String.self, forKey: .data) {
+                            let mimeType = try container.decodeIfPresent(String.self, forKey: .mimeType) ?? "image/png"
+                            self = .image(mimeType: mimeType, data: data)
+                        } else if let inline = try container.decodeIfPresent(Part.InlineData.self, forKey: .inlineData) {
+                            self = .image(mimeType: inline.mimeType, data: inline.data)
+                        } else {
+                            throw DecodingError.dataCorruptedError(
+                                forKey: .data,
+                                in: container,
+                                debugDescription: "Expected 'data' in Gemini image ContentItem"
+                            )
+                        }
+                    default:
+                        throw DecodingError.dataCorruptedError(
+                            forKey: .type,
+                            in: container,
+                            debugDescription: "Unsupported Gemini ContentItem type: \(type)"
+                        )
+                    }
+                } else if let text = try container.decodeIfPresent(String.self, forKey: .text) {
+                    self = .text(text)
+                } else if let inline = try container.decodeIfPresent(Part.InlineData.self, forKey: .inlineData) {
+                    self = .image(mimeType: inline.mimeType, data: inline.data)
+                } else {
+                    throw DecodingError.dataCorrupted(
+                        DecodingError.Context(
+                            codingPath: decoder.codingPath,
+                            debugDescription: "Expected 'type' ('text' or 'image') in Gemini ContentItem"
+                        )
+                    )
+                }
             }
         }
 
+        /// Legacy Gemini `generateContent` part envelope retained for decoding backward compatibility.
         public enum Part: Codable, Sendable, Equatable {
             case text(String)
             case inlineData(mimeType: String, data: String)
@@ -492,6 +552,11 @@ public struct GeminiDecisionsRequest: Codable, Sendable, Equatable {
             }
         }
 
+        private struct LegacyPartsBlock: Decodable {
+            let role: String?
+            let parts: [Part]
+        }
+
         public func encode(to encoder: Encoder) throws {
             var container = encoder.singleValueContainer()
             switch self {
@@ -506,12 +571,24 @@ public struct GeminiDecisionsRequest: Codable, Sendable, Equatable {
             let container = try decoder.singleValueContainer()
             if let string = try? container.decode(String.self) {
                 self = .text(string)
-            } else if let contents = try? container.decode([Content].self) {
+            } else if let contents = try? container.decode([ContentItem].self) {
                 self = .multimodal(contents)
+            } else if let legacyBlocks = try? container.decode([LegacyPartsBlock].self) {
+                let flattened = legacyBlocks.flatMap { block in
+                    block.parts.map { part -> ContentItem in
+                        switch part {
+                        case .text(let text):
+                            return .text(text)
+                        case .inlineData(let mimeType, let data):
+                            return .image(mimeType: mimeType, data: data)
+                        }
+                    }
+                }
+                self = .multimodal(flattened)
             } else {
                 throw DecodingError.dataCorruptedError(
                     in: container,
-                    debugDescription: "Expected String or [Content] for Gemini input"
+                    debugDescription: "Expected String or [ContentItem] for Gemini input"
                 )
             }
         }
@@ -838,20 +915,18 @@ public enum GeminiDecisionsPayloadAdapter {
             // Validate all image attachments meet Gemini Decisions constraints
             try GeminiDecisionsAttachmentValidator.validate(attachments: images)
 
-            var parts: [GeminiDecisionsRequest.InputPayload.Part] = [
+            var items: [GeminiDecisionsRequest.InputPayload.ContentItem] = [
                 .text(request.state)
             ]
             for image in images {
-                parts.append(
-                    .inlineData(
+                items.append(
+                    .image(
                         mimeType: image.format.rawValue,
                         data: image.base64DataString
                     )
                 )
             }
-            inputPayload = .multimodal([
-                GeminiDecisionsRequest.InputPayload.Content(role: "user", parts: parts)
-            ])
+            inputPayload = .multimodal(items)
         } else {
             inputPayload = .text(request.state)
         }

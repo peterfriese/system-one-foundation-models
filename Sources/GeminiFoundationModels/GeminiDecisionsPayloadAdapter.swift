@@ -8,6 +8,12 @@ public enum GeminiDecisionsPayloadAdapter {
 
     /// Translates a unified `SystemOneRequest` into a `GeminiDecisionsRequest`.
     public static func adaptRequest(_ request: SystemOneRequest) throws -> GeminiDecisionsRequest {
+        guard (1...1_000).contains(request.questions.count) else {
+            throw SystemOneError.modelExecutionError(
+                "Gemini Decisions API requires between 1 and 1,000 questions per request (got \(request.questions.count))."
+            )
+        }
+
         let inputPayload: GeminiDecisionsRequest.InputPayload
 
         if let images = request.images, !images.isEmpty {
@@ -93,6 +99,11 @@ public enum GeminiDecisionsPayloadAdapter {
             }
 
             if let prob = ans.noul ?? ans.probability {
+                guard prob.isFinite && (0.0...1.0).contains(prob) else {
+                    throw SystemOneError.decodingError(
+                        "Invalid noul probability \(prob) for question '\(name)'; expected finite value in 0.0...1.0."
+                    )
+                }
                 let conf = ans.confidence ?? max(prob, 1.0 - prob)
                 var probsDict: [String: Double] = [
                     "true": prob,
@@ -119,6 +130,11 @@ public enum GeminiDecisionsPayloadAdapter {
                     probabilities: probsDict
                 )
             } else if let sc = ans.score {
+                guard sc.isFinite else {
+                    throw SystemOneError.decodingError(
+                        "Invalid non-finite score \(sc) for question '\(name)'."
+                    )
+                }
                 answers[name] = SystemOneAnswer(
                     type: "score",
                     score: sc,

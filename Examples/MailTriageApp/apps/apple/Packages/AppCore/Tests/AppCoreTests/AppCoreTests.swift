@@ -1418,26 +1418,45 @@ struct HealthProbeTests {
 }
 
 private final class MockHTTPStatusURLProtocol: URLProtocol, @unchecked Sendable {
-    nonisolated(unsafe) static var mockStatusCode: Int = 200
-    nonisolated(unsafe) static var mockResponseData: Data = Data()
-    nonisolated(unsafe) static var mockError: Error?
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var _mockStatusCode: Int = 200
+    nonisolated(unsafe) private static var _mockResponseData: Data = Data()
+    nonisolated(unsafe) private static var _mockError: Error?
+
+    static var mockStatusCode: Int {
+        get { lock.withLock { _mockStatusCode } }
+        set { lock.withLock { _mockStatusCode = newValue } }
+    }
+
+    static var mockResponseData: Data {
+        get { lock.withLock { _mockResponseData } }
+        set { lock.withLock { _mockResponseData = newValue } }
+    }
+
+    static var mockError: Error? {
+        get { lock.withLock { _mockError } }
+        set { lock.withLock { _mockError = newValue } }
+    }
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
-        if let error = Self.mockError {
+        let (statusCode, responseData, error) = Self.lock.withLock {
+            (Self._mockStatusCode, Self._mockResponseData, Self._mockError)
+        }
+        if let error {
             client?.urlProtocol(self, didFailWithError: error)
             return
         }
         let response = HTTPURLResponse(
             url: request.url ?? URL(string: "http://127.0.0.1:8000")!,
-            statusCode: Self.mockStatusCode,
+            statusCode: statusCode,
             httpVersion: "HTTP/1.1",
             headerFields: nil
         )!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: Self.mockResponseData)
+        client?.urlProtocol(self, didLoad: responseData)
         client?.urlProtocolDidFinishLoading(self)
     }
 
