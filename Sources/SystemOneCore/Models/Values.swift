@@ -175,10 +175,22 @@ public struct ScoreValue: Sendable, Hashable, CustomStringConvertible {
         self.confidence = confidence
     }
 
+    /// Clamps a rounded `Double` into `Int.min...Int.max` without trapping on overflow or non-finite values.
+    package static func clampedInt(from value: Double) -> Int {
+        guard value.isFinite else { return 0 }
+        let roundedValue = value.rounded()
+        if roundedValue >= Double(Int.max) {
+            return Int.max
+        }
+        if roundedValue <= Double(Int.min) {
+            return Int.min
+        }
+        return Int(roundedValue)
+    }
+
     /// The nearest discrete whole rubric level. Returns 0 if value is not finite.
     public var rounded: Int {
-        guard value.isFinite else { return 0 }
-        return Int(value.rounded())
+        Self.clampedInt(from: value)
     }
 
     /// Maps the weighted score onto `0.0...1.0` using actual rubric level bounds.

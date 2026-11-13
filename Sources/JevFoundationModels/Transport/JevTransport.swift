@@ -78,8 +78,12 @@ public struct URLSessionTransport: JevTransport, Hashable, Sendable {
         urlRequest.timeoutInterval = timeoutInterval
         urlRequest.httpBody = requestData
 
+        let clock = ContinuousClock()
         var attempt = 1
         while true {
+            try Task.checkCancellation()
+
+            let attemptStart = clock.now
             let data: Data
             let response: URLResponse
             do {
@@ -90,8 +94,18 @@ public struct URLSessionTransport: JevTransport, Hashable, Sendable {
             } catch let urlError as URLError where urlError.code == .cancelled {
                 throw CancellationError()
             } catch {
+                if attempt < retryPolicy.maxAttempts {
+                    let delay = retryPolicy.backoff(afterAttempt: attempt, randomness: randomness())
+                    try await sleep(delay)
+                    attempt += 1
+                    continue
+                }
                 throw JevError.networkError(error.localizedDescription)
             }
+
+            let elapsed = clock.now - attemptStart
+            let transportMs = Double(elapsed.components.seconds) * 1000.0
+                + Double(elapsed.components.attoseconds) / 1_000_000_000_000_000.0
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw JevError.networkError("Invalid HTTP response received from server.")
@@ -100,6 +114,7 @@ public struct URLSessionTransport: JevTransport, Hashable, Sendable {
             if (200...299).contains(httpResponse.statusCode) {
                 do {
                     var decoded = try JSONDecoder().decode(JevResponse.self, from: data)
+                    decoded.transportDurationMs = transportMs
                     if let serviceTimeHeader = httpResponse.value(forHTTPHeaderField: "x-envoy-upstream-service-time"),
                        let serviceTimeMs = Double(serviceTimeHeader) {
                         decoded.serverDurationMs = serviceTimeMs

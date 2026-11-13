@@ -51,7 +51,7 @@ public struct ProxyCredential: Sendable, Hashable {
 }
 ```
 
-In `JevFoundationModels`, `ProxyTransport.Credential` is a `public typealias Credential = ProxyCredential`, preserving 100% source compatibility with existing `ProxyTransport` code while unifying all 6 hosted providers:
+In `JevFoundationModels`, `ProxyTransport.Credential` is a `public typealias Credential = ProxyCredential`, preserving 100% source compatibility with existing `ProxyTransport` code while unifying all 5 hosted/networked providers (plus vendor-agnostic `SystemOneLanguageModel`):
 - **Pattern A (Provider Passthrough Proxy):** `GeminiLanguageModel`, `OpenAILanguageModel`, `ClefLanguageModel`, `LayaLanguageModel`, and `JevLanguageModel` each accept `(proxyEndpoint: URL, credential: ProxyCredential, ...)` or an inline trailing closure `(proxyEndpoint: URL, ..., authorize: { request in ... })`, dispatching the provider's native wire format (`GeminiDecisionsRequest`, `OpenAIDecisionsRequest`, `SystemOneRequest`, `JevRequest`) to your proxy without requiring local API keys.
 - **Pattern B (Vendor-Agnostic Gateway via `SystemOneProxyBackend`):** `SystemOneLanguageModel(proxyEndpoint:credential:modelID:)` dispatches canonical `SystemOneRequest` payloads (including multimodal vision attachments) via `SystemOneProxyBackend`, allowing your backend gateway to route or fail over between `gemini-decision-1`, `gpt-6-luna`, `clef`, `jev-latest`, and `laya-serve` server-side.
 - **Fail-Closed Endpoint Validation (`ProxyEndpointValidator`):** All proxy-configured backends validate that `proxyEndpoint` uses `https://` for remote hosts, permitting `http://` strictly for local loopback emulators (`localhost`, `127.0.0.1`, `::1`, `[::1]`).

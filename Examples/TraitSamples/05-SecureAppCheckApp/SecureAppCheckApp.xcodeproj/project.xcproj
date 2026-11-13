@@ -2,29 +2,40 @@
   "default-configuration": "Release",
   "configurations": [
     "Debug",
-    "Release",
+    "Release"
   ],
   "localizations": {
     "development": "en",
     "supported": [
-      "Base",
-    ],
+      "Base"
+    ]
   },
   "packages": [
     {
       "kind": "local",
-      "path": "../../..",
-    },
+      "path": "../../.."
+    }
   ],
   "files": [
-    { "kind": "folder", "path": "Sources", "target-membership": [ "SecureAppCheckApp" ] },
+    {
+      "kind": "folder",
+      "path": "Sources",
+      "target-membership": [
+        "SecureAppCheckApp"
+      ]
+    },
     {
       "kind": "group",
       "name": "Products",
       "children": [
-        { "path": "<PRODUCTS>/SecureAppCheckApp.app", "id": "SA000051", "type": "wrapper.application", "index": false },
-      ],
-    },
+        {
+          "path": "<PRODUCTS>/SecureAppCheckApp.app",
+          "id": "SA000051",
+          "type": "wrapper.application",
+          "index": false
+        }
+      ]
+    }
   ],
   "targets": [
     {
@@ -35,14 +46,58 @@
       "build-phases": [
         "frameworks",
         "compile-sources",
-        "resources",
+        "resources"
       ],
       "package-product-members": [
         {
           "package": "..",
           "product-name": "SystemOneFoundationModels",
-          "build-phase": { "build-phase": "frameworks" },
+          "build-phase": {
+            "build-phase": "frameworks"
+          }
         },
+        {
+          "package": "..",
+          "product-name": "SystemOneCore",
+          "build-phase": {
+            "build-phase": "frameworks"
+          }
+        },
+        {
+          "package": "..",
+          "product-name": "JevFoundationModels",
+          "build-phase": {
+            "build-phase": "frameworks"
+          }
+        },
+        {
+          "package": "..",
+          "product-name": "LayaFoundationModels",
+          "build-phase": {
+            "build-phase": "frameworks"
+          }
+        },
+        {
+          "package": "..",
+          "product-name": "ClefFoundationModels",
+          "build-phase": {
+            "build-phase": "frameworks"
+          }
+        },
+        {
+          "package": "..",
+          "product-name": "OpenAIFoundationModels",
+          "build-phase": {
+            "build-phase": "frameworks"
+          }
+        },
+        {
+          "package": "..",
+          "product-name": "GeminiFoundationModels",
+          "build-phase": {
+            "build-phase": "frameworks"
+          }
+        }
       ],
       "build-settings": {
         "CODE_SIGNING_ALLOWED": "YES",
@@ -62,7 +117,7 @@
         "LD_RUNPATH_SEARCH_PATHS": [
           "$(inherited)",
           "@executable_path/Frameworks",
-          "@executable_path/../Frameworks",
+          "@executable_path/../Frameworks"
         ],
         "MACOSX_DEPLOYMENT_TARGET": "27.0",
         "MARKETING_VERSION": "1.0",
@@ -74,9 +129,9 @@
         "SUPPORTS_MAC_DESIGNED_FOR_IPHONE": "NO",
         "SWIFT_EMIT_LOC_STRINGS": "YES",
         "SWIFT_VERSION": "6.0",
-        "TARGETED_DEVICE_FAMILY": "1,2",
-      },
-    },
+        "TARGETED_DEVICE_FAMILY": "1,2"
+      }
+    }
   ],
   "build-settings": {
     "ALWAYS_SEARCH_USER_PATHS": "NO",
@@ -121,7 +176,7 @@
     "GCC_OPTIMIZATION_LEVEL[config=Debug]": "0",
     "GCC_PREPROCESSOR_DEFINITIONS[config=Debug]": [
       "DEBUG=1",
-      "$(inherited)",
+      "$(inherited)"
     ],
     "GCC_WARN_64_TO_32_BIT_CONVERSION": "YES",
     "GCC_WARN_ABOUT_RETURN_TYPE": "YES_ERROR",
@@ -142,8 +197,8 @@
     "SWIFT_OPTIMIZATION_LEVEL[config=Release]": "-O",
     "SWIFT_STRICT_CONCURRENCY": "complete",
     "SWIFT_VERSION": "6.0",
-    "VALIDATE_PRODUCT[config=Release]": "YES",
+    "VALIDATE_PRODUCT[config=Release]": "YES"
   },
   "last-upgrade": "16.0",
-  "last-swift-update": "16.0",
+  "last-swift-update": "16.0"
 }

@@ -10,7 +10,7 @@ public final class SystemOneExecutor: LanguageModelExecutor, Sendable {
     private let translator: SchemaTranslator
     private let synthesizer: ResponseSynthesizer
 
-    public init(configuration: Configuration) throws {
+    public init(configuration: Configuration) {
         self.configuration = configuration
         self.translator = SchemaTranslator()
         self.synthesizer = ResponseSynthesizer()
@@ -32,8 +32,14 @@ public final class SystemOneExecutor: LanguageModelExecutor, Sendable {
         // 1. Extract context/prompt from transcript as state
         let stateText = extractState(from: request.transcript)
 
-        // 2. Extract and validate image attachments if present
-        let images = try TranscriptAttachmentExtractor.extractImages(from: request.transcript)
+        // 2. Extract active-turn image attachments if vision is supported
+        let images: [SystemOneImage]?
+        if configuration.supportsVision {
+            let extracted = try TranscriptAttachmentExtractor.extractImages(from: request.transcript)
+            images = extracted.isEmpty ? nil : extracted
+        } else {
+            images = nil
+        }
 
         // 3. Translate schema into System One questions (noul / choice / score)
         let translation = try translator.translate(schema)
@@ -43,29 +49,41 @@ public final class SystemOneExecutor: LanguageModelExecutor, Sendable {
             state: stateText,
             model: configuration.modelID,
             questions: translation.questions,
-            images: images.isEmpty ? nil : images
+            images: images
         )
 
         let response = try await configuration.backend.evaluate(request: systemOneRequest)
 
-        // 4. Synthesize payload matching expected @Generable shape
+        if configuration.requiresAllAnswers {
+            for key in translation.questions.keys.sorted() {
+                guard response.answers[key] != nil else {
+                    throw SystemOneError.decodingError("Missing answer for expected question '\(key)'")
+                }
+            }
+        }
+
+        // 5. Synthesize payload matching expected @Generable shape
         let synthesizedText = try synthesizer.synthesize(
             answers: response.answers,
             layout: translation.layout
         )
         let entryID = UUID().uuidString
-        let outputTokenCount = response.usage?.outputTokens ?? 1
+        let outputTokenCount = response.usage?.outputTokens ?? configuration.defaultOutputTokenCount
 
-        // 5. Emit single-frame text for @Generable decoding
+        // 6. Emit single-frame text for @Generable decoding
         await channel.send(.response(
             entryID: entryID,
             action: .appendText(synthesizedText, tokenCount: outputTokenCount)
         ))
 
-        // 6. Emit metadata with probabilities, confidence scores, and score rubric values
+        // 7. Emit metadata with probabilities, confidence scores, and score rubric values
         var metadata: [String: GeneratedContent] = [
             "model": GeneratedContent(response.model)
         ]
+
+        if configuration.emitsOutputTokensMetadata {
+            metadata["output_tokens"] = GeneratedContent(String(outputTokenCount))
+        }
 
         if let serverDurationMs = response.serverDurationMs {
             metadata["serverDurationMs"] = GeneratedContent(String(format: "%.1f", serverDurationMs))
@@ -86,13 +104,21 @@ public final class SystemOneExecutor: LanguageModelExecutor, Sendable {
 
         await channel.send(.response(entryID: entryID, action: .updateMetadata(metadata)))
 
-        // 7. Emit token usage
+        // 8. Emit token usage
         if let usage = response.usage {
             await channel.send(.response(
                 entryID: entryID,
                 action: .updateUsage(
                     input: .init(totalTokenCount: usage.inputTokens, cachedTokenCount: 0),
                     output: .init(totalTokenCount: usage.outputTokens, reasoningTokenCount: 0)
+                )
+            ))
+        } else if configuration.alwaysEmitUsage {
+            await channel.send(.response(
+                entryID: entryID,
+                action: .updateUsage(
+                    input: .init(totalTokenCount: 0, cachedTokenCount: 0),
+                    output: .init(totalTokenCount: outputTokenCount, reasoningTokenCount: 0)
                 )
             ))
         }
@@ -127,6 +153,6 @@ public final class SystemOneExecutor: LanguageModelExecutor, Sendable {
         }
 
         let combined = parts.joined(separator: "\n\n").trimmingCharacters(in: .whitespacesAndNewlines)
-        return combined.isEmpty ? "Application state evaluation" : combined
+        return combined.isEmpty ? configuration.emptyStateFallback : combined
     }
 }

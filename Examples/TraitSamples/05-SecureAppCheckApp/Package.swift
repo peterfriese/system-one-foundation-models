@@ -8,7 +8,7 @@ let package = Package(
         .iOS("27.0")
     ],
     dependencies: [
-        .package(name: "SystemOneFoundationModels", path: "../../..", traits: ["Jev"])
+        .package(name: "SystemOneFoundationModels", path: "../../..", traits: ["Remote"])
     ],
     targets: [
         .executableTarget(

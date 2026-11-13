@@ -2,27 +2,27 @@
 import Foundation
 @_exported import SystemOneCore
 
-#if canImport(JevFoundationModels)
+#if Jev && canImport(JevFoundationModels)
 @_exported import JevFoundationModels
 #endif
 
-#if canImport(LayaFoundationModels)
+#if LayaServe && canImport(LayaFoundationModels)
 @_exported import LayaFoundationModels
 #endif
 
-#if canImport(LayaOnDevice)
+#if Laya && canImport(LayaOnDevice)
 @_exported import LayaOnDevice
 #endif
 
-#if canImport(ClefFoundationModels)
+#if Clef && canImport(ClefFoundationModels)
 @_exported import ClefFoundationModels
 #endif
 
-#if canImport(OpenAIFoundationModels)
+#if OpenAI && canImport(OpenAIFoundationModels)
 @_exported import OpenAIFoundationModels
 #endif
 
-#if canImport(GeminiFoundationModels)
+#if Gemini && canImport(GeminiFoundationModels)
 @_exported import GeminiFoundationModels
 #endif
 

@@ -61,8 +61,10 @@ public struct ClefHTTPBackend: SystemOneBackend, Sendable, Hashable {
     }
 
     public func evaluate(request: SystemOneRequest) async throws -> SystemOneResponse {
+        try Task.checkCancellation()
+        let targetURL = try endpoint.validatedURL()
         if proxyCredential != nil {
-            try ProxyEndpointValidator.validate(endpoint.url)
+            try ProxyEndpointValidator.validate(targetURL)
         }
 
         let requestData: Data
@@ -76,9 +78,10 @@ public struct ClefHTTPBackend: SystemOneBackend, Sendable, Hashable {
         let maxAttempts = max(1, retryPolicy.maxAttempts)
 
         while true {
+            try Task.checkCancellation()
             attempts += 1
             do {
-                return try await performSingleEvaluation(requestData: requestData)
+                return try await performSingleEvaluation(requestData: requestData, targetURL: targetURL)
             } catch is CancellationError {
                 throw CancellationError()
             } catch let resError as HTTPResponseError {
@@ -135,8 +138,8 @@ public struct ClefHTTPBackend: SystemOneBackend, Sendable, Hashable {
         let data: Data
     }
 
-    private func performSingleEvaluation(requestData: Data) async throws -> SystemOneResponse {
-        var urlRequest = URLRequest(url: endpoint.url)
+    private func performSingleEvaluation(requestData: Data, targetURL: URL) async throws -> SystemOneResponse {
+        var urlRequest = URLRequest(url: targetURL)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
@@ -247,7 +250,6 @@ public struct ClefHTTPBackend: SystemOneBackend, Sendable, Hashable {
     }
 
     private func parseServerTimingDuration(_ header: String) -> Double? {
-        // e.g. "cfL4;dur=12, inference;dur=45" or "inference;dur=22.4"
         var fallbackDuration: Double? = nil
 
         for entry in header.components(separatedBy: ",") {

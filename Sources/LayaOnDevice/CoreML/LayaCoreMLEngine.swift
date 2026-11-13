@@ -22,6 +22,7 @@ public final class LayaCoreMLEngine: Sendable {
     public let tokenizer: any LayaTokenizer
     public let sequenceBuilder: LayaSequenceBuilder
     public let maxOptions: Int
+    public let computeUnits: MLComputeUnits
 
     private let modelHolder: ThreadSafeMLModel?
     private let mockPredictor: (@Sendable (FormattedQuestionSequence) async throws -> [Double])?
@@ -29,7 +30,7 @@ public final class LayaCoreMLEngine: Sendable {
     public init(
         modelURL: URL,
         tokenizer: any LayaTokenizer,
-        configuration: MLModelConfiguration = MLModelConfiguration(),
+        configuration: MLModelConfiguration? = nil,
         maxOptions: Int = 32
     ) throws {
         self.modelURL = modelURL
@@ -37,9 +38,16 @@ public final class LayaCoreMLEngine: Sendable {
         self.sequenceBuilder = LayaSequenceBuilder(tokenizer: tokenizer)
         self.maxOptions = maxOptions
 
-        // Optimize compute units for Apple Neural Engine with GPU/CPU fallback
-        let config = (configuration.copy() as? MLModelConfiguration) ?? MLModelConfiguration()
-        config.computeUnits = .all
+        let config: MLModelConfiguration
+        if let configuration {
+            config = (configuration.copy() as? MLModelConfiguration) ?? configuration
+        } else {
+            let defaultConfig = MLModelConfiguration()
+            defaultConfig.computeUnits = .all
+            config = defaultConfig
+        }
+        self.computeUnits = config.computeUnits
+
         let loaded = try MLModel(contentsOf: modelURL, configuration: config)
         self.modelHolder = ThreadSafeMLModel(loaded)
         self.mockPredictor = nil
@@ -55,19 +63,24 @@ public final class LayaCoreMLEngine: Sendable {
         self.tokenizer = tokenizer
         self.sequenceBuilder = LayaSequenceBuilder(tokenizer: tokenizer)
         self.maxOptions = maxOptions
+        self.computeUnits = .all
         self.modelHolder = nil
         self.mockPredictor = mockPredictor
     }
 
     /// Evaluates a System One request locally on device.
     public func predict(request: SystemOneRequest) async throws -> SystemOneResponse {
+        try Task.checkCancellation()
+
         let startTime = CFAbsoluteTimeGetCurrent()
         var answers: [String: SystemOneAnswer] = [:]
         var totalTokens = 0
 
         let pretokenizedStateIds = sequenceBuilder.pretokenizeState(request.state)
 
-        for (qid, question) in request.questions {
+        for (qid, question) in request.questions.sorted(by: { $0.key < $1.key }) {
+            try Task.checkCancellation()
+
             let sequence = try sequenceBuilder.buildSequence(pretokenizedStateIds: pretokenizedStateIds, question: question)
             try validateOptionCount(sequence.markerPositions.count, questionID: qid)
             totalTokens += sequence.inputIds.count
@@ -100,17 +113,32 @@ public final class LayaCoreMLEngine: Sendable {
 
     // MARK: - Core ML Execution
 
-    private func executeCoreML(model: MLModel, sequence: FormattedQuestionSequence) throws -> [Double] {
-        let seqLen = sequence.inputIds.count
+    package func prepareFeatureArrays(
+        for sequence: FormattedQuestionSequence
+    ) throws -> (
+        inputIds: MLMultiArray,
+        attentionMask: MLMultiArray,
+        markerPos: MLMultiArray,
+        markerMask: MLMultiArray,
+        qtype: MLMultiArray
+    ) {
+        let maxSeqLen = sequenceBuilder.maxLen
+        let seqLen = min(sequence.inputIds.count, maxSeqLen)
         let k = sequence.markerPositions.count
         try validateOptionCount(k)
 
-        // 1. Create input multiarrays
-        let inputIdsArr = try MLMultiArray(shape: [1, NSNumber(value: seqLen)], dataType: .int32)
-        let maskArr = try MLMultiArray(shape: [1, NSNumber(value: seqLen)], dataType: .int32)
-        for i in 0..<seqLen {
-            inputIdsArr[[0, NSNumber(value: i)]] = NSNumber(value: sequence.inputIds[i])
-            maskArr[[0, NSNumber(value: i)]] = 1
+        let inputIdsArr = try MLMultiArray(shape: [1, NSNumber(value: maxSeqLen)], dataType: .int32)
+        let maskArr = try MLMultiArray(shape: [1, NSNumber(value: maxSeqLen)], dataType: .int32)
+        let padValue = NSNumber(value: tokenizer.padTokenId)
+
+        for i in 0..<maxSeqLen {
+            if i < seqLen {
+                inputIdsArr[[0, NSNumber(value: i)]] = NSNumber(value: sequence.inputIds[i])
+                maskArr[[0, NSNumber(value: i)]] = 1
+            } else {
+                inputIdsArr[[0, NSNumber(value: i)]] = padValue
+                maskArr[[0, NSNumber(value: i)]] = 0
+            }
         }
 
         let markerPosArr = try MLMultiArray(shape: [1, NSNumber(value: maxOptions)], dataType: .int32)
@@ -128,17 +156,28 @@ public final class LayaCoreMLEngine: Sendable {
         let qtypeArr = try MLMultiArray(shape: [1], dataType: .int32)
         qtypeArr[[0]] = NSNumber(value: sequence.qtype)
 
-        // 2. Assemble feature dictionary
+        return (
+            inputIds: inputIdsArr,
+            attentionMask: maskArr,
+            markerPos: markerPosArr,
+            markerMask: markerMaskArr,
+            qtype: qtypeArr
+        )
+    }
+
+    private func executeCoreML(model: MLModel, sequence: FormattedQuestionSequence) throws -> [Double] {
+        let k = sequence.markerPositions.count
+        let arrays = try prepareFeatureArrays(for: sequence)
+
         let featureDict: [String: Any] = [
-            "input_ids": inputIdsArr,
-            "attention_mask": maskArr,
-            "marker_pos": markerPosArr,
-            "marker_mask": markerMaskArr,
-            "qtype": qtypeArr
+            "input_ids": arrays.inputIds,
+            "attention_mask": arrays.attentionMask,
+            "marker_pos": arrays.markerPos,
+            "marker_mask": arrays.markerMask,
+            "qtype": arrays.qtype
         ]
         let featureProvider = try MLDictionaryFeatureProvider(dictionary: featureDict)
 
-        // 3. Run prediction on Neural Engine / GPU
         let output = try model.prediction(from: featureProvider)
         guard let logitsFeature = output.featureValue(for: "logits")?.multiArrayValue else {
             throw SystemOneError.modelExecutionError("Core ML output missing 'logits' tensor.")

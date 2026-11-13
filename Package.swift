@@ -42,36 +42,36 @@ let package = Package(
             targets: ["GeminiFoundationModels"]
         ),
         .executable(
-            name: "ticket-triage-demo",
-            targets: ["TicketTriageDemo"]
+            name: "system-one-cli",
+            targets: ["SystemOneCLI"]
         ),
         .executable(
-            name: "duplicate-article-demo",
-            targets: ["DuplicateArticleDemo"]
+            name: "vision-scanner-app",
+            targets: ["VisionScannerApp"]
         ),
         .executable(
-            name: "file-organizer-demo",
-            targets: ["FileOrganizerDemo"]
+            name: "jev-quickstart",
+            targets: ["JevQuickstart"]
         ),
         .executable(
-            name: "laya-demo",
-            targets: ["LayaDemo"]
+            name: "laya-quickstart",
+            targets: ["LayaServeQuickstart"]
         ),
         .executable(
-            name: "clef-demo",
-            targets: ["ClefDemo"]
+            name: "laya-ondevice-quickstart",
+            targets: ["LayaOnDeviceQuickstart"]
         ),
         .executable(
-            name: "clef-camera-scanner",
-            targets: ["ClefCameraScanner"]
+            name: "clef-quickstart",
+            targets: ["ClefQuickstart"]
         ),
         .executable(
-            name: "openai-demo",
-            targets: ["OpenAIDemo"]
+            name: "openai-quickstart",
+            targets: ["OpenAIQuickstart"]
         ),
         .executable(
-            name: "gemini-demo",
-            targets: ["GeminiDemo"]
+            name: "gemini-quickstart",
+            targets: ["GeminiQuickstart"]
         )
     ],
     traits: [
@@ -120,6 +120,7 @@ let package = Package(
     targets: [
         .target(
             name: "SystemOneCore",
+            exclude: ["README.md"],
             swiftSettings: [
                 .enableUpcomingFeature("StrictConcurrency")
             ]
@@ -135,6 +136,7 @@ let package = Package(
                 .target(name: "OpenAIFoundationModels", condition: .when(traits: ["OpenAI"])),
                 .target(name: "GeminiFoundationModels", condition: .when(traits: ["Gemini"]))
             ],
+            exclude: ["README.md"],
             swiftSettings: [
                 .enableUpcomingFeature("StrictConcurrency")
             ]
@@ -142,6 +144,7 @@ let package = Package(
         .target(
             name: "LayaFoundationModels",
             dependencies: ["SystemOneCore"],
+            exclude: ["README.md"],
             swiftSettings: [
                 .enableUpcomingFeature("StrictConcurrency")
             ]
@@ -149,6 +152,7 @@ let package = Package(
         .target(
             name: "LayaOnDevice",
             dependencies: ["SystemOneCore"],
+            exclude: ["README.md"],
             swiftSettings: [
                 .enableUpcomingFeature("StrictConcurrency")
             ]
@@ -156,6 +160,7 @@ let package = Package(
         .target(
             name: "JevFoundationModels",
             dependencies: ["SystemOneCore"],
+            exclude: ["README.md"],
             swiftSettings: [
                 .enableUpcomingFeature("StrictConcurrency")
             ]
@@ -163,6 +168,7 @@ let package = Package(
         .target(
             name: "ClefFoundationModels",
             dependencies: ["SystemOneCore"],
+            exclude: ["README.md"],
             swiftSettings: [
                 .enableUpcomingFeature("StrictConcurrency")
             ]
@@ -170,6 +176,7 @@ let package = Package(
         .target(
             name: "OpenAIFoundationModels",
             dependencies: ["SystemOneCore"],
+            exclude: ["README.md"],
             swiftSettings: [
                 .enableUpcomingFeature("StrictConcurrency")
             ]
@@ -177,66 +184,88 @@ let package = Package(
         .target(
             name: "GeminiFoundationModels",
             dependencies: ["SystemOneCore"],
+            exclude: ["README.md"],
             swiftSettings: [
                 .enableUpcomingFeature("StrictConcurrency")
             ]
         ),
         .executableTarget(
-            name: "TicketTriageDemo",
-            dependencies: ["JevFoundationModels"],
-            path: "Examples/TicketTriageDemo",
-            exclude: ["README.md"]
+            name: "SystemOneCLI",
+            dependencies: [
+                "SystemOneFoundationModels",
+                "SystemOneCore",
+                "JevFoundationModels",
+                "LayaFoundationModels",
+                "LayaOnDevice",
+                "ClefFoundationModels",
+                "OpenAIFoundationModels",
+                "GeminiFoundationModels"
+            ],
+            path: "Examples/CLI",
+            exclude: ["README.md"],
+            swiftSettings: [
+                .enableUpcomingFeature("StrictConcurrency")
+            ]
         ),
         .executableTarget(
-            name: "DuplicateArticleDemo",
-            dependencies: ["JevFoundationModels"],
-            path: "Examples/DuplicateArticleDemo",
-            exclude: ["README.md"]
+            name: "VisionScannerApp",
+            dependencies: [
+                "SystemOneCore",
+                "ClefFoundationModels",
+                "OpenAIFoundationModels",
+                "GeminiFoundationModels"
+            ],
+            path: "Examples/Apps/VisionScannerApp",
+            exclude: ["README.md", "VisionScannerApp.xcodeproj"],
+            swiftSettings: [
+                .enableUpcomingFeature("StrictConcurrency")
+            ]
         ),
         .executableTarget(
-            name: "FileOrganizerDemo",
+            name: "JevQuickstart",
             dependencies: ["JevFoundationModels"],
-            path: "Examples/FileOrganizerDemo",
-            exclude: ["README.md"]
+            path: "Examples/Quickstarts/JevQuickstart",
+            swiftSettings: [
+                .enableUpcomingFeature("StrictConcurrency")
+            ]
         ),
         .executableTarget(
-            name: "LayaDemo",
+            name: "LayaServeQuickstart",
             dependencies: ["LayaFoundationModels"],
-            path: "Examples/LayaDemo",
-            exclude: ["README.md"]
-        ),
-        .executableTarget(
-            name: "ClefDemo",
-            dependencies: ["ClefFoundationModels"],
-            path: "Examples/ClefDemo",
-            exclude: ["README.md"],
+            path: "Examples/Quickstarts/LayaServeQuickstart",
             swiftSettings: [
                 .enableUpcomingFeature("StrictConcurrency")
             ]
         ),
         .executableTarget(
-            name: "ClefCameraScanner",
-            dependencies: ["ClefFoundationModels"],
-            path: "Examples/ClefCameraScanner",
-            exclude: ["README.md"],
+            name: "LayaOnDeviceQuickstart",
+            dependencies: ["LayaOnDevice"],
+            path: "Examples/Quickstarts/LayaOnDeviceQuickstart",
             swiftSettings: [
                 .enableUpcomingFeature("StrictConcurrency")
             ]
         ),
         .executableTarget(
-            name: "OpenAIDemo",
+            name: "ClefQuickstart",
+            dependencies: ["ClefFoundationModels"],
+            path: "Examples/Quickstarts/ClefQuickstart",
+            exclude: ["sample.jpg"],
+            swiftSettings: [
+                .enableUpcomingFeature("StrictConcurrency")
+            ]
+        ),
+        .executableTarget(
+            name: "OpenAIQuickstart",
             dependencies: ["OpenAIFoundationModels"],
-            path: "Examples/OpenAIDemo",
-            exclude: ["README.md"],
+            path: "Examples/Quickstarts/OpenAIQuickstart",
             swiftSettings: [
                 .enableUpcomingFeature("StrictConcurrency")
             ]
         ),
         .executableTarget(
-            name: "GeminiDemo",
+            name: "GeminiQuickstart",
             dependencies: ["GeminiFoundationModels"],
-            path: "Examples/GeminiDemo",
-            exclude: ["README.md"],
+            path: "Examples/Quickstarts/GeminiQuickstart",
             swiftSettings: [
                 .enableUpcomingFeature("StrictConcurrency")
             ]
@@ -254,9 +283,27 @@ let package = Package(
             name: "JevFoundationModelsTests",
             dependencies: [
                 "JevFoundationModels",
-                "SystemOneCore",
+                "SystemOneCore"
+            ],
+            swiftSettings: [
+                .enableUpcomingFeature("StrictConcurrency")
+            ]
+        ),
+        .testTarget(
+            name: "LayaFoundationModelsTests",
+            dependencies: [
                 "LayaFoundationModels",
-                "LayaOnDevice"
+                "SystemOneCore"
+            ],
+            swiftSettings: [
+                .enableUpcomingFeature("StrictConcurrency")
+            ]
+        ),
+        .testTarget(
+            name: "LayaOnDeviceTests",
+            dependencies: [
+                "LayaOnDevice",
+                "SystemOneCore"
             ],
             swiftSettings: [
                 .enableUpcomingFeature("StrictConcurrency")

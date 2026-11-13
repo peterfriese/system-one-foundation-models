@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import SystemOneCore
 import ClefFoundationModels
 
 @Suite("Clef Endpoint & Model Topology Tests")
@@ -103,5 +104,33 @@ struct ClefEndpointTests {
         set.insert(ep2)
         set.insert(ep3)
         #expect(set.count == 2)
+    }
+
+    @Test("ClefEndpoint.validatedURL rejects path traversal, empty identifiers, and invalid ports without crashing .url")
+    func testValidatedURLRejectsMalformedInputs() throws {
+        let badEndpoints: [ClefEndpoint] = [
+            .workersAI(accountID: ""),
+            .workersAI(accountID: "   "),
+            .workersAI(accountID: "../admin"),
+            .workersAI(accountID: "acc/extra"),
+            .workersAI(accountID: "acc?foo=bar"),
+            .workersAI(accountID: "acc#frag"),
+            .gateway(accountID: "team-prod", gatewayID: "../bypass"),
+            .gateway(accountID: "", gatewayID: "mobile-edge"),
+            .local(port: 0),
+            .local(port: 70000)
+        ]
+
+        for endpoint in badEndpoints {
+            // Accessing .url must never trap
+            _ = endpoint.url
+            #expect(throws: SystemOneError.self) {
+                _ = try endpoint.validatedURL()
+            }
+        }
+
+        // Valid endpoints preserve literal @cf/cloudflare/... paths
+        let flashURL = try ClefEndpoint.workersAI(accountID: "cf-acc-12345", model: .clefFlash).validatedURL()
+        #expect(flashURL.absoluteString == "https://api.cloudflare.com/client/v4/accounts/cf-acc-12345/ai/run/@cf/cloudflare/clef-flash")
     }
 }

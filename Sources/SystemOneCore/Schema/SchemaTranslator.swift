@@ -86,12 +86,14 @@ public struct SchemaTranslator: Sendable {
     // MARK: - Internal Parsing
 
     private func parseRoot(json: [String: Any], defs: [String: [String: Any]]) throws -> SchemaTranslation {
-        let rawType = json["type"] as? String
-        let title = json["title"] as? String ?? "Decision"
-        let description = json["description"] as? String
+        var rootVisitedDefs: Set<String> = []
+        let resolvedRoot = try resolveProperty(raw: json, defs: defs, visitedDefs: &rootVisitedDefs)
+        let rawType = resolvedRoot["type"] as? String
+        let title = resolvedRoot["title"] as? String ?? "Decision"
+        let description = resolvedRoot["description"] as? String
 
         // Case 1: Root is a discrete categorical enum (type == "string" with enum choices)
-        if rawType == "string", let enumCases = json["enum"] as? [String], !enumCases.isEmpty {
+        if rawType == "string", let enumCases = resolvedRoot["enum"] as? [String], !enumCases.isEmpty {
             let questionKey = "choice"
             let instructions = description ?? title
             var criteria: [String: String] = [:]
@@ -118,12 +120,12 @@ public struct SchemaTranslator: Sendable {
 
         // Case 3: Root is a scored range
         if (rawType == "integer" || rawType == "number"),
-           let min = (json["minimum"] as? NSNumber)?.doubleValue,
-           let max = (json["maximum"] as? NSNumber)?.doubleValue {
+           let min = (resolvedRoot["minimum"] as? NSNumber)?.doubleValue,
+           let max = (resolvedRoot["maximum"] as? NSNumber)?.doubleValue {
             let questionKey = "root"
             let instructions = description ?? title
             let isInteger = (rawType == "integer")
-            let criteria = generateScoreCriteria(min: min, max: max, isInteger: isInteger)
+            let criteria = try generateScoreCriteria(min: min, max: max, isInteger: isInteger)
             let question = SystemOneQuestion.score(instructions: instructions, criteria: criteria)
             return SchemaTranslation(
                 layout: .score(minimum: min, maximum: max, isInteger: isInteger, questionKey: questionKey),
@@ -138,20 +140,20 @@ public struct SchemaTranslator: Sendable {
             )
         }
 
-        guard let properties = json["properties"] as? [String: Any], !properties.isEmpty else {
+        guard let properties = resolvedRoot["properties"] as? [String: Any], !properties.isEmpty else {
             throw SystemOneError.invalidSchema(
                 "Schema object contains no properties. At least one @Generable property is required."
             )
         }
 
-        let requiredList = Set((json["required"] as? [String]) ?? [])
-        let orderList = (json["x-order"] as? [String]) ?? Array(properties.keys).sorted()
+        let requiredList = Set((resolvedRoot["required"] as? [String]) ?? [])
+        let orderList = (resolvedRoot["x-order"] as? [String]) ?? Array(properties.keys).sorted()
 
         var propertyDescriptors: [String: SchemaPropertyDescriptor] = [:]
         var questions: [String: SystemOneQuestion] = [:]
 
         for (propName, propRawValue) in properties {
-            var visitedDefs: Set<String> = []
+            var visitedDefs = rootVisitedDefs
             let resolved = try resolveProperty(raw: propRawValue, defs: defs, visitedDefs: &visitedDefs)
             let isRequired = requiredList.contains(propName)
             let (descriptor, propQuestions) = try translateProperty(
@@ -191,16 +193,53 @@ public struct SchemaTranslator: Sendable {
             depth += 1
             var changed = false
 
-            // Handle anyOf unwrapping (e.g. nullable [null, targetType] or enum choice variants)
+            // Handle anyOf unwrapping (e.g. nullable [null, targetType] or enum choice/const variants)
             if let anyOf = dict["anyOf"] as? [[String: Any]] {
                 dict.removeValue(forKey: "anyOf")
                 let nonNullVariants = anyOf.filter { ($0["type"] as? String) != "null" }
-                if let firstVariant = nonNullVariants.first {
+                if nonNullVariants.count > 1 {
+                    var mergedEnum: [String] = []
+                    var allStringChoices = true
+                    for variant in nonNullVariants {
+                        if let constVal = variant["const"] as? String {
+                            if !mergedEnum.contains(constVal) {
+                                mergedEnum.append(constVal)
+                            }
+                        } else if let enumVals = variant["enum"] as? [String], !enumVals.isEmpty {
+                            for e in enumVals where !mergedEnum.contains(e) {
+                                mergedEnum.append(e)
+                            }
+                        } else {
+                            allStringChoices = false
+                            break
+                        }
+                    }
+                    if allStringChoices && !mergedEnum.isEmpty {
+                        if dict["type"] == nil {
+                            dict["type"] = "string"
+                        }
+                        dict["enum"] = mergedEnum
+                        changed = true
+                    } else if let firstVariant = nonNullVariants.first {
+                        for (k, v) in firstVariant where dict[k] == nil {
+                            dict[k] = v
+                        }
+                        changed = true
+                    }
+                } else if let firstVariant = nonNullVariants.first {
                     for (k, v) in firstVariant where dict[k] == nil {
                         dict[k] = v
                     }
                     changed = true
                 }
+            }
+
+            if dict["enum"] == nil, let constString = dict["const"] as? String {
+                if dict["type"] == nil {
+                    dict["type"] = "string"
+                }
+                dict["enum"] = [constString]
+                changed = true
             }
 
             // Handle $ref dereferencing
@@ -285,7 +324,7 @@ public struct SchemaTranslator: Sendable {
            let min = (propertyDict["minimum"] as? NSNumber)?.doubleValue,
            let max = (propertyDict["maximum"] as? NSNumber)?.doubleValue {
             let isInteger = (type == "integer")
-            let criteria = generateScoreCriteria(min: min, max: max, isInteger: isInteger)
+            let criteria = try generateScoreCriteria(min: min, max: max, isInteger: isInteger)
             let descriptor = SchemaPropertyDescriptor(
                 name: name,
                 questionKey: path,
@@ -298,7 +337,12 @@ public struct SchemaTranslator: Sendable {
         }
 
         // 4. Nested Object -> recursively translate
-        if type == "object", let nestedProperties = propertyDict["properties"] as? [String: Any] {
+        if type == "object" {
+            guard let nestedProperties = propertyDict["properties"] as? [String: Any], !nestedProperties.isEmpty else {
+                throw SystemOneError.invalidSchema(
+                    "Nested object property '\(name)' contains no properties. At least one @Generable property is required."
+                )
+            }
             var nestedDescriptors: [String: SchemaPropertyDescriptor] = [:]
             var nestedQuestions: [String: SystemOneQuestion] = [:]
             let nestedRequired = Set((propertyDict["required"] as? [String]) ?? [])
@@ -345,14 +389,32 @@ public struct SchemaTranslator: Sendable {
         )
     }
 
-    private func generateScoreCriteria(min: Double, max: Double, isInteger: Bool) -> [String] {
+    private static let maxDiscreteScoreLevels = 32
+
+    private func generateScoreCriteria(min: Double, max: Double, isInteger: Bool) throws -> [String] {
+        guard min.isFinite, max.isFinite, min <= max else {
+            throw SystemOneError.invalidSchema(
+                "Invalid score range \(min)...\(max): bounds must be finite and minimum <= maximum."
+            )
+        }
         if isInteger {
-            let start = Int(min)
-            let end = Int(max)
-            guard end >= start else { return ["Level \(start)"] }
+            let roundedMin = min.rounded()
+            let roundedMax = max.rounded()
+            let span = roundedMax - roundedMin
+            guard roundedMin >= Double(Int.min),
+                  roundedMax < Double(Int.max),
+                  span.isFinite,
+                  span >= 0,
+                  span <= Double(Self.maxDiscreteScoreLevels - 1) else {
+                throw SystemOneError.invalidSchema(
+                    "Discrete integer score range \(min)...\(max) exceeds maximum supported rubric span of \(Self.maxDiscreteScoreLevels) levels."
+                )
+            }
+            let start = ScoreValue.clampedInt(from: roundedMin)
+            let end = ScoreValue.clampedInt(from: roundedMax)
             return (start...end).map { "Level \($0)" }
         } else {
-            return ["Minimum (\(min))", "Midpoint (\((min + max) / 2))", "Maximum (\(max))"]
+            return ["Minimum (\(min))", "Midpoint (\(min + (max - min) / 2.0))", "Maximum (\(max))"]
         }
     }
 

@@ -1,0 +1,37 @@
+# Task Runner for MailTriageApp (Examples/Apps/MailTriageApp)
+
+default:
+    @just --list
+
+# Open MailTriageApp in Xcode
+xcode:
+    open apps/apple/MailTriageApp.xcodeproj
+
+# Build MailTriageApp on iPhone 18 Pro Simulator with strict warning check
+build:
+    flowdeck build -w apps/apple/MailTriageApp.xcodeproj -s MailTriageApp -S "iPhone 18 Pro" --show-warnings
+
+# Run all MailTriageApp package test suites on iPhone 18 Pro Simulator
+test: test-core test-ui
+
+# Run AppCore tests via FlowDeck on iPhone 18 Pro Simulator
+test-core:
+    flowdeck test -p apps/apple/Packages/AppCore -s AppCore-Package -S "iPhone 18 Pro"
+
+# Run AppUI tests via FlowDeck on iPhone 18 Pro Simulator
+test-ui:
+    flowdeck test -p apps/apple/Packages/AppUI -s AppUI -S "iPhone 18 Pro"
+
+# Fast macOS host unit tests via SwiftPM
+swift-test:
+    swift test --package-path apps/apple/Packages/AppCore
+    swift test --package-path apps/apple/Packages/AppUI
+
+# Run Scientific BenchmarkCLI across reachable backends (override args e.g. `just benchmark --backends reverseProxy,geminiDecisions -n 10`)
+benchmark *ARGS="-n 25":
+    swift run --package-path apps/apple/Packages/AppCore BenchmarkCLI {{ARGS}}
+
+# Boot default iOS Simulator
+sim-boot:
+    flowdeck simulator boot "iPhone 18 Pro" || true
+    open -a Simulator

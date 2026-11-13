@@ -205,8 +205,12 @@ struct GeminiDecisionsLanguageModelTests {
         #expect(scoreResult.levels == ["Low", "Medium", "High"])
     }
 
-    @Test("GeminiDecisionsLanguageModel supports proxyEndpoint with credential and trailing-closure authorize")
-    func testProxyEndpointInitializers() {
+    @Test("GeminiDecisionsLanguageModel supports zero-arg init(), init(backend: MockSystemOneBackend), proxyEndpoint, and shared VisualInspectionDecision")
+    func testProxyEndpointAndHomogeneousInitializers() async throws {
+        let zeroArgModel = GeminiLanguageModel()
+        #expect(zeroArgModel.executorConfiguration.endpoint == .hosted())
+        #expect(zeroArgModel.executorConfiguration.modelID == GeminiDecisionsEndpoint.defaultModel)
+
         let proxyURL = URL(string: "https://us-central1-myapp.cloudfunctions.net/geminiProxy")!
         let model1 = GeminiLanguageModel(
             proxyEndpoint: proxyURL,
@@ -218,6 +222,50 @@ struct GeminiDecisionsLanguageModelTests {
             request.setValue("token-2", forHTTPHeaderField: "X-Firebase-AppCheck")
         }
         #expect(model2.executorConfiguration.endpoint.url == proxyURL)
+
+        // Verify shared MockSystemOneBackend + VisualInspectionDecision (from SystemOneCore) + 1-based score handling
+        let coreBackend = MockSystemOneBackend { req in
+            if req.questions["riskScore"] != nil {
+                let wire = GeminiDecisionsResponse(
+                    id: "gem-1based",
+                    model: "gemini-decision-1",
+                    answers: [
+                        "isApproved": .init(type: "noul", noul: 0.96, confidence: 0.96),
+                        "category": .init(type: "choice", choice: "meals", confidence: 0.91),
+                        "riskScore": .init(
+                            type: "score",
+                            score: 3.0,
+                            confidence: 0.88,
+                            probabilities: ["1": 0.02, "2": 0.05, "3": 0.88, "4": 0.03, "5": 0.02],
+                            legend: ["1": "L1", "2": "L2", "3": "L3", "4": "L4", "5": "L5"]
+                        )
+                    ],
+                    usage: .init(inputTokens: 44, outputTokens: 0)
+                )
+                return try GeminiDecisionsPayloadAdapter.adaptResponse(wire)
+            }
+            return SystemOneResponse(
+                model: "gemini-decision-1",
+                answers: [
+                    "isRecognized": SystemOneAnswer(type: "noul", noul: 0.97, confidence: 0.97),
+                    "itemCategory": SystemOneAnswer(type: "choice", choice: "electronics", confidence: 0.93),
+                    "conditionScore": SystemOneAnswer(type: "score", score: 3.0, confidence: 0.95, probabilities: ["0": 0.01, "1": 0.01, "2": 0.03, "3": 0.95]),
+                    "safetyApproval": SystemOneAnswer(type: "noul", noul: 0.99, confidence: 0.99)
+                ],
+                usage: SystemOneUsage(inputTokens: 60, outputTokens: 0)
+            )
+        }
+
+        let coreSession = LanguageModelSession(model: GeminiLanguageModel(backend: coreBackend))
+        let oneBasedResp = try await coreSession.respond(to: "Team lunch $80", generating: GeminiExpenseAuditDecision.self)
+        #expect(oneBasedResp.content.riskScore == 3)
+        #expect(oneBasedResp.scoreValue(for: "riskScore")?.rounded == 3)
+
+        let visualResp = try await coreSession.respond(to: "Inspect laptop", generating: VisualInspectionDecision.self)
+        #expect(visualResp.content.itemCategory == .electronics)
+        #expect(visualResp.content.conditionScore == 3)
+        #expect(visualResp.recognizedJudgement().decision == .auto)
+        #expect(visualResp.safetyJudgement().answer == true)
     }
 
     @Test("GeminiDecisionsExecutor rejects unstructured free-form text requests")

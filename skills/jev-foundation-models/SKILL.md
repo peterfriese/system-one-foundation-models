@@ -17,7 +17,7 @@ metadata:
 # Jev Foundation Models Bridge
 
 > [!TIP]
-> **Modern Multi-Backend Standard**: For projects combining TypeSafe Jev with on-device Core ML (`LayaOnDevice`), self-hosted `laya-serve` (`LayaFoundationModels`), Cloudflare Clef multimodal (`ClefFoundationModels`), OpenAI Decisions (`OpenAIFoundationModels`), Google Gemini Decisions (`GeminiFoundationModels`), or vendor-agnostic gateways (`SystemOneLanguageModel`), refer to the unified `system-one-foundation-models` skill. This skill focuses on TypeSafe Jev cloud evaluation, `RetryPolicy` resilience, and hardened App Check reverse-proxy architectures.
+> **Modern Multi-Backend Standard**: For projects combining TypeSafe Jev with on-device Core ML (`LayaOnDevice`), self-hosted `laya-serve` (`LayaFoundationModels`), Cloudflare Clef multimodal (`ClefFoundationModels`), OpenAI Decisions (`OpenAIFoundationModels`), Google Gemini Decisions (`GeminiFoundationModels`), or vendor-agnostic gateways (`SystemOneLanguageModel`), refer to the unified `system-one-foundation-models` skill. This skill focuses on TypeSafe Jev cloud evaluation, `JevEndpoint`, `RetryPolicy` resilience, and hardened App Check reverse-proxy architectures.
 
 This skill guides the design, implementation, and testing of applications integrating **TypeSafe AI's Jev System One decision model** via **Apple's Foundation Models framework** (`FoundationModels`) in Swift 6.
 
@@ -80,23 +80,25 @@ struct TriageDecision: Sendable {
 
 ### Batched Questions Must Self-Identify
 
-When a single `@Generable` type emits **multiple questions in one call** (e.g. two `Bool` fields → two batched nouls), each question's `@Guide(description:)` MUST name the entity it targets ("Candidate A", "transaction #8491"). Observably **identical instruction text collapses the batch** — Jev cannot discriminate between two questions that read exactly the same, and both answers land near 0.5 (observed live in a duplicate-detection integration: 0.77/0.79 before naming the candidates, 0.94/0.01 after). The library's `Examples/DuplicateArticleDemo` sidesteps the problem by evaluating **one question per request** (a task group of separate `respond` calls), which is simpler but forfeits the single-call batching contract — prefer self-identifying guides when one call must answer many questions.
+When a single `@Generable` type emits **multiple questions in one call** (e.g. two `Bool` fields → two batched nouls), each question's `@Guide(description:)` MUST name the entity it targets ("Candidate A", "transaction #8491"). Observably **identical instruction text collapses the batch** — Jev cannot discriminate between two questions that read exactly the same, and both answers land near 0.5 (observed live in a duplicate-detection integration: 0.77/0.79 before naming the candidates, 0.94/0.01 after). The library's `Examples/CLI/DuplicateArticleCommand.swift` (`swift run system-one-cli duplicate-article`) sidesteps the problem by evaluating **one question per request** (a task group of separate `respond` calls), which is simpler but forfeits the single-call batching contract — prefer self-identifying guides when one call must answer many questions.
 
 ---
 
 ## 3. Canonical Call-Site, Telemetry & Confidence Routing
 
-Always use standard Apple Foundation Models APIs (`LanguageModelSession`)—do not introduce proprietary session wrappers:
+Always use standard Apple Foundation Models APIs (`LanguageModelSession`)—do not introduce proprietary session wrappers. `JevLanguageModel` supports progressive-disclosure zero-argument initialization (automatically resolving `TYPESAFE_API_KEY` from the process environment), typed `JevEndpoint` values (`.hosted`, `.custom(URL)`), and `init(backend: some SystemOneBackend)`:
 
 ```swift
 import FoundationModels
 import JevFoundationModels
 
-// 1. Initialize the model provider
-let model = JevLanguageModel(apiKey: apiKey)
-let session = LanguageModelSession(model: model)
+// 1a. Zero-argument progressive disclosure (auto-resolves TYPESAFE_API_KEY on JevEndpoint.hosted)
+let session = LanguageModelSession(model: JevLanguageModel())
 
-// 2. Evaluate state against the @Generable schema
+// 1b. Or explicit endpoint & API key configuration
+let explicitModel = JevLanguageModel(endpoint: .hosted, apiKey: apiKey)
+
+// 2. Evaluate state against the @Generable schema (or use session.probability / .choice / .score)
 let customerTicket = """
 Ticket #8491: Urgent! I was charged $500 twice for renewal, and our accounts are locked!
 """
@@ -264,7 +266,6 @@ let model = JevLanguageModel(
     credential: appCheckCredential,
     retryPolicy: .default
 )
-let session = LanguageModelSession(model: model)
 ```
 
 - **Multi-Header & HMAC Signing (`authorize:` / `.custom`)**: Use `JevLanguageModel(proxyEndpoint: proxyURL) { request in ... }` (or `ProxyCredential.custom`) when attaching both `X-Firebase-AppCheck` and `Authorization: Bearer <firebaseAuthIDToken>`, or computing an HMAC signature — `ProxyTransport` populates `request.httpBody` **before** invoking the credential modifier, and `.appCheck` / `.header` / `.bearer` automatically reject empty strings or CR/LF/NUL header-injection characters with `JevError.authenticationFailed`.
@@ -294,7 +295,7 @@ Your proxy endpoint should be a plain HTTPS `POST` reverse proxy (`onRequest`), 
 
 ## 6. Deterministic Offline Testing with Swift Testing (`@Test`)
 
-Always test decision workflows deterministically without live network access or API credentials using `MockJevTransport`:
+Test decision workflows deterministically offline using either `MockSystemOneBackend` (via `JevLanguageModel(backend:)`) or `MockJevTransport`:
 
 ```swift
 import Testing

@@ -51,17 +51,17 @@ let model = GeminiDecisionsLanguageModel()
 let session = LanguageModelSession(model: model)
 
 // 2. Prepare multimodal prompt with optional inline image attachments
-let prompt = Transcript.Entry.prompt(
-    "Evaluate this reimbursement claim and attached receipt against corporate policy.",
-    attachments: [receiptImageAttachment]
-)
+let prompt = Prompt {
+    "Evaluate this reimbursement claim and attached receipt against corporate policy."
+    Attachment(imageURL: receiptImageURL)
+}
 
 // 3. Strongly-typed decision evaluation in a single forward pass (~150-250ms)
 let response = try await session.respond(to: prompt, generating: ExpenseAuditDecision.self)
 
 // 4. Access dual signals: strongly-typed @Generable struct + calibrated epistemic confidence
-let decision = response.content               // ExpenseAuditDecision(isApproved: true, category: .meals, riskScore: 1)
-let routing = routingPolicy.decide(decision)  // .auto (>=0.85), .confirm (0.60..<0.85), .escalate (<0.60)
+let decision = response.content                                             // ExpenseAuditDecision(isApproved: true, category: .meals, riskScore: 1)
+let routing = response.judgement(for: "isApproved", policy: routingPolicy)  // .auto (>=0.85), .confirm (0.60..<0.85), .escalate (<0.60)
 ```
 
 This PRD specifies the product requirements, user personas, wire protocol mappings, functional requirements, acceptance criteria, non-functional requirements, and architectural boundaries for `GeminiFoundationModels`.
@@ -331,7 +331,7 @@ The Gemini Decisions API supports both compact text-only strings and multimodal 
    - Mock Backend: `public final class MockGeminiDecisionsBackend: SystemOneBackend, @unchecked Sendable`
    - Payload Adapter: `public enum GeminiDecisionsPayloadAdapter`
    - Wire DTOs: `GeminiDecisionsWireDTOs.swift` (`GeminiDecisionsRequest`, `GeminiDecisionsInput`, `GeminiDecisionsContentItem`, `GeminiDecisionsPart`, `GeminiDecisionsInlineData`, `GeminiDecisionsQuestion`, `GeminiDecisionsNoulCriteria`, `GeminiDecisionsCriteria`, `GeminiDecisionsResponse`, `GeminiDecisionsAnswer`, `GeminiDecisionsErrorEnvelope`)
-   - Executable Demo Target: `gemini-demo` (`Examples/GeminiDemo`)
+   - Executable Demo Targets: `gemini-quickstart` ([`Examples/Quickstarts/GeminiQuickstart`](../../Examples/Quickstarts/README.md)), `system-one-cli --provider gemini` ([`Examples/CLI/`](../../Examples/CLI/README.md)), and standalone trait sample [`Examples/TraitSamples/08-CloudGeminiDecisions`](../../Examples/TraitSamples/08-CloudGeminiDecisions/README.md) *(superseding the initial standalone `gemini-demo` / `Examples/GeminiDemo` prototype)*.
 
 ### FR-2: Multimodal Data Attachment Support in Foundation Models
 1. **Capability Declaration**:
@@ -416,7 +416,7 @@ The Gemini Decisions API supports both compact text-only strings and multimodal 
 ### FR-5: Package Architecture & SPM Package Traits
 1. **Target & Product Registration in `Package.swift`**:
    - Library product: `.library(name: "GeminiFoundationModels", targets: ["GeminiFoundationModels"])`
-   - Executable product: `.executable(name: "gemini-demo", targets: ["GeminiDemo"])`
+   - Executable products: `.executable(name: "gemini-quickstart", targets: ["GeminiQuickstart"])` and `.executable(name: "system-one-cli", targets: ["SystemOneCLI"])` *(consolidated from the initial `gemini-demo` target)*
    - Target `GeminiFoundationModels` depending on `SystemOneCore` with `.enableUpcomingFeature("StrictConcurrency")`.
    - Test target `GeminiFoundationModelsTests` depending on `GeminiFoundationModels` and `SystemOneCore`.
 2. **SPM Package Traits**:
@@ -436,10 +436,10 @@ The Gemini Decisions API supports both compact text-only strings and multimodal 
      ```
    - Re-export `GeminiFoundationModels` in `Sources/SystemOneFoundationModels/SystemOneFoundationModels.swift` using `#if canImport(GeminiFoundationModels) @_exported import GeminiFoundationModels #endif`.
 
-### FR-6: CLI Demonstrator (`Examples/GeminiDemo`)
-1. Provide a real, production-representative CLI executable (`gemini-demo`) in `Examples/GeminiDemo`:
-   - Evaluates a realistic `@Generable` decision schema (including `@Guide` descriptions, boolean `noul` checks, categorical `choice` enums, and `@Guide(.range(...))` `score` fields) against `GeminiDecisionsLanguageModel` and prints calibrated probabilities, rubric scores, token usage, latency, and `RoutingPolicy` outcomes.
-   - Supports an `--image <path>` flag to demonstrate multimodal inline image evaluation (`PNG`, `JPEG`, `WebP`).
+### FR-6: CLI Demonstrators (`Examples/Quickstarts/GeminiQuickstart`, `Examples/CLI/`, & `Examples/TraitSamples/08-CloudGeminiDecisions`)
+1. Provide real, production-representative CLI executables (`gemini-quickstart` in `Examples/Quickstarts/GeminiQuickstart`, `system-one-cli --provider gemini` in `Examples/CLI`, and trait-isolated `08-CloudGeminiDecisions` — superseding the standalone `Examples/GeminiDemo` folder):
+   - Evaluates realistic `@Generable` decision schemas (including `@Guide` descriptions, boolean `noul` checks, categorical `choice` enums, and `@Guide(.range(...))` `score` fields) against `GeminiDecisionsLanguageModel` and prints calibrated probabilities, rubric scores, token usage, latency, and `RoutingPolicy` outcomes.
+   - Supports `--image <path>` (via `system-one-cli vision-inspect --provider gemini --image <path>`) to demonstrate multimodal inline image evaluation (`PNG`, `JPEG`, `WebP`).
    - Adheres strictly to Workspace Principle #7 (No mock fallbacks in example apps): if neither `GEMINI_API_KEY` nor `GOOGLE_API_KEY` is set, prints a clear remediation banner and exits immediately with `exit(1)`.
 
 ---
@@ -496,7 +496,7 @@ The Gemini Decisions API supports both compact text-only strings and multimodal 
 ### AC-5: Swift 6 Concurrency, SPM Traits & Hermetic Unit Tests
 - **Scenario 5.1**: Zero-Warning Swift 6 Compilation
   - **Given** the package built with `StrictConcurrency` enabled,
-  - **When** compiling `GeminiFoundationModels`, `SystemOneFoundationModels`, `GeminiDemo`, and `GeminiFoundationModelsTests`,
+  - **When** compiling `GeminiFoundationModels`, `SystemOneFoundationModels`, `GeminiQuickstart`, `SystemOneCLI`, and `GeminiFoundationModelsTests`,
   - **Then** compilation succeeds with zero warnings or concurrency errors.
 - **Scenario 5.2**: Hermetic Offline Test Suite
   - **Given** `GeminiFoundationModelsTests` using `MockGeminiDecisionsBackend` and mock `URLProtocol`,
@@ -556,9 +556,9 @@ The Gemini Decisions API supports both compact text-only strings and multimodal 
 - **Phase 2: Core Target Implementation (`Sources/GeminiFoundationModels/`)**:
   - Implement `GeminiDecisionsEndpoint`, `GeminiDecisionsWireDTOs`, `GeminiDecisionsPayloadAdapter`, `GeminiDecisionsHTTPBackend`, `MockGeminiDecisionsBackend`, `GeminiDecisionsExecutor`, and `GeminiDecisionsLanguageModel` (`GeminiLanguageModel`).
 - **Phase 3: Package Trait & Umbrella Integration (`Package.swift`)**:
-  - Add `Gemini` trait, `GeminiFoundationModels` library/target, `GeminiFoundationModelsTests` test target, and `gemini-demo` executable target.
-- **Phase 4: Comprehensive Unit Tests & CLI Demo**:
-  - Author `Tests/GeminiFoundationModelsTests/GeminiFoundationModelsTests.swift` and `Examples/GeminiDemo/main.swift`.
+  - Add `Gemini` trait, `GeminiFoundationModels` library/target, `GeminiFoundationModelsTests` test target, and CLI executable targets (`gemini-quickstart` and `system-one-cli`, consolidated from the initial `gemini-demo` prototype).
+- **Phase 4: Comprehensive Unit Tests & CLI Demos**:
+  - Author `Tests/GeminiFoundationModelsTests/GeminiFoundationModelsTests.swift`, `Examples/Quickstarts/GeminiQuickstart/main.swift`, `Examples/TraitSamples/08-CloudGeminiDecisions/`, and `Examples/CLI/` (`--provider gemini`).
   - Document findings in `tech-notes/0018-gemini-decisions-api-architecture.md`.
 
 ### Handoff Gate

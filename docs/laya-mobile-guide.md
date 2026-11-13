@@ -83,7 +83,8 @@ import FoundationModels
 import LayaOnDevice
 
 @Observable
-final class DecisionService: Sendable {
+@MainActor
+final class DecisionService {
     private var engine: LayaCoreMLEngine?
 
     func ensureModelAvailable() async throws -> LanguageModelSession {

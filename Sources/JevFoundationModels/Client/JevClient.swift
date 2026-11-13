@@ -1,7 +1,8 @@
 import Foundation
+import SystemOneCore
 
 /// A lightweight, Sendable client for dispatching decision evaluations to TypeSafe AI's Jev model.
-public struct JevClient: Sendable {
+public struct JevClient: SystemOneBackend, Sendable {
     public let configuration: JevLanguageModel.Configuration
 
     public init(configuration: JevLanguageModel.Configuration) {
@@ -15,5 +16,9 @@ public struct JevClient: Sendable {
             apiKey: configuration.apiKey,
             endpoint: configuration.endpoint
         )
+    }
+
+    public func evaluate(request: SystemOneRequest) async throws -> SystemOneResponse {
+        try await execute(request: request)
     }
 }

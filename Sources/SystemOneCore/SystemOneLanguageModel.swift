@@ -8,25 +8,53 @@ public struct SystemOneLanguageModel: LanguageModel, Sendable {
         public var backend: AnySystemOneBackend
         public var modelID: String
         public var supportsVision: Bool
+        public var defaultOutputTokenCount: Int
+        public var emitsOutputTokensMetadata: Bool
+        public var alwaysEmitUsage: Bool
+        public var requiresAllAnswers: Bool
+        public var emptyStateFallback: String
 
         public init(
             backend: AnySystemOneBackend,
             modelID: String = "systemone-default",
-            supportsVision: Bool = false
+            supportsVision: Bool = false,
+            defaultOutputTokenCount: Int = 1,
+            emitsOutputTokensMetadata: Bool = false,
+            alwaysEmitUsage: Bool = false,
+            requiresAllAnswers: Bool = false,
+            emptyStateFallback: String = "Application state evaluation"
         ) {
             self.backend = backend
             self.modelID = modelID
             self.supportsVision = supportsVision
+            self.defaultOutputTokenCount = defaultOutputTokenCount
+            self.emitsOutputTokensMetadata = emitsOutputTokensMetadata
+            self.alwaysEmitUsage = alwaysEmitUsage
+            self.requiresAllAnswers = requiresAllAnswers
+            self.emptyStateFallback = emptyStateFallback
         }
 
         public init(
-            backend: some SystemOneBackend,
+            backend: any SystemOneBackend,
             modelID: String = "systemone-default",
-            supportsVision: Bool = false
+            supportsVision: Bool = false,
+            defaultOutputTokenCount: Int = 1,
+            emitsOutputTokensMetadata: Bool = false,
+            alwaysEmitUsage: Bool = false,
+            requiresAllAnswers: Bool = false,
+            emptyStateFallback: String = "Application state evaluation"
         ) {
-            self.backend = AnySystemOneBackend(backend)
-            self.modelID = modelID
-            self.supportsVision = supportsVision
+            let wrapped = (backend as? AnySystemOneBackend) ?? AnySystemOneBackend(backend)
+            self.init(
+                backend: wrapped,
+                modelID: modelID,
+                supportsVision: supportsVision,
+                defaultOutputTokenCount: defaultOutputTokenCount,
+                emitsOutputTokensMetadata: emitsOutputTokensMetadata,
+                alwaysEmitUsage: alwaysEmitUsage,
+                requiresAllAnswers: requiresAllAnswers,
+                emptyStateFallback: emptyStateFallback
+            )
         }
 
         public init(
@@ -36,7 +64,12 @@ public struct SystemOneLanguageModel: LanguageModel, Sendable {
             supportsVision: Bool = true,
             session: URLSession = .shared,
             timeoutInterval: TimeInterval = 30,
-            retryPolicy: RetryPolicy = .default
+            retryPolicy: RetryPolicy = .default,
+            defaultOutputTokenCount: Int = 1,
+            emitsOutputTokensMetadata: Bool = false,
+            alwaysEmitUsage: Bool = false,
+            requiresAllAnswers: Bool = false,
+            emptyStateFallback: String = "Application state evaluation"
         ) {
             let proxyBackend = SystemOneProxyBackend(
                 proxyEndpoint: proxyEndpoint,
@@ -45,9 +78,16 @@ public struct SystemOneLanguageModel: LanguageModel, Sendable {
                 timeoutInterval: timeoutInterval,
                 retryPolicy: retryPolicy
             )
-            self.backend = AnySystemOneBackend(proxyBackend)
-            self.modelID = modelID
-            self.supportsVision = supportsVision
+            self.init(
+                backend: AnySystemOneBackend(proxyBackend),
+                modelID: modelID,
+                supportsVision: supportsVision,
+                defaultOutputTokenCount: defaultOutputTokenCount,
+                emitsOutputTokensMetadata: emitsOutputTokensMetadata,
+                alwaysEmitUsage: alwaysEmitUsage,
+                requiresAllAnswers: requiresAllAnswers,
+                emptyStateFallback: emptyStateFallback
+            )
         }
     }
 
@@ -73,19 +113,11 @@ public struct SystemOneLanguageModel: LanguageModel, Sendable {
         modelID: String = "systemone-default",
         supportsVision: Bool = false
     ) {
-        if let anyBackend = backend as? AnySystemOneBackend {
-            self.executorConfiguration = Configuration(
-                backend: anyBackend,
-                modelID: modelID,
-                supportsVision: supportsVision
-            )
-        } else {
-            self.executorConfiguration = Configuration(
-                backend: AnySystemOneBackend(backend),
-                modelID: modelID,
-                supportsVision: supportsVision
-            )
-        }
+        self.executorConfiguration = Configuration(
+            backend: backend,
+            modelID: modelID,
+            supportsVision: supportsVision
+        )
     }
 
     public init(
@@ -138,6 +170,7 @@ public struct SystemOneLanguageModel: LanguageModel, Sendable {
     }
 
     public func supportsDataEntryType(_ type: UTType) async throws -> Bool {
-        false
+        guard supportsVision else { return false }
+        return type.conforms(to: .png) || type.conforms(to: .jpeg) || type.conforms(to: .webP)
     }
 }

@@ -10,7 +10,7 @@ public struct LayaHTTPBackend: SystemOneBackend, Hashable, Sendable {
     public let proxyCredential: ProxyCredential?
     public let session: URLSession
     public let timeoutInterval: TimeInterval
-    public let retryPolicy: RetryPolicy
+    public var retryPolicy: RetryPolicy
 
     public init(
         endpoint: LayaEndpoint = .localDefault,
@@ -49,8 +49,10 @@ public struct LayaHTTPBackend: SystemOneBackend, Hashable, Sendable {
     }
 
     public func evaluate(request: SystemOneRequest) async throws -> SystemOneResponse {
+        try Task.checkCancellation()
+        let targetURL = try endpoint.validatedURL()
         if proxyCredential != nil {
-            try ProxyEndpointValidator.validate(endpoint.url)
+            try ProxyEndpointValidator.validate(targetURL)
         }
 
         let requestData: Data
@@ -64,9 +66,10 @@ public struct LayaHTTPBackend: SystemOneBackend, Hashable, Sendable {
         let maxAttempts = max(1, retryPolicy.maxAttempts)
 
         while true {
+            try Task.checkCancellation()
             attempts += 1
             do {
-                return try await performSingleEvaluation(requestData: requestData)
+                return try await performSingleEvaluation(requestData: requestData, targetURL: targetURL)
             } catch is CancellationError {
                 throw CancellationError()
             } catch let resError as HTTPResponseError {
@@ -78,14 +81,12 @@ public struct LayaHTTPBackend: SystemOneBackend, Hashable, Sendable {
                 }
 
                 let isLastAttempt = attempts >= maxAttempts
-
                 guard retryPolicy.retryableStatuses.contains(statusCode), !isLastAttempt else {
                     throw SystemOneError.apiError(statusCode: statusCode, message: body)
                 }
 
                 let delay = retryPolicy.retryAfter(from: resError.httpResponse)
                     ?? retryPolicy.backoff(afterAttempt: attempts)
-
                 try await Task.sleep(for: delay)
                 continue
             } catch let error as SystemOneError {
@@ -118,8 +119,8 @@ public struct LayaHTTPBackend: SystemOneBackend, Hashable, Sendable {
         }
     }
 
-    private func performSingleEvaluation(requestData: Data) async throws -> SystemOneResponse {
-        var urlRequest = URLRequest(url: endpoint.url)
+    private func performSingleEvaluation(requestData: Data, targetURL: URL) async throws -> SystemOneResponse {
+        var urlRequest = URLRequest(url: targetURL)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
@@ -163,8 +164,11 @@ public struct LayaHTTPBackend: SystemOneBackend, Hashable, Sendable {
             if (error as? URLError)?.code == .cancelled || error is CancellationError {
                 throw CancellationError()
             }
-            throw SystemOneError.networkError(error.localizedDescription)
+            throw SystemOneError.networkError(
+                "Unable to reach Laya server at \(targetURL.absoluteString) (\(error.localizedDescription)). Ensure `laya-serve` is running or set LAYA_SERVE_URL."
+            )
         }
+
         let elapsed = networkStart.duration(to: clock.now)
         let transportDuration = Double(elapsed.components.seconds) * 1000.0
             + Double(elapsed.components.attoseconds) / 1_000_000_000_000_000.0
@@ -181,22 +185,17 @@ public struct LayaHTTPBackend: SystemOneBackend, Hashable, Sendable {
             var decoded = try JSONDecoder().decode(SystemOneResponse.self, from: data)
             decoded.transportDurationMs = transportDuration
 
-            // Check for server-supplied timing headers:
-            // 1. x-envoy-upstream-service-time (standard Envoy/Traefik/Gateway header)
-            // 2. server-timing (RFC 7668)
-            // 3. x-inference-time / x-process-time
             if let serviceTimeHeader = httpResponse.value(forHTTPHeaderField: "x-envoy-upstream-service-time"),
                let serviceTimeMs = Double(serviceTimeHeader) {
                 decoded.serverDurationMs = serviceTimeMs
             } else if let serverTimingHeader = httpResponse.value(forHTTPHeaderField: "server-timing"),
                       let dur = parseServerTimingDuration(serverTimingHeader) {
                 decoded.serverDurationMs = dur
-            } else if let inferenceHeader = httpResponse.value(forHTTPHeaderField: "x-inference-time-ms") ?? httpResponse.value(forHTTPHeaderField: "x-process-time"),
+            } else if let inferenceHeader = httpResponse.value(forHTTPHeaderField: "x-inference-time-ms")
+                ?? httpResponse.value(forHTTPHeaderField: "x-process-time"),
                       let inferenceMs = Double(inferenceHeader) {
                 decoded.serverDurationMs = inferenceMs
             } else {
-                // If the server omits internal timing headers (standard local laya-serve),
-                // transportDuration represents the total HTTP socket transit and inference time.
                 decoded.serverDurationMs = transportDuration
             }
 
@@ -207,7 +206,6 @@ public struct LayaHTTPBackend: SystemOneBackend, Hashable, Sendable {
     }
 
     private func parseServerTimingDuration(_ header: String) -> Double? {
-        // e.g., "app;dur=42.5" or "inference;dur=18.2"
         for entry in header.components(separatedBy: ",") {
             let parts = entry.components(separatedBy: ";")
             for param in parts.dropFirst() {

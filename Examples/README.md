@@ -1,233 +1,100 @@
 # Examples & Reference Applications 📱💻
 
-This directory contains reference applications, production examples, and runnable command-line demos showcasing **System One decision models** integrated natively into Apple's **Foundation Models framework** (`LanguageModelSession`, `@Generable`, `@Guide`).
+`Examples/` is organized into a **4-tier learning progression**, taking you from `< 10`-line single-file provider quickstarts up to production multi-window SwiftUI applications for iOS 27+ and macOS 27+:
 
----
-
-## 🧭 Demos & Reference Implementations Comparison
-
-> ⚠️ **Strict Real Execution Mandate**: Example applications and CLI demonstrators are production-representative showcases, **not unit tests**. They **do not use mock fallbacks or synthetic bypasses**. Each application requires real credentials (e.g. `TYPESAFE_API_KEY`), running daemons (e.g. `laya-serve`), or actual emulators (e.g. Firebase Local Emulator). If a prerequisite is missing or unreachable, the application fails fast immediately with a formatted remediation banner directing you how to configure the environment. Offline mocks are strictly reserved for automated test suites in `Tests/`.
-
-| Demo / Application | Format | Target / Backend | Prerequisites / Credentials | Primary Concepts Demonstrated |
-| :--- | :--- | :--- | :---: | :--- |
-| [**MailTriageApp**](MailTriageApp/README.md) | Full macOS & iOS SwiftUI App | Pluggable (Core ML, Local/Remote Laya, Clef, OpenAI, Jev Cloud, Baseline) | Optional (Keychain managed) | Flagship 3-pane email triage, 7 selectable backends, FactoryKit DI, Liquid Glass UI, urgency priority tokens, batch triage with cancellation. |
-| [**LayaDemo**](LayaDemo/README.md) | CLI Executable | `LayaFoundationModels` (`POST /v1/systemone`) | `laya-serve` daemon | 100% free local evaluation against `laya-serve` on `localhost:8000` or custom endpoint. Zero cloud accounts required. |
-| [**TicketTriageDemo**](TicketTriageDemo/README.md) | CLI Executable | `JevFoundationModels` | ✅ Yes (`TYPESAFE_API_KEY`) | Customer support ticket routing, RFC 9110 HTTP retry resilience (`RetryPolicy`), multi-primitive `@Generable` schema, confidence routing. |
-| [**FileOrganizerDemo**](FileOrganizerDemo/README.md) | CLI Executable | `JevFoundationModels` | ✅ Yes (`TYPESAFE_API_KEY`) | Foundation Models **Dynamic Profiles**, runtime session adaptation (`@SessionPropertyEntry`), turn isolation (`.historyTransform`), sensitive file quarantine. (Requires valid API key; `--demo` generates sample file fixtures). |
-| [**DuplicateArticleDemo**](DuplicateArticleDemo/README.md) | CLI Executable | `JevFoundationModels` | ✅ Yes (`TYPESAFE_API_KEY`) | Two-layer content deduplication (exact fast-path + semantic decision), calibrated Noul undecided band ($0.35\dots0.65$), cooperative Swift 6 task cancellation. (Requires valid API key for live semantic evaluation). |
-| [**ClefCameraScanner**](ClefCameraScanner/README.md) | Full macOS & iOS SwiftUI App | `ClefFoundationModels` (Workers AI / Local Runner) | Optional (Local runner or `CLOUDFLARE_API_TOKEN`) | Real-time camera viewfinder, `@Observable CameraManager`, `AVCaptureVideoPreviewLayer` bridge, live visual triage, Liquid Glass HUD, simulation fallback feed. |
-| [**ClefDemo**](ClefDemo/README.md) | CLI Executable | `ClefFoundationModels` (Workers AI / Local Runner) | Optional (Local runner or `CLOUDFLARE_API_TOKEN`) | Multimodal evaluation on image files or synthetic CoreGraphics visual frames, single forward-pass non-autoregressive triage, latency breakdown. |
-| [**OpenAIDemo**](OpenAIDemo/README.md) | CLI Executable | `OpenAIFoundationModels` (`POST /v1/decisions`) | ✅ Yes (`OPENAI_API_KEY`) | Frontier non-autoregressive classification with `gpt-6-luna`, ~150ms latency, zero output token pricing, multi-tenant enterprise headers (`OpenAI-Organization`, `OpenAI-Project`). |
-| [**GeminiDemo**](GeminiDemo/README.md) | CLI Executable | `GeminiFoundationModels` (`POST /v1beta/decisions`) | ✅ Yes (`GEMINI_API_KEY` or `GOOGLE_API_KEY`) | High-density non-autoregressive classification with `gemini-decision-1`, ~150ms–250ms latency, zero output token pricing, 256K-token context, `x-goog-api-key` auth. |
-| [**TraitSamples/01-OfflineLayaApp**](TraitSamples/01-OfflineLayaApp/README.md) | Standalone Package | `LayaOnDevice` | ❌ No API key | Pure on-device classification via Apple Neural Engine (`traits: ["Laya"]`). Zero network code linked. |
-| [**TraitSamples/02-CloudJevWorker**](TraitSamples/02-CloudJevWorker/README.md) | Standalone Package | `JevFoundationModels` | ✅ Yes (`TYPESAFE_API_KEY`) | Ultra-lean ticket triage worker (`traits: ["Jev"]`). Sub-second build, zero ML linkage. Fails fast if API key is missing. |
-| [**TraitSamples/03-PrivateLayaServer**](TraitSamples/03-PrivateLayaServer/README.md) | Standalone Package | `LayaFoundationModels` | `laya-serve` daemon | Internal VPC cluster scoring (`traits: ["LayaServe"]`). Custom DNS, TLS, and bearer auth. Requires reachable `laya-serve`. |
-| [**TraitSamples/04-HybridRouter**](TraitSamples/04-HybridRouter/README.md) | Standalone Package | Hybrid (`All`) | ✅ Yes (`TYPESAFE_API_KEY` + Core ML model) | Local-first edge execution with dynamic escalation (`traits: ["All"]`). Escalates to cloud Jev if confidence < 0.80. |
-| [**TraitSamples/05-SecureAppCheckApp**](TraitSamples/05-SecureAppCheckApp/README.md) | SwiftUI Mini-App + Cloud Function | `ProxyTransport` (`Jev`) | Firebase Emulator or Cloud Function | Zero-secret hardware attestation using Firebase App Check (Apple App Attest) and `ProxyTransport`. Requires running Firebase emulator or live gateway. |
-
----
-
-## 🏃 Running Each Example
-
-### 1. MailTriageApp (Flagship Native macOS & iOS App)
-
-A complete native application with multi-window support, Liquid Glass visual hierarchy, and 7 hot-swappable backends:
-
-```bash
-# Option A: Open directly in Xcode GUI
-open Examples/MailTriageApp/apps/apple/MailTriageApp.xcodeproj
-
-# Option B: Build & test via FlowDeck CLI
-cd Examples/MailTriageApp
-flowdeck build -w apps/apple/MailTriageApp.xcodeproj -s MailTriageApp
-flowdeck test -w apps/apple/MailTriageApp.xcodeproj -s MailTriageApp
-
-# Option C: Build from repository root using just
-just mail-build
-just mail-test
+```mermaid
+flowchart LR
+    T1["Tier 1: Quickstarts/<br/>6 x < 10-line executables"] --> T2["Tier 2: CLI/<br/>system-one-cli (4 workflows x 7 modes)"]
+    T2 --> T3["Tier 3: TraitSamples/<br/>01..09 SE-0402 binary isolation"]
+    T3 --> T4["Tier 4: Apps/<br/>MailTriage • VisionScanner • NutritionLabel"]
 ```
 
-For complete documentation, see [Examples/MailTriageApp/README.md](MailTriageApp/README.md).
+> [!IMPORTANT]
+> **Strict Real Execution Mandate (Principle 7)**: Example applications and CLI demonstrators are production-representative showcases, **not unit tests**. They **never embed mock fallbacks or synthetic offline responses**. Missing credentials, Core ML models, or local daemons trigger a formatted remediation banner and immediate `exit(1)`. Offline mocks live strictly in [`Tests/`](../Tests/README.md).
 
 ---
 
-### 2. LayaDemo (Zero-Key Local Evaluation)
+## 🧭 Full 6-Provider + Proxy Coverage Matrix
 
-Evaluates customer inquiries against a local or remote `laya-serve` instance:
-
-```bash
-# 1. Start laya-serve in background or separate terminal
-laya-serve
-# (or via Docker: docker run -p 8000:8000 ghcr.io/nandhakishorm/laya:latest)
-
-# 2. Run the demo against default sample inquiry
-swift run laya-demo
-
-# 3. Evaluate custom inquiry text from CLI
-swift run laya-demo "The app crashes immediately upon opening account settings on iOS 27."
-
-# 4. Point to custom or hosted endpoint
-LAYA_ENDPOINT="http://127.0.0.1:8770/v1/systemone" swift run laya-demo "Cancel my subscription"
-```
-
-For complete documentation, see [Examples/LayaDemo/README.md](LayaDemo/README.md).
+| Provider / Mode | Tier 1: [`Quickstarts/`](Quickstarts/README.md) | Tier 2: [`CLI/`](CLI/README.md) (`--provider`) | Tier 3: [`TraitSamples/`](TraitSamples/README.md) | Tier 4: [`Apps/`](Apps/README.md) |
+| :--- | :--- | :--- | :--- | :--- |
+| **Laya On-Device** (`LayaOnDevice`) | `laya-ondevice-quickstart` | `laya-ondevice` (text) | `01-OfflineLayaApp`, `04-HybridRouter` | `MailTriageApp`, `NutritionLabelScannerApp` |
+| **Laya HTTP** (`LayaFoundationModels`) | `laya-quickstart` | `laya` (text) | `03-PrivateLayaServer`, `04`, `05`, `09` | `MailTriageApp`, `NutritionLabelScannerApp` |
+| **TypeSafe Jev** (`JevFoundationModels`) | `jev-quickstart` | `jev` (text) | `02-CloudJevWorker`, `04`, `05`, `09` | `MailTriageApp`, `NutritionLabelScannerApp` |
+| **Cloudflare Clef** (`ClefFoundationModels`) | `clef-quickstart` | `clef` (text + **vision**) | `06-EdgeClefVision`, `04`, `05`, `09` | `MailTriageApp`, `VisionScannerApp`, `NutritionLabelScannerApp` |
+| **OpenAI (`gpt-6-luna`)** (`OpenAIFoundationModels`) | `openai-quickstart` | `openai` (text + **vision**) | `07-CloudOpenAIDecisions`, `04`, `05`, `09` | `MailTriageApp`, `VisionScannerApp`, `NutritionLabelScannerApp` |
+| **Gemini (`gemini-decision-1`)** (`GeminiFoundationModels`) | `gemini-quickstart` | `gemini` (text + **vision**) | `08-CloudGeminiDecisions`, `04`, `05`, `09` | `MailTriageApp`, `VisionScannerApp`, `NutritionLabelScannerApp` |
+| **Authenticated Proxy** (`ProxyCredential` / `SystemOneProxyBackend`) | *(via provider `init(proxyEndpoint:credential:)`)* | `proxy` (text + **vision**) | `05-SecureAppCheckApp`, `09-RemotePersonaRouter` | `MailTriageApp`, `VisionScannerApp`, `NutritionLabelScannerApp` |
 
 ---
 
-### 3. TicketTriageDemo (Network Resilience & Confidence Routing)
+## ⚡ Tier 1: `< 10`-Line Provider Quickstarts ([`Examples/Quickstarts/`](Quickstarts/README.md))
 
-Demonstrates production network resilience and calibrated confidence routing against TypeSafe AI:
+Every System One provider supports zero-argument initialization (`init()`) with automatic environment resolution. Run any of the 6 quickstarts directly from the repository root:
 
 ```bash
-# 1. Export your API key
-export TYPESAFE_API_KEY="your-api-key"
-
-# 2. Run default billing ticket evaluation
-swift run ticket-triage-demo
-
-# 3. Evaluate custom ticket inquiry
-swift run ticket-triage-demo "Production database latency spiked to 45 seconds, all checkouts failing."
+TYPESAFE_API_KEY="ts_..."                              swift run jev-quickstart
+swift run laya-quickstart                              # expects laya-serve or LAYA_SERVE_URL
+LAYA_MODEL_PATH="/path/to/LayaDecisionModel.mlmodelc"  swift run laya-ondevice-quickstart
+CLOUDFLARE_ACCOUNT_ID="..." CLOUDFLARE_API_TOKEN="..." swift run clef-quickstart
+OPENAI_API_KEY="sk-..."                                swift run openai-quickstart
+GEMINI_API_KEY="AIza..."                               swift run gemini-quickstart
 ```
 
-For complete documentation, see [Examples/TicketTriageDemo/README.md](TicketTriageDemo/README.md).
+See [**`Examples/Quickstarts/README.md`**](Quickstarts/README.md) for verbatim source listings.
 
 ---
 
-### 4. FileOrganizerDemo (Dynamic Profiles & Session Properties)
+## 💻 Tier 2: Unified Multi-Provider CLI ([`Examples/CLI/`](CLI/README.md) — `system-one-cli`)
 
-Classifies and organizes files into semantic directories using Apple Foundation Models dynamic profiles. In strict compliance with Principle 7, real API credentials are required for decision evaluation:
+Run any of the 4 showcase workflows against any of the 7 provider modes (`--provider jev|laya|laya-ondevice|clef|openai|gemini|proxy` or `SYSTEM_ONE_PROVIDER`):
 
 ```bash
-# 1. Set your TypeSafe AI API key (required)
-export TYPESAFE_API_KEY="your-api-key"
+swift run system-one-cli --help
 
-# 2. Run sandbox walkthrough (creates sample directory fixtures on disk for demonstration)
-swift run file-organizer-demo --demo
+# 1. Calibrated Ticket Triage & RoutingPolicy
+TYPESAFE_API_KEY="..." swift run system-one-cli --provider jev ticket-triage
 
-# 3. Preview organization of an actual folder in dry-run mode
-swift run file-organizer-demo --path ~/Downloads --strategy domain
+# 2. Two-Layer Deterministic + Concurrent Semantic Article Deduplication
+OPENAI_API_KEY="..." swift run system-one-cli --provider openai duplicate-article
 
-# 4. Apply changes to disk using live TypeSafe AI API
-swift run file-organizer-demo --path ~/Downloads --strategy workflow --apply
+# 3. DynamicProfile Directory Organizer + Local Secret Redaction
+TYPESAFE_API_KEY="..." swift run system-one-cli --provider jev file-organizer --demo
+
+# 4. Multimodal Camera / Image Inspection (@Generable VisualInspectionDecision)
+GEMINI_API_KEY="..." swift run system-one-cli --provider gemini vision-inspect
 ```
 
-For complete documentation, see [Examples/FileOrganizerDemo/README.md](FileOrganizerDemo/README.md).
+See [**`Examples/CLI/README.md`**](CLI/README.md) for all subcommand flags, `.env` resolution, and copy-pasteable provider matrices.
 
 ---
 
-### 5. DuplicateArticleDemo (Two-Layer Deduplication & Cancellation)
+## 🧩 Tier 3: Swift 6.1 Package Trait Samples ([`Examples/TraitSamples/`](TraitSamples/README.md))
 
-Demonstrates two-layer content deduplication (deterministic exact-matching layer followed by semantic System One evaluation) and cooperative cancellation. Requires live API credentials:
+Standalone Swift packages proving compile-time target isolation via SE-0402 traits (`#if canImport(...)` verified):
 
-```bash
-# 1. Export your API key (required per Principle 7)
-export TYPESAFE_API_KEY="your-api-key"
+| Sample | Active Trait | Linked Provider Target(s) | Highlights |
+| :--- | :--- | :--- | :--- |
+| [**01-OfflineLayaApp**](TraitSamples/01-OfflineLayaApp/README.md) | `["Laya"]` | `LayaOnDevice` | 100% offline Apple Neural Engine evaluation; zero HTTP code linked. |
+| [**02-CloudJevWorker**](TraitSamples/02-CloudJevWorker/README.md) | `["Jev"]` | `JevFoundationModels` | Lean cloud worker; zero Core ML linkage. |
+| [**03-PrivateLayaServer**](TraitSamples/03-PrivateLayaServer/README.md) | `["LayaServe"]` | `LayaFoundationModels` | VPC / self-hosted `laya-serve` cluster scoring. |
+| [**04-HybridRouter**](TraitSamples/04-HybridRouter/README.md) | `["All"]` | All 6 Providers | Local-first ANE evaluation escalating to cloud when confidence $< 80\%$. |
+| [**05-SecureAppCheckApp**](TraitSamples/05-SecureAppCheckApp/README.md) | `["Remote"]` | All 5 Remote Providers + `ProxyCredential` | Multi-provider zero-secret hardware attestation via Firebase App Check (Pattern A & Pattern B). |
+| [**06-EdgeClefVision**](TraitSamples/06-EdgeClefVision/README.md) | `["Clef"]` | `ClefFoundationModels` | Cloudflare Workers AI / local Clef multimodal vision inspection. |
+| [**07-CloudOpenAIDecisions**](TraitSamples/07-CloudOpenAIDecisions/README.md) | `["OpenAI"]` | `OpenAIFoundationModels` | Enterprise release-gate triage on OpenAI Decisions (`gpt-6-luna`). |
+| [**08-CloudGeminiDecisions**](TraitSamples/08-CloudGeminiDecisions/README.md) | `["Gemini"]` | `GeminiFoundationModels` | Calibrated trust & safety triage linking only `GeminiFoundationModels`. |
+| [**09-RemotePersonaRouter**](TraitSamples/09-RemotePersonaRouter/README.md) | `["Remote"]` | All 5 Remote Providers | Compiles `Jev`, `LayaServe`, `Clef`, `OpenAI`, `Gemini` while excluding `LayaOnDevice`. |
 
-# 2. Run the walkthrough
-swift run duplicate-article-demo
-```
-
-For complete documentation, see [Examples/DuplicateArticleDemo/README.md](DuplicateArticleDemo/README.md).
-
----
-
-### 6. ClefCameraScanner (Real-Time Multimodal Camera Viewfinder App)
-
-A production-representative native SwiftUI camera viewfinder app (iOS & macOS) for holding physical objects up to the camera and performing real-time visual inspection:
-
-```bash
-# 1. Run the camera scanner natively on macOS
-swift run clef-camera-scanner
-
-# 2. Or run with live Cloudflare Workers AI edge credentials
-export CLOUDFLARE_ACCOUNT_ID="your-account-id"
-export CLOUDFLARE_API_TOKEN="your-api-token"
-swift run clef-camera-scanner
-```
-
-For complete documentation, see [Examples/ClefCameraScanner/README.md](ClefCameraScanner/README.md).
+See [**`Examples/TraitSamples/README.md`**](TraitSamples/README.md) for full instructions.
 
 ---
 
-### 7. ClefDemo (Multimodal CLI Demonstrator)
+## 📱 Tier 4: Native SwiftUI Reference Applications ([`Examples/Apps/`](Apps/README.md))
 
-Demonstrates single forward-pass multimodal evaluation with visual image attachments or synthetic CoreGraphics test frames:
+| Application | Platforms | Providers Supported | Highlights |
+| :--- | :--- | :--- | :--- |
+| [**MailTriageApp**](Apps/MailTriageApp/README.md) | macOS 27+ & iOS 27+ | All 6 + Proxy + Apple Generative Baseline | 3-pane Mail client with Liquid Glass UI, FactoryKit DI, batch triage, and 500-email benchmark suite. |
+| [**VisionScannerApp**](Apps/VisionScannerApp/README.md) | macOS 27+ & iOS 27+ | `Clef`, `OpenAI`, `Gemini` + Proxy | Live AVFoundation camera viewfinder & photo import (`vision-scanner-app`) evaluating `VisualInspectionDecision`. |
+| [**NutritionLabelScannerApp**](Apps/NutritionLabelScannerApp/README.md) | iOS 27+ | All 6 + Proxy | Live barcode + Vision OCR + multimodal packaging analysis across 5 dietary safety profiles. |
 
-```bash
-# 1. Run against local runner with in-memory synthetic frame:
-swift run clef-demo --backend local
-
-# 2. Evaluate a physical image file (PNG, JPEG, WebP):
-swift run clef-demo /path/to/product_capture.jpg
-
-# 3. Evaluate against Cloudflare Workers AI edge:
-CLOUDFLARE_ACCOUNT_ID="your-id" CLOUDFLARE_API_TOKEN="your-token" swift run clef-demo --backend workers-ai
-```
-
-For complete documentation, see [Examples/ClefDemo/README.md](ClefDemo/README.md).
-
----
-
-### 8. OpenAIDemo (OpenAI Decisions API `gpt-6-luna` Demonstrator)
-
-Demonstrates frontier non-autoregressive decision classification via OpenAI's Decisions API (`POST /v1/decisions`):
-
-```bash
-# 1. Export your OpenAI API key
-export OPENAI_API_KEY="sk-..."
-
-# 2. Run the demo against default customer ticket
-swift run openai-demo
-
-# 3. Evaluate a custom customer inquiry
-swift run openai-demo "Customer reported unauthorized charge on their Visa card ending in 4112."
-```
-
-For complete documentation, see [Examples/OpenAIDemo/README.md](OpenAIDemo/README.md).
-
----
-
-### 9. GeminiDemo (Google Gemini Decisions API `gemini-decision-1` Demonstrator)
-
-Demonstrates non-autoregressive decision evaluation via Google's Gemini Decisions API (`POST /v1beta/decisions`):
-
-```bash
-# 1. Export your Google Gemini API key (or GOOGLE_API_KEY)
-export GEMINI_API_KEY="AIza..."
-
-# 2. Run the demo against default customer ticket
-swift run gemini-demo
-
-# 3. Evaluate a custom customer inquiry
-swift run gemini-demo "Customer reported unauthorized charge on their Visa card ending in 4112."
-```
-
-For complete documentation, see [Examples/GeminiDemo/README.md](GeminiDemo/README.md).
-
----
-
-### 10. Trait Samples (`Examples/TraitSamples/`)
-
-Five standalone SPM packages demonstrating fine-grained package traits and modularity:
-
-```bash
-# 1. 100% Offline ANE Classification (traits: ["Laya"])
-cd Examples/TraitSamples/01-OfflineLayaApp && swift run
-
-# 2. Cloud-Only Lean Decision Worker (traits: ["Jev"])
-export TYPESAFE_API_KEY="your-api-key"
-cd Examples/TraitSamples/02-CloudJevWorker && swift run
-
-# 3. Private VPC Server Scoring (traits: ["LayaServe"])
-# Ensure laya-serve daemon is running (default: http://127.0.0.1:8000/v1/systemone)
-cd Examples/TraitSamples/03-PrivateLayaServer && swift run
-
-# 4. Local-First Hybrid Confidence Router (traits: ["All"])
-export TYPESAFE_API_KEY="your-api-key"
-export LAYA_MODEL_PATH="/path/to/LayaDecisionModel.mlmodelc"
-cd Examples/TraitSamples/04-HybridRouter && swift run
-
-# 5. Zero-Secret Hardware-Attested App Check App (ProxyTransport)
-# Start emulator first: cd Examples/TraitSamples/05-SecureAppCheckApp/backend && firebase emulators:start --only functions
-cd Examples/TraitSamples/05-SecureAppCheckApp && swift run SecureAppCheckApp --cli
-```
+See [**`Examples/Apps/README.md`**](Apps/README.md) for side-by-side app comparisons and FlowDeck build commands.

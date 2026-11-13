@@ -146,6 +146,7 @@ public struct OpenAIDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
     private func evaluateWithTiming(
         request: OpenAIDecisionsRequest
     ) async throws -> (response: OpenAIDecisionsResponse, transportDurationMs: Double, serverDurationMs: Double?) {
+        try Task.checkCancellation()
         try ProxyEndpointValidator.validate(endpoint.url)
 
         let resolvedKey = resolveAPIKey()

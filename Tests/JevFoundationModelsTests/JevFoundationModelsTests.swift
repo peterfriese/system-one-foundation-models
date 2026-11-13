@@ -493,12 +493,30 @@ struct JevFoundationModelsTests {
 
     @Test("URLSessionTransport rejects execution without an API key")
     func testURLSessionTransportRequiresAPIKey() async throws {
-        let model = JevLanguageModel()
+        let model = JevLanguageModel(configuration: .init(apiKey: nil))
         let request = JevRequest(state: "Test state", questions: [:])
 
         await #expect(throws: JevError.missingAPIKey) {
             try await JevClient(configuration: model.executorConfiguration).execute(request: request)
         }
+    }
+
+    @Test("JevLanguageModel supports homogeneous init(backend:) and JevEndpoint")
+    func testJevBackendInitAndEndpoints() async throws {
+        #expect(JevEndpoint.hosted.url.absoluteString == "https://api.typesafe.ai/v1/systemone")
+        let custom = URL(string: "https://jev.internal.example/v1/systemone")!
+        #expect(JevEndpoint.custom(custom).url == custom)
+
+        let backend = MockSystemOneBackend(
+            fixedResponse: SystemOneResponse(
+                model: "jev-latest",
+                answers: ["decision": SystemOneAnswer(type: "noul", noul: 0.87, confidence: 0.87)],
+                transportDurationMs: 4.5
+            )
+        )
+        let session = LanguageModelSession(model: JevLanguageModel(backend: backend))
+        let p = try await session.probability(of: "Is this urgent?", state: "Checkout down")
+        #expect(abs(p - 0.87) < 0.0001)
     }
 
     @Test("URLSessionTransport rejects empty-string API keys")
@@ -536,14 +554,18 @@ struct JevFoundationModelsTests {
         )
 
         #expect(response.answers["urgent"]?.noul == 0.9)
+        #expect(response.transportDurationMs != nil)
         #expect(CapturingURLProtocol.lastCapturedAuthHeader() == "Bearer test-api-key")
     }
 
     // MARK: - Live API Integration Test
 
     @Test(
-        "Live TypeSafe AI API integration test (runs when RUN_LIVE_API_TESTS=1)",
-        .enabled(if: ProcessInfo.processInfo.environment["RUN_LIVE_API_TESTS"] == "1")
+        "Live TypeSafe AI API integration test (runs when RUN_LIVE_API_TESTS=1 or RUN_LIVE_TESTS=1)",
+        .enabled(
+            if: ProcessInfo.processInfo.environment["RUN_LIVE_API_TESTS"] == "1"
+                || ProcessInfo.processInfo.environment["RUN_LIVE_TESTS"] == "1"
+        )
     )
     func testLiveTypeSafeAPIIntegration() async throws {
         let apiKey: String? = {

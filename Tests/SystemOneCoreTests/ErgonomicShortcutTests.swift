@@ -415,16 +415,14 @@ struct ErgonomicShortcutTests {
         var isValid: Bool
     }
 
-    @Test("Deprecation shims translateToQuestions and probabilityValue maintain source compatibility")
-    func testDeprecationShims() async throws {
+    @available(*, deprecated)
+    private func runDeprecatedShims() async throws {
         let translator = SchemaTranslator()
         let binarySchema = try DynamicDecisionSchema.makeBinarySchema(instructions: "Is this valid?")
 
-        // translateToQuestions shim
         let questions = try translator.translateToQuestions(binarySchema)
         #expect(questions["decision"] != nil)
 
-        // probabilityValue shim on LanguageModelSession.Response
         let mockBackend = MockSystemOneBackend { _ in
             SystemOneResponse(
                 model: "systemone-mock-v1",
@@ -447,5 +445,59 @@ struct ErgonomicShortcutTests {
         #expect(typedProb != nil)
         #expect(typedProb == shimProb)
         #expect(shimProb?.value == 0.88)
+    }
+
+    @available(*, deprecated)
+    @Test("Deprecation shims translateToQuestions and probabilityValue maintain source compatibility")
+    func testDeprecationShims() async throws {
+        try await runDeprecatedShims()
+    }
+
+    @Test("Multimodal @PromptBuilder shortcuts, empty-confidence safety, and option uniqueness validation")
+    func testMultimodalShortcutsAndValidationHardening() async throws {
+        let mockBackend = MockSystemOneBackend { request in
+            if request.questions["decision"] != nil {
+                return SystemOneResponse(
+                    model: "vision-mock",
+                    answers: ["decision": SystemOneAnswer(type: "noul", noul: 0.91, confidence: 0.91)]
+                )
+            } else if request.questions["choice"] != nil {
+                // Intentionally omit confidence & probabilities to verify safe 0.0 confidence fallback
+                return SystemOneResponse(
+                    model: "vision-mock",
+                    answers: ["choice": SystemOneAnswer(type: "choice", choice: "CRITICAL")]
+                )
+            } else {
+                return SystemOneResponse(
+                    model: "vision-mock",
+                    answers: ["score": SystemOneAnswer(type: "score", score: 2.0, confidence: 0.85, probabilities: ["0": 0.05, "1": 0.10, "2": 0.85])]
+                )
+            }
+        }
+        let session = LanguageModelSession(model: SystemOneLanguageModel(backend: mockBackend, supportsVision: true))
+
+        let prob = try await session.probability(of: "Is parcel damaged?") {
+            "Parcel corner crushed during transit"
+        }
+        #expect(prob == 0.91)
+
+        let picked = try await session.choice("Select priority", from: TicketPriority.self) {
+            "Production outage"
+        }
+        #expect(picked.value == .critical)
+        #expect(picked.confidence == 0.0)
+        #expect(RoutingPolicy.default.decide(confidence: picked.confidence) == .escalate)
+
+        let scored = try await session.score("Severity rubric", levels: ["Low", "Med", "High"]) {
+            "Severe leak"
+        }
+        #expect(scored.mostLikelyLevel == "High")
+
+        await #expect(throws: SystemOneError.self) {
+            _ = try await session.choice("Pick one", options: ["dup", "dup"], state: "Test")
+        }
+        await #expect(throws: SystemOneError.self) {
+            _ = try await session.choice("Pick one", options: ["   "], state: "Test")
+        }
     }
 }
