@@ -9,23 +9,22 @@ test:
 
 # Open MailTriageApp in Xcode
 xcode-mail:
-    open Examples/MailTriageApp/apps/apple/MailTriageApp.xcodeproj
+    open Examples/Apps/MailTriageApp/apps/apple/MailTriageApp.xcodeproj
 
-# Apple Platform Builds & Tests (FlowDeck)
+# Apple Platform Builds & Tests (FlowDeck 1.26.5+)
 mail-build:
-    flowdeck build -w Examples/MailTriageApp/apps/apple/MailTriageApp.xcodeproj -s MailTriageApp
+    flowdeck build -w Examples/Apps/MailTriageApp/apps/apple/MailTriageApp.xcodeproj -s MailTriageApp -S "iPhone 18 Pro"
 
-mail-test:
-    flowdeck test -w Examples/MailTriageApp/apps/apple/MailTriageApp.xcodeproj -s MailTriageApp
+mail-test: mail-test-core mail-test-ui
 
 mail-test-core:
-    flowdeck test --package-path Examples/MailTriageApp/apps/apple/Packages/AppCore
+    flowdeck test -p Examples/Apps/MailTriageApp/apps/apple/Packages/AppCore -s AppCore-Package -S "iPhone 18 Pro"
 
 mail-test-ui:
-    flowdeck test --package-path Examples/MailTriageApp/apps/apple/Packages/AppUI
+    flowdeck test -p Examples/Apps/MailTriageApp/apps/apple/Packages/AppUI -s AppUI -S "iPhone 18 Pro"
 
 # Simulator
 sim-boot:
-    flowdeck simulator boot "iPhone 16 Pro" || true
+    flowdeck simulator boot "iPhone 18 Pro" || true
     open -a Simulator
 

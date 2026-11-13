@@ -1,0 +1,494 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		173937BFB6EB1A0527CE5B3B /* SafetyIndicatorBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 943B40EFC381B2430A9F918F /* SafetyIndicatorBanner.swift */; };
+		33F09F5CA66476F511502AFB /* FoodProduct.swift in Sources */ = {isa = PBXBuildFile; fileRef = 196189EEF778430AF80E62A0 /* FoodProduct.swift */; };
+		4EDE74E2B88F16DA40A3B433 /* DietaryProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABFE151F429F846E6610C6D7 /* DietaryProfile.swift */; };
+		6318C08F9F47603976A9977F /* CameraViewfinderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 198029B8FE37CE47CA6D4FF5 /* CameraViewfinderView.swift */; };
+		80E15DE87F0DD0580AA84B5B /* AudioFeedback.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E3DFFF0671D0C69AC3947BA /* AudioFeedback.swift */; };
+		819FB45780ABACCB937E59CB /* ProviderResolution.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73BB997FFF8E345B77C752F2 /* ProviderResolution.swift */; };
+		829FB45780ABACCB937E59CC /* KeychainStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74BB997FFF8E345B77C752F3 /* KeychainStorage.swift */; };
+		839FB45780ABACCB937E59CD /* ProviderSettingsSheetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75BB997FFF8E345B77C752F4 /* ProviderSettingsSheetView.swift */; };
+		863522F8C2954E06FB264D60 /* NutritionScannerAppView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB150D33AD9753F31FBC1DBD /* NutritionScannerAppView.swift */; };
+		967F5AB085BF33400BA2DBCA /* NutritionLabelScannerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93B48FF4DD91D17F3D13FE0E /* NutritionLabelScannerApp.swift */; };
+		96D498BD91300DB12660EC10 /* NutritionTableView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 305A5634DBF43A98916DC0B6 /* NutritionTableView.swift */; };
+		9841F110D0764EE84C0CE174 /* CameraPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F12672A5246865ECA1577B01 /* CameraPreviewView.swift */; };
+		B6E28A3A5A07E7C91561F91A /* DietarySafetyDecision.swift in Sources */ = {isa = PBXBuildFile; fileRef = C85D1EA55AD4353CAB89AAB3 /* DietarySafetyDecision.swift */; };
+		BED80434E0AAB00883AACEE8 /* OpenFoodFactsClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 718B977A771C8D746EE5C8B4 /* OpenFoodFactsClient.swift */; };
+		CC4D608A1B8F8C67916F2599 /* NutritionSheetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB6F88A42E998A72A69E4FAF /* NutritionSheetView.swift */; };
+		D5A26BBF437537CDF4BF6668 /* NutritionLabelParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F8FDAFA47FB7D3B6C4A11C7 /* NutritionLabelParser.swift */; };
+		E025C5CEF247601756939C2B /* JevFoundationModels in Frameworks */ = {isa = PBXBuildFile; productRef = C234E520145D99256BD993E0 /* JevFoundationModels */; };
+		E025C5CEF247601756939C2C /* SystemOneCore in Frameworks */ = {isa = PBXBuildFile; productRef = C234E520145D99256BD993E1 /* SystemOneCore */; };
+		E025C5CEF247601756939C2D /* LayaOnDevice in Frameworks */ = {isa = PBXBuildFile; productRef = C234E520145D99256BD993E2 /* LayaOnDevice */; };
+		E025C5CEF247601756939C2E /* LayaFoundationModels in Frameworks */ = {isa = PBXBuildFile; productRef = C234E520145D99256BD993E3 /* LayaFoundationModels */; };
+		E025C5CEF247601756939C2F /* ClefFoundationModels in Frameworks */ = {isa = PBXBuildFile; productRef = C234E520145D99256BD993E4 /* ClefFoundationModels */; };
+		E025C5CEF247601756939C30 /* OpenAIFoundationModels in Frameworks */ = {isa = PBXBuildFile; productRef = C234E520145D99256BD993E5 /* OpenAIFoundationModels */; };
+		E025C5CEF247601756939C31 /* GeminiFoundationModels in Frameworks */ = {isa = PBXBuildFile; productRef = C234E520145D99256BD993E6 /* GeminiFoundationModels */; };
+		E4F00BF1FB967192A6E898A8 /* ScannerViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5FB0FEED36712D454737235 /* ScannerViewModel.swift */; };
+		E7E89A9D88A1820528AB69F6 /* CameraScannerService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55E20D15554BCD1E0F3595EA /* CameraScannerService.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		196189EEF778430AF80E62A0 /* FoodProduct.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoodProduct.swift; sourceTree = "<group>"; };
+		198029B8FE37CE47CA6D4FF5 /* CameraViewfinderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraViewfinderView.swift; sourceTree = "<group>"; };
+		1E3DFFF0671D0C69AC3947BA /* AudioFeedback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioFeedback.swift; sourceTree = "<group>"; };
+		305A5634DBF43A98916DC0B6 /* NutritionTableView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NutritionTableView.swift; sourceTree = "<group>"; };
+		55E20D15554BCD1E0F3595EA /* CameraScannerService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraScannerService.swift; sourceTree = "<group>"; };
+		718B977A771C8D746EE5C8B4 /* OpenFoodFactsClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenFoodFactsClient.swift; sourceTree = "<group>"; };
+		73BB997FFF8E345B77C752F2 /* ProviderResolution.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderResolution.swift; sourceTree = "<group>"; };
+		74BB997FFF8E345B77C752F3 /* KeychainStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStorage.swift; sourceTree = "<group>"; };
+		75BB997FFF8E345B77C752F4 /* ProviderSettingsSheetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderSettingsSheetView.swift; sourceTree = "<group>"; };
+		8CC9F4A7CAF9A23F8D10B555 /* SystemOneFoundationModels */ = {isa = PBXFileReference; lastKnownFileType = folder; name = SystemOneFoundationModels; path = ../../..; sourceTree = SOURCE_ROOT; };
+		924F758265E597DC09627622 /* NutritionLabelScanner.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = NutritionLabelScanner.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		93B48FF4DD91D17F3D13FE0E /* NutritionLabelScannerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NutritionLabelScannerApp.swift; sourceTree = "<group>"; };
+		943B40EFC381B2430A9F918F /* SafetyIndicatorBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafetyIndicatorBanner.swift; sourceTree = "<group>"; };
+		9F8FDAFA47FB7D3B6C4A11C7 /* NutritionLabelParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NutritionLabelParser.swift; sourceTree = "<group>"; };
+		ABFE151F429F846E6610C6D7 /* DietaryProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DietaryProfile.swift; sourceTree = "<group>"; };
+		B5FB0FEED36712D454737235 /* ScannerViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScannerViewModel.swift; sourceTree = "<group>"; };
+		BB150D33AD9753F31FBC1DBD /* NutritionScannerAppView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NutritionScannerAppView.swift; sourceTree = "<group>"; };
+		BB6F88A42E998A72A69E4FAF /* NutritionSheetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NutritionSheetView.swift; sourceTree = "<group>"; };
+		C85D1EA55AD4353CAB89AAB3 /* DietarySafetyDecision.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DietarySafetyDecision.swift; sourceTree = "<group>"; };
+		F12672A5246865ECA1577B01 /* CameraPreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraPreviewView.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A00EB954C241AB2E286F0B1A /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E025C5CEF247601756939C2C /* SystemOneCore in Frameworks */,
+				E025C5CEF247601756939C2D /* LayaOnDevice in Frameworks */,
+				E025C5CEF247601756939C2E /* LayaFoundationModels in Frameworks */,
+				E025C5CEF247601756939C2B /* JevFoundationModels in Frameworks */,
+				E025C5CEF247601756939C2F /* ClefFoundationModels in Frameworks */,
+				E025C5CEF247601756939C30 /* OpenAIFoundationModels in Frameworks */,
+				E025C5CEF247601756939C31 /* GeminiFoundationModels in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		5422BF3F7FFD6C9CF865B899 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				93B48FF4DD91D17F3D13FE0E /* NutritionLabelScannerApp.swift */,
+				AAC55F8C96959870E49DF9E2 /* Models */,
+				E0A88EC4D252A1942836A9BD /* Services */,
+				5F48FB9867010E1F507894F4 /* Views */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		5F48FB9867010E1F507894F4 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				F12672A5246865ECA1577B01 /* CameraPreviewView.swift */,
+				198029B8FE37CE47CA6D4FF5 /* CameraViewfinderView.swift */,
+				BB150D33AD9753F31FBC1DBD /* NutritionScannerAppView.swift */,
+				BB6F88A42E998A72A69E4FAF /* NutritionSheetView.swift */,
+				305A5634DBF43A98916DC0B6 /* NutritionTableView.swift */,
+				75BB997FFF8E345B77C752F4 /* ProviderSettingsSheetView.swift */,
+				943B40EFC381B2430A9F918F /* SafetyIndicatorBanner.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		8483B17EB0902A50A8D7F8B5 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				924F758265E597DC09627622 /* NutritionLabelScanner.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		8C8E56D6BD1EC929E569DCE5 /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				8CC9F4A7CAF9A23F8D10B555 /* SystemOneFoundationModels */,
+			);
+			name = Packages;
+			sourceTree = "<group>";
+		};
+		9386267D3215C209F1301E27 = {
+			isa = PBXGroup;
+			children = (
+				8C8E56D6BD1EC929E569DCE5 /* Packages */,
+				5422BF3F7FFD6C9CF865B899 /* Sources */,
+				8483B17EB0902A50A8D7F8B5 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		AAC55F8C96959870E49DF9E2 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				ABFE151F429F846E6610C6D7 /* DietaryProfile.swift */,
+				C85D1EA55AD4353CAB89AAB3 /* DietarySafetyDecision.swift */,
+				196189EEF778430AF80E62A0 /* FoodProduct.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		E0A88EC4D252A1942836A9BD /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				1E3DFFF0671D0C69AC3947BA /* AudioFeedback.swift */,
+				55E20D15554BCD1E0F3595EA /* CameraScannerService.swift */,
+				74BB997FFF8E345B77C752F3 /* KeychainStorage.swift */,
+				9F8FDAFA47FB7D3B6C4A11C7 /* NutritionLabelParser.swift */,
+				718B977A771C8D746EE5C8B4 /* OpenFoodFactsClient.swift */,
+				73BB997FFF8E345B77C752F2 /* ProviderResolution.swift */,
+				B5FB0FEED36712D454737235 /* ScannerViewModel.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		5021A013BCA960E37EB28FA2 /* NutritionLabelScanner */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 125EB3DA7DC6B1116A415B22 /* Build configuration list for PBXNativeTarget "NutritionLabelScanner" */;
+			buildPhases = (
+				18A11B41EA0C78D4EFD41FC7 /* Sources */,
+				A00EB954C241AB2E286F0B1A /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = NutritionLabelScanner;
+			packageProductDependencies = (
+				C234E520145D99256BD993E1 /* SystemOneCore */,
+				C234E520145D99256BD993E2 /* LayaOnDevice */,
+				C234E520145D99256BD993E3 /* LayaFoundationModels */,
+				C234E520145D99256BD993E0 /* JevFoundationModels */,
+				C234E520145D99256BD993E4 /* ClefFoundationModels */,
+				C234E520145D99256BD993E5 /* OpenAIFoundationModels */,
+				C234E520145D99256BD993E6 /* GeminiFoundationModels */,
+			);
+			productName = NutritionLabelScanner;
+			productReference = 924F758265E597DC09627622 /* NutritionLabelScanner.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		0373A12D2473F4824D959996 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastSwiftUpdateCheck = 1600;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					5021A013BCA960E37EB28FA2 = {
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 2CB574D5221BC6865C679B89 /* Build configuration list for PBXProject "NutritionLabelScanner" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 9386267D3215C209F1301E27;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				16356536D6A6A1F1E9B4F4FA /* XCLocalSwiftPackageReference "../../.." */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 8483B17EB0902A50A8D7F8B5 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				5021A013BCA960E37EB28FA2 /* NutritionLabelScanner */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		18A11B41EA0C78D4EFD41FC7 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				80E15DE87F0DD0580AA84B5B /* AudioFeedback.swift in Sources */,
+				9841F110D0764EE84C0CE174 /* CameraPreviewView.swift in Sources */,
+				E7E89A9D88A1820528AB69F6 /* CameraScannerService.swift in Sources */,
+				6318C08F9F47603976A9977F /* CameraViewfinderView.swift in Sources */,
+				4EDE74E2B88F16DA40A3B433 /* DietaryProfile.swift in Sources */,
+				B6E28A3A5A07E7C91561F91A /* DietarySafetyDecision.swift in Sources */,
+				33F09F5CA66476F511502AFB /* FoodProduct.swift in Sources */,
+				829FB45780ABACCB937E59CC /* KeychainStorage.swift in Sources */,
+				D5A26BBF437537CDF4BF6668 /* NutritionLabelParser.swift in Sources */,
+				967F5AB085BF33400BA2DBCA /* NutritionLabelScannerApp.swift in Sources */,
+				863522F8C2954E06FB264D60 /* NutritionScannerAppView.swift in Sources */,
+				CC4D608A1B8F8C67916F2599 /* NutritionSheetView.swift in Sources */,
+				96D498BD91300DB12660EC10 /* NutritionTableView.swift in Sources */,
+				BED80434E0AAB00883AACEE8 /* OpenFoodFactsClient.swift in Sources */,
+				819FB45780ABACCB937E59CB /* ProviderResolution.swift in Sources */,
+				839FB45780ABACCB937E59CD /* ProviderSettingsSheetView.swift in Sources */,
+				173937BFB6EB1A0527CE5B3B /* SafetyIndicatorBanner.swift in Sources */,
+				E4F00BF1FB967192A6E898A8 /* ScannerViewModel.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		5ECF2AE24DC6F5A4B3FCBFBA /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		88005F949C58D52FACFF3AC2 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "Scan product barcodes and nutrition labels in real-time.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Import photos of nutrition labels to analyze ingredients.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.typesafe.examples.NutritionLabelScanner;
+				SDKROOT = iphoneos;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		95621B4011EA6B144DA9B26A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "Scan product barcodes and nutrition labels in real-time.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Import photos of nutrition labels to analyze ingredients.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.typesafe.examples.NutritionLabelScanner;
+				SDKROOT = iphoneos;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		B5E8803338736A92ED558793 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		125EB3DA7DC6B1116A415B22 /* Build configuration list for PBXNativeTarget "NutritionLabelScanner" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				95621B4011EA6B144DA9B26A /* Debug */,
+				88005F949C58D52FACFF3AC2 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		2CB574D5221BC6865C679B89 /* Build configuration list for PBXProject "NutritionLabelScanner" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B5E8803338736A92ED558793 /* Debug */,
+				5ECF2AE24DC6F5A4B3FCBFBA /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		16356536D6A6A1F1E9B4F4FA /* XCLocalSwiftPackageReference "../../.." */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../..;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		C234E520145D99256BD993E0 /* JevFoundationModels */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 16356536D6A6A1F1E9B4F4FA /* XCLocalSwiftPackageReference "../../.." */;
+			productName = JevFoundationModels;
+		};
+		C234E520145D99256BD993E1 /* SystemOneCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 16356536D6A6A1F1E9B4F4FA /* XCLocalSwiftPackageReference "../../.." */;
+			productName = SystemOneCore;
+		};
+		C234E520145D99256BD993E2 /* LayaOnDevice */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 16356536D6A6A1F1E9B4F4FA /* XCLocalSwiftPackageReference "../../.." */;
+			productName = LayaOnDevice;
+		};
+		C234E520145D99256BD993E3 /* LayaFoundationModels */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 16356536D6A6A1F1E9B4F4FA /* XCLocalSwiftPackageReference "../../.." */;
+			productName = LayaFoundationModels;
+		};
+		C234E520145D99256BD993E4 /* ClefFoundationModels */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 16356536D6A6A1F1E9B4F4FA /* XCLocalSwiftPackageReference "../../.." */;
+			productName = ClefFoundationModels;
+		};
+		C234E520145D99256BD993E5 /* OpenAIFoundationModels */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 16356536D6A6A1F1E9B4F4FA /* XCLocalSwiftPackageReference "../../.." */;
+			productName = OpenAIFoundationModels;
+		};
+		C234E520145D99256BD993E6 /* GeminiFoundationModels */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 16356536D6A6A1F1E9B4F4FA /* XCLocalSwiftPackageReference "../../.." */;
+			productName = GeminiFoundationModels;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 0373A12D2473F4824D959996 /* Project object */;
+}
