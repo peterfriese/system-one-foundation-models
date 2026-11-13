@@ -42,19 +42,27 @@ public struct TemperatureCalibration: Sendable {
     /// Applies temperature scaling and softmax over raw logits to produce probabilities.
     public static func softmax(logits: [Double], temperature: Double) -> [Double] {
         guard !logits.isEmpty else { return [] }
+        let uniform = Array(repeating: 1.0 / Double(logits.count), count: logits.count)
+        guard logits.allSatisfy(\.isFinite) else { return uniform }
+
         let clampedTemp = clampTemperature(temperature)
         let scaled = logits.map { $0 / clampedTemp }
-        guard let maxVal = scaled.max() else { return logits }
+        guard let maxVal = scaled.max(), maxVal.isFinite else { return uniform }
 
         let exps = scaled.map { exp($0 - maxVal) }
         let sumExp = exps.reduce(0.0, +)
-        guard sumExp > 0 else { return Array(repeating: 1.0 / Double(logits.count), count: logits.count) }
+        guard sumExp.isFinite, sumExp > 0 else { return uniform }
         return exps.map { $0 / sumExp }
     }
 
     /// Computes calibrated answer confidence: `max(p)` across the candidate probabilities.
+    /// Returns `0.0` when `probabilities` is empty or contains no finite values so `RoutingPolicy` safely escalates.
     public static func answerConfidence(probabilities: [Double]) -> Double {
-        guard let maxP = probabilities.max() else { return 1.0 }
+        guard !probabilities.isEmpty,
+              probabilities.allSatisfy(\.isFinite),
+              let maxP = probabilities.max() else {
+            return 0.0
+        }
         return min(1.0, max(0.0, maxP))
     }
 }

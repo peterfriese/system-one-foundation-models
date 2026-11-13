@@ -89,6 +89,9 @@ public enum DynamicDecisionSchema {
         guard !levels.isEmpty else {
             throw SystemOneError.invalidSchema("Score schema requires at least one rubric level.")
         }
+        guard levels.count <= 32 else {
+            throw SystemOneError.invalidSchema("Score schema supports at most 32 discrete rubric levels (got \(levels.count)).")
+        }
 
         var fullInstructions = instructions
         let rubricSummary = levels.enumerated().map { "\($0): \($1)" }.joined(separator: ", ")

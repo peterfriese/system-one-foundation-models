@@ -2,6 +2,7 @@ import Foundation
 import SystemOneCore
 
 /// A mock backend enabling offline, deterministic automated testing of OpenAI Decisions models.
+@available(*, deprecated, message: "Use MockSystemOneBackend for uniform cross-provider offline testing")
 public final class MockOpenAIDecisionsBackend: SystemOneBackend, @unchecked Sendable {
     private let lock = NSLock()
     private var _lastRequest: SystemOneRequest?
@@ -37,7 +38,7 @@ public final class MockOpenAIDecisionsBackend: SystemOneBackend, @unchecked Send
     }
 
     public func evaluate(request: SystemOneRequest) async throws -> SystemOneResponse {
-        let adapted = try? OpenAIDecisionsPayloadAdapter.adaptRequest(request)
+        let adapted = try OpenAIDecisionsPayloadAdapter.adaptRequest(request)
         lock.withLock {
             _lastRequest = request
             _lastOpenAIRequest = adapted
@@ -73,10 +74,14 @@ public final class MockOpenAIDecisionsBackend: SystemOneBackend, @unchecked Send
                     probabilities: probs
                 )
             case .score(_, let criteria):
-                let score = criteria.isEmpty ? 4.5 : Double(criteria.count)
+                let score = criteria.isEmpty ? 0.0 : Double(criteria.count - 1)
                 var probs: [String: Double] = [:]
-                for (i, c) in criteria.enumerated() {
-                    probs[c] = (i == criteria.count - 1) ? 0.90 : (0.10 / Double(max(1, criteria.count - 1)))
+                for i in criteria.indices {
+                    if criteria.count == 1 {
+                        probs[String(i)] = 1.0
+                    } else {
+                        probs[String(i)] = (i == criteria.count - 1) ? 0.90 : (0.10 / Double(criteria.count - 1))
+                    }
                 }
                 answers[name] = SystemOneAnswer(
                     type: "score",
@@ -96,12 +101,13 @@ public final class MockOpenAIDecisionsBackend: SystemOneBackend, @unchecked Send
         )
     }
 
-    /// Resets captured state and request counters.
+    /// Resets captured state, handler, and request counters.
     public func reset() {
         lock.withLock {
             _lastRequest = nil
             _lastOpenAIRequest = nil
             _evaluationCount = 0
+            _handler = nil
         }
     }
 }

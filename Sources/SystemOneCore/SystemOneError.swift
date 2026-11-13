@@ -32,7 +32,7 @@ public enum SystemOneError: LocalizedError, Sendable, Equatable, Hashable {
         case .invalidSchema(let details):
             return "Failed to convert @Generable schema to System One questions: \(details)"
         case .missingAPIKey:
-            return "An API key is required when using a transport that enforces authentication. Use a reverse-proxy transport or local engine to authenticate without embedding a key."
+            return "Missing API credentials. Run `export TYPESAFE_API_KEY=\"...\"`, `export CLOUDFLARE_API_TOKEN=\"...\"`, `export OPENAI_API_KEY=\"...\"`, or `export GEMINI_API_KEY=\"...\"` in your environment, pass an explicit apiKey, or use ProxyCredential / a local engine."
         case .apiError(let statusCode, let message):
             return "System One backend returned error \(statusCode): \(message)"
         case .networkError(let details):

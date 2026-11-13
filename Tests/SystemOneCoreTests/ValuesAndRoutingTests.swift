@@ -1,6 +1,6 @@
 import Testing
 import Foundation
-@testable import JevFoundationModels
+@testable import SystemOneCore
 
 @Suite("Domain Values & Confidence Routing Tests")
 struct ValuesAndRoutingTests {
@@ -55,7 +55,6 @@ struct ValuesAndRoutingTests {
 
     @Test("ScoreValue computes rounded level and normalized score correctly")
     func testScoreValueCalculations() {
-        // 3-level rubric (0, 1, 2)
         let score = ScoreValue(
             value: 1.6,
             legend: [0: "Low", 1: "Medium", 2: "High"],
@@ -64,39 +63,48 @@ struct ValuesAndRoutingTests {
         )
 
         #expect(score.rounded == 2)
-        #expect(score.normalized == 0.8) // 1.6 / (3 - 1) = 0.8
+        #expect(score.normalized == 0.8)
         #expect(score.confidence == 0.78)
 
-        // Single level score cannot normalize (divide by zero protection)
         let singleLevel = ScoreValue(value: 0.5, legend: [0: "Single"], probabilities: [0: 1.0])
         #expect(singleLevel.normalized == nil)
     }
 
+    @Test("ScoreValue.rounded clamps extreme finite Doubles safely without Int overflow trap")
+    func testScoreValueRoundedExtremeClamping() {
+        let hugePositive = ScoreValue(value: 1e30)
+        #expect(hugePositive.rounded == Int.max)
+
+        let atIntMax = ScoreValue(value: Double(Int.max))
+        #expect(atIntMax.rounded == Int.max)
+
+        let hugeNegative = ScoreValue(value: -1e30)
+        #expect(hugeNegative.rounded == Int.min)
+    }
+
     @Test("ScoreValue normalized correctly maps 1-based and sparse rubric keys")
     func testScoreValueNonZeroBasedAndSparseKeys() {
-        // 1-based rubric: levels 1, 2, 3
         let oneBased = ScoreValue(
-            value: 1.0, // Minimum
+            value: 1.0,
             legend: [1: "Low", 2: "Med", 3: "High"],
             probabilities: [1: 1.0, 2: 0.0, 3: 0.0]
         )
         #expect(oneBased.normalized == 0.0)
 
         let oneBasedMid = ScoreValue(
-            value: 2.0, // Midpoint
+            value: 2.0,
             legend: [1: "Low", 2: "Med", 3: "High"],
             probabilities: [1: 0.0, 2: 1.0, 3: 0.0]
         )
         #expect(oneBasedMid.normalized == 0.5)
 
         let oneBasedMax = ScoreValue(
-            value: 3.0, // Maximum
+            value: 3.0,
             legend: [1: "Low", 2: "Med", 3: "High"],
             probabilities: [1: 0.0, 2: 0.0, 3: 1.0]
         )
         #expect(oneBasedMax.normalized == 1.0)
 
-        // Sparse keys: 0 and 2 (range = 2)
         let sparse = ScoreValue(
             value: 2.0,
             legend: [0: "Zero", 2: "Two"],
@@ -151,7 +159,7 @@ struct ValuesAndRoutingTests {
             propertyOrder: ["priority"]
         )
         let answers = [
-            "priority": JevAnswer(
+            "priority": SystemOneAnswer(
                 type: "score",
                 score: 2.0,
                 confidence: 0.9,
@@ -170,7 +178,42 @@ struct ValuesAndRoutingTests {
         #expect(score.probabilities[3] == 0.70)
     }
 
-    // MARK: - RoutingPolicy: Choice & Score Tests
+    @Test("ScoreValue preserves 1-based OpenAI score answers without off-by-one +minimum corruption")
+    func testScoreValuePreservesOneBasedOpenAIScoreAnswers() throws {
+        let synthesizer = ResponseSynthesizer()
+        let layout = SchemaRootLayout.object(
+            properties: [
+                "riskScore": SchemaPropertyDescriptor(
+                    name: "riskScore",
+                    questionKey: "riskScore",
+                    kind: .score(minimum: 1, maximum: 5, isInteger: true),
+                    instructions: "Risk score"
+                )
+            ],
+            propertyOrder: ["riskScore"]
+        )
+        let answers = [
+            "riskScore": SystemOneAnswer(
+                type: "score",
+                score: 3.0,
+                confidence: 0.92,
+                probabilities: ["1": 0.02, "2": 0.05, "3": 0.85, "4": 0.05, "5": 0.03],
+                legend: ["1": "Level 1", "2": "Level 2", "3": "Level 3", "4": "Level 4", "5": "Level 5"]
+            )
+        ]
+
+        let synthesized = try synthesizer.synthesize(answers: answers, layout: layout)
+        #expect(synthesized == "{\"riskScore\":3}")
+
+        let json = try #require(synthesizer.extractScoresJSON(from: answers, layout: layout))
+        let decoded = try JSONDecoder().decode([String: ScoreValue].self, from: Data(json.utf8))
+        let score = try #require(decoded["riskScore"])
+        #expect(score.value == 3.0)
+        #expect(score.rounded == 3)
+        #expect(score.probabilities[3] == 0.85)
+    }
+
+    // MARK: - RoutingPolicy Tests
 
     @Test("RoutingPolicy maps confidence to decisions at calibrated thresholds")
     func testChoiceRoutingThresholds() {
@@ -182,12 +225,16 @@ struct ValuesAndRoutingTests {
         #expect(policy.decide(confidence: 0.84) == .confirm)
         #expect(policy.decide(confidence: 0.85) == .auto)
         #expect(policy.decide(confidence: 1.00) == .auto)
-
-        // Missing or unanswered question must safely escalate
         #expect(policy.decide(confidence: nil) == .escalate)
     }
 
-    // MARK: - RoutingPolicy: Noul Tests
+    @Test("RoutingPolicy clamps out-of-range and inverted thresholds safely")
+    func testRoutingPolicyThresholdClamping() {
+        let inverted = RoutingPolicy(escalateBelow: 0.9, autoAtOrAbove: 0.4, undecidedBand: -0.5...1.5)
+        #expect(inverted.escalateBelow == 0.9)
+        #expect(inverted.autoAtOrAbove == 0.9)
+        #expect(inverted.undecidedBand == 0.0...1.0)
+    }
 
     @Test("Noul inside undecided band (0.35...0.65) returns nil answer and escalates")
     func testNoulUndecidedBand() {
@@ -204,13 +251,11 @@ struct ValuesAndRoutingTests {
     func testNoulDecisiveJudgements() {
         let policy = RoutingPolicy.default
 
-        // Confident Yes: p = 0.95 -> decisiveness = 0.95 -> .auto, answer = true
         let yesJudgement = policy.decide(Probability(clamping: 0.95))
         #expect(yesJudgement.answer == true)
         #expect(yesJudgement.decision == .auto)
         #expect(yesJudgement.decisiveness == 0.95)
 
-        // Confident No: p = 0.05 -> decisiveness = 0.95 -> .auto, answer = false
         let noJudgement = policy.decide(Probability(clamping: 0.05))
         #expect(noJudgement.answer == false)
         #expect(noJudgement.decision == .auto)
@@ -221,12 +266,10 @@ struct ValuesAndRoutingTests {
     func testNoulLeaningJudgements() {
         let policy = RoutingPolicy.default
 
-        // Leaning Yes: p = 0.75 -> decisiveness = 0.75 (>= 0.60 and < 0.85) -> .confirm
         let leaningYes = policy.decide(Probability(clamping: 0.75))
         #expect(leaningYes.answer == true)
         #expect(leaningYes.decision == .confirm)
 
-        // Leaning No: p = 0.25 -> decisiveness = 0.75 -> .confirm
         let leaningNo = policy.decide(Probability(clamping: 0.25))
         #expect(leaningNo.answer == false)
         #expect(leaningNo.decision == .confirm)
@@ -241,18 +284,18 @@ struct ValuesAndRoutingTests {
         #expect(judgement.decision == .escalate)
     }
 
-    // MARK: - Enriched JevError Taxonomy Tests
+    // MARK: - SystemOneError Taxonomy Tests
 
-    @Test("JevError remains Equatable and preserves HTTP diagnostics")
-    func testJevErrorDiagnostics() {
-        let err401 = JevError.apiError(statusCode: 401, message: "Invalid API key")
+    @Test("SystemOneError remains Equatable and preserves HTTP & remediation diagnostics")
+    func testSystemOneErrorDiagnostics() {
+        let err401 = SystemOneError.apiError(statusCode: 401, message: "Invalid API key")
         #expect(err401.localizedDescription.contains("401"))
-        #expect(err401 == JevError.apiError(statusCode: 401, message: "Invalid API key"))
+        #expect(err401 == SystemOneError.apiError(statusCode: 401, message: "Invalid API key"))
 
-        let err429 = JevError.apiError(statusCode: 429, message: "Rate limited (retry after 5 seconds)")
-        #expect(err429.localizedDescription.contains("429"))
+        let missingKey = SystemOneError.missingAPIKey
+        #expect(missingKey.localizedDescription.contains("TYPESAFE_API_KEY"))
 
-        let networkError = JevError.networkError("connection lost")
+        let networkError = SystemOneError.networkError("connection lost")
         #expect(networkError.localizedDescription.contains("Network error"))
     }
 }

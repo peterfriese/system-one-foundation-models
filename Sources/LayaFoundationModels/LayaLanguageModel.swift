@@ -9,7 +9,7 @@ public struct LayaLanguageModel: LanguageModel, Sendable {
         public var endpoint: LayaEndpoint
         public var modelID: String
         public var apiKey: String?
-        public var backend: LayaHTTPBackend
+        public var backend: AnySystemOneBackend
 
         public init(
             endpoint: LayaEndpoint = .localDefault,
@@ -23,14 +23,27 @@ public struct LayaLanguageModel: LanguageModel, Sendable {
             self.endpoint = endpoint
             self.modelID = modelID
             self.apiKey = apiKey
-            self.backend = LayaHTTPBackend(
-                endpoint: endpoint,
-                apiKey: apiKey,
-                proxyCredential: proxyCredential,
-                session: session,
-                timeoutInterval: timeoutInterval,
-                retryPolicy: retryPolicy
+            self.backend = AnySystemOneBackend(
+                LayaHTTPBackend(
+                    endpoint: endpoint,
+                    apiKey: apiKey,
+                    proxyCredential: proxyCredential,
+                    session: session,
+                    timeoutInterval: timeoutInterval,
+                    retryPolicy: retryPolicy
+                )
             )
+        }
+
+        public init(
+            backend: any SystemOneBackend,
+            modelID: String = "english",
+            endpoint: LayaEndpoint = .localDefault
+        ) {
+            self.endpoint = endpoint
+            self.modelID = modelID
+            self.apiKey = nil
+            self.backend = (backend as? AnySystemOneBackend) ?? AnySystemOneBackend(backend)
         }
     }
 
@@ -43,7 +56,7 @@ public struct LayaLanguageModel: LanguageModel, Sendable {
     }
 
     public init(
-        endpoint: LayaEndpoint = .localDefault,
+        endpoint: LayaEndpoint? = nil,
         modelID: String = "english",
         apiKey: String? = nil,
         proxyCredential: ProxyCredential? = nil,
@@ -51,10 +64,12 @@ public struct LayaLanguageModel: LanguageModel, Sendable {
         timeoutInterval: TimeInterval = 30,
         retryPolicy: RetryPolicy = .default
     ) {
+        let resolvedEndpoint = endpoint ?? Self.resolveDefaultEndpoint()
+        let resolvedKey = proxyCredential == nil ? (apiKey ?? Self.nonEmptyEnv("LAYA_API_KEY")) : apiKey
         self.executorConfiguration = Configuration(
-            endpoint: endpoint,
+            endpoint: resolvedEndpoint,
             modelID: modelID,
-            apiKey: apiKey,
+            apiKey: resolvedKey,
             proxyCredential: proxyCredential,
             session: session,
             timeoutInterval: timeoutInterval,
@@ -117,6 +132,16 @@ public struct LayaLanguageModel: LanguageModel, Sendable {
         )
     }
 
+    public init(
+        backend: any SystemOneBackend,
+        modelID: String = "english"
+    ) {
+        self.executorConfiguration = Configuration(
+            backend: backend,
+            modelID: modelID
+        )
+    }
+
     public init(configuration: Configuration) {
         self.executorConfiguration = configuration
     }
@@ -128,6 +153,28 @@ public struct LayaLanguageModel: LanguageModel, Sendable {
     public func supportsDataEntryType(_ type: UTType) async throws -> Bool {
         false
     }
+
+    private static func resolveDefaultEndpoint() -> LayaEndpoint {
+        let env = ProcessInfo.processInfo.environment
+        if let rawURL = env["LAYA_SERVE_URL"] ?? env["LAYA_ENDPOINT"] {
+            let trimmed = rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty, let parsed = URL(string: trimmed) {
+                if parsed.path.isEmpty || parsed.path == "/" {
+                    return .custom(parsed.appendingPathComponent("v1/systemone"))
+                }
+                return .custom(parsed)
+            }
+        }
+        return .localDefault
+    }
+
+    private static func nonEmptyEnv(_ key: String) -> String? {
+        guard let raw = ProcessInfo.processInfo.environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty else {
+            return nil
+        }
+        return raw
+    }
 }
 
 /// An executor bridging `LanguageModelSession` requests to a Laya HTTP server.
@@ -137,6 +184,7 @@ public final class LayaExecutor: LanguageModelExecutor, Sendable {
 
     public let configuration: Configuration
     private let underlyingExecutor: SystemOneExecutor
+    private let coreModel: SystemOneLanguageModel
 
     public init(configuration: Configuration) throws {
         self.configuration = configuration
@@ -144,11 +192,12 @@ public final class LayaExecutor: LanguageModelExecutor, Sendable {
             backend: configuration.backend,
             modelID: configuration.modelID
         )
-        self.underlyingExecutor = try SystemOneExecutor(configuration: coreConfig)
+        self.coreModel = SystemOneLanguageModel(configuration: coreConfig)
+        self.underlyingExecutor = SystemOneExecutor(configuration: coreConfig)
     }
 
     public func prewarm(model: LayaLanguageModel, transcript: Transcript) {
-        // HTTP endpoints require no local prewarming
+        underlyingExecutor.prewarm(model: coreModel, transcript: transcript)
     }
 
     public func respond(
@@ -156,10 +205,6 @@ public final class LayaExecutor: LanguageModelExecutor, Sendable {
         model: LayaLanguageModel,
         streamingInto channel: LanguageModelExecutorGenerationChannel
     ) async throws {
-        let coreModel = SystemOneLanguageModel(
-            backend: configuration.backend,
-            modelID: configuration.modelID
-        )
         try await underlyingExecutor.respond(to: request, model: coreModel, streamingInto: channel)
     }
 

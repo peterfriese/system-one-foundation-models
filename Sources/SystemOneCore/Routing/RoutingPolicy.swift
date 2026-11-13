@@ -57,9 +57,14 @@ public struct RoutingPolicy: Sendable, Hashable {
         autoAtOrAbove: Double = 0.85,
         undecidedBand: ClosedRange<Double> = 0.35...0.65
     ) {
-        self.escalateBelow = escalateBelow
-        self.autoAtOrAbove = autoAtOrAbove
-        self.undecidedBand = undecidedBand
+        let clampedEscalate = escalateBelow.isFinite ? min(max(escalateBelow, 0.0), 1.0) : 0.6
+        let clampedAuto = autoAtOrAbove.isFinite ? min(max(autoAtOrAbove, 0.0), 1.0) : 0.85
+        self.escalateBelow = clampedEscalate
+        self.autoAtOrAbove = max(clampedAuto, clampedEscalate)
+
+        let rawLower = undecidedBand.lowerBound.isFinite ? min(max(undecidedBand.lowerBound, 0.0), 1.0) : 0.35
+        let rawUpper = undecidedBand.upperBound.isFinite ? min(max(undecidedBand.upperBound, 0.0), 1.0) : 0.65
+        self.undecidedBand = min(rawLower, rawUpper)...max(rawLower, rawUpper)
     }
 
     public static let `default` = RoutingPolicy()

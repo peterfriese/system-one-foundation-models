@@ -1,8 +1,9 @@
 import Testing
 import Foundation
+import CoreML
 import FoundationModels
 import SystemOneCore
-import LayaOnDevice
+@testable import LayaOnDevice
 
 @Suite("LayaOnDevice Core ML & Tokenization Tests")
 struct LayaOnDeviceTests {
@@ -248,6 +249,105 @@ struct LayaOnDeviceTests {
             default:
                 Issue.record("Expected modelExecutionError, got \(error)")
             }
+        }
+    }
+
+    @Test("LayaCoreMLEngine.prepareFeatureArrays pads inputIds and attentionMask to static [1, 512] shape")
+    func testPrepareFeatureArraysStatic512Padding() throws {
+        let tokenizer = ModernBERTTokenizer.defaultTokenizer()
+        let builder = LayaSequenceBuilder(tokenizer: tokenizer, maxLen: 512, headMaxLen: 192)
+        let sequence = try builder.buildSequence(
+            state: "Short state text",
+            question: .noul(instructions: "Is this active?")
+        )
+        #expect(sequence.inputIds.count < 512)
+
+        let engine = LayaCoreMLEngine(tokenizer: tokenizer) { _ in [0.0, 1.0] }
+        let arrays = try engine.prepareFeatureArrays(for: sequence)
+
+        #expect(arrays.inputIds.shape == [1, 512])
+        #expect(arrays.attentionMask.shape == [1, 512])
+        #expect(arrays.markerPos.shape == [1, 32])
+        #expect(arrays.markerMask.shape == [1, 32])
+        #expect(arrays.qtype.shape == [1])
+
+        let seqLen = sequence.inputIds.count
+        for i in 0..<seqLen {
+            #expect(arrays.inputIds[[0, NSNumber(value: i)]].intValue == sequence.inputIds[i])
+            #expect(arrays.attentionMask[[0, NSNumber(value: i)]].intValue == 1)
+        }
+        for i in seqLen..<512 {
+            #expect(arrays.inputIds[[0, NSNumber(value: i)]].intValue == tokenizer.padTokenId)
+            #expect(arrays.attentionMask[[0, NSNumber(value: i)]].intValue == 0)
+        }
+    }
+
+    @Test("MMBERTTokenizer loads SentencePiece Unigram [[piece, score]] + added_tokens and encodes subwords")
+    func testMMBERTTokenizerSentencePieceUnigramAndAddedTokens() throws {
+        let tokenizerJSON = """
+        {
+          "model": {
+            "type": "Unigram",
+            "vocab": [
+              ["<pad>", 0.0],
+              ["<eos>", 0.0],
+              ["<bos>", 0.0],
+              ["<unk>", 0.0],
+              ["▁hello", -1.2],
+              ["▁world", -1.5],
+              ["s", -2.1]
+            ]
+          },
+          "added_tokens": [
+            { "id": 7, "content": "<mask_1>", "special": true }
+          ]
+        }
+        """
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mmbert-unigram-\(UUID().uuidString).json")
+        try Data(tokenizerJSON.utf8).write(to: tempURL)
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+
+        let tokenizer = try MMBERTTokenizer(jsonURL: tempURL)
+        #expect(tokenizer.maskTokenId == 7)
+        let ids = tokenizer.encode("hello worlds <mask_1>", addSpecialTokens: true)
+        #expect(ids == [2, 4, 5, 6, 7, 1])
+
+        // Rejects remote URLs with SystemOneError instead of blocking network I/O
+        #expect(throws: SystemOneError.self) {
+            _ = try MMBERTTokenizer(jsonURL: URL(string: "https://example.com/tokenizer.json")!)
+        }
+        #expect(throws: SystemOneError.self) {
+            _ = try ModernBERTTokenizer(jsonURL: URL(string: "https://example.com/tokenizer.json")!)
+        }
+    }
+
+    @Test("TemperatureCalibration handles empty probabilities and non-finite logits safely")
+    func testTemperatureCalibrationEdgeCases() {
+        #expect(TemperatureCalibration.answerConfidence(probabilities: []) == 0.0)
+        #expect(TemperatureCalibration.answerConfidence(probabilities: [.nan, 0.5]) == 0.0)
+
+        let probs = TemperatureCalibration.softmax(logits: [.nan, 1.0], temperature: 1.0)
+        #expect(probs.count == 2)
+        #expect(probs.allSatisfy { $0.isFinite && abs($0 - 0.5) < 0.0001 })
+    }
+
+    @Test("LayaOnDeviceLanguageModel supports init(backend:) and fails cleanly on missing model file")
+    func testLayaOnDeviceBackendInitAndMissingModel() async throws {
+        let backend = MockSystemOneBackend(
+            fixedResponse: SystemOneResponse(
+                model: "laya-coreml",
+                answers: ["decision": SystemOneAnswer(type: "noul", noul: 0.91, confidence: 0.91)]
+            )
+        )
+        let session = LanguageModelSession(model: LayaOnDeviceLanguageModel(backend: backend))
+        let prob = try await session.probability(of: "Check on-device backend seam", state: "State")
+        #expect(abs(prob - 0.91) < 0.0001)
+
+        let missingURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("nonexistent-\(UUID().uuidString).mlpackage")
+        #expect(throws: SystemOneError.self) {
+            _ = try LayaOnDeviceLanguageModel(modelURL: missingURL)
         }
     }
 }

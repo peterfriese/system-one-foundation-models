@@ -20,7 +20,16 @@ public enum OpenAIDecisionsEndpoint: Hashable, Sendable {
     )
 
     /// The default official OpenAI Decisions API URL.
-    public static let defaultURL = URL(string: "https://api.openai.com/v1/decisions")!
+    public static let defaultURL: URL = {
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = "api.openai.com"
+        components.path = "/v1/decisions"
+        guard let built = components.url else {
+            preconditionFailure("Static OpenAIDecisionsEndpoint.defaultURL components must form a valid URL")
+        }
+        return built
+    }()
 
     /// The default official System One decision model identifier.
     public static let defaultModel = "gpt-6-luna"

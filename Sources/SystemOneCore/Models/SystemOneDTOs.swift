@@ -196,13 +196,19 @@ public struct SystemOneAnswer: Codable, Sendable, Equatable {
             }
         }
 
+        let sourceKeys = Set(indexedLegend.keys).union(indexedProbs.keys)
         let levelCount = max(indexedLegend.count, indexedProbs.count)
+        let hasZeroBasedLevels = !sourceKeys.isEmpty
+            && levelCount > 0
+            && sourceKeys.allSatisfy { (0...(levelCount - 1)).contains($0) }
         let adjustedScore = adjustedScoreValue(
             rawScore: score,
             minimum: minimum,
             maximum: maximum,
             isInteger: isInteger,
-            levelCount: levelCount
+            levelCount: levelCount,
+            sourceKeys: sourceKeys,
+            hasZeroBasedLevels: hasZeroBasedLevels
         )
         return ScoreValue(
             validatingValue: adjustedScore,
@@ -229,10 +235,12 @@ public struct SystemOneAnswer: Codable, Sendable, Equatable {
         minimum: Double?,
         maximum: Double?,
         isInteger: Bool,
-        levelCount: Int
+        levelCount: Int,
+        sourceKeys: Set<Int>,
+        hasZeroBasedLevels: Bool
     ) -> Double {
         guard let minimum, let maximum else { return rawScore }
-        guard minimum <= maximum else { return rawScore }
+        guard minimum.isFinite, maximum.isFinite, minimum <= maximum else { return rawScore }
 
         let span = maximum - minimum
         if isInteger,
@@ -240,7 +248,17 @@ public struct SystemOneAnswer: Codable, Sendable, Equatable {
            maximum.rounded() == maximum,
            levelCount > 1,
            span == Double(levelCount - 1),
+           hasZeroBasedLevels,
            rawScore >= 0, rawScore <= Double(levelCount - 1) {
+            return minimum + rawScore
+        }
+
+        if sourceKeys.isEmpty,
+           isInteger,
+           minimum.rounded() == minimum,
+           minimum > 0,
+           rawScore >= 0,
+           rawScore < minimum {
             return minimum + rawScore
         }
 
@@ -248,11 +266,11 @@ public struct SystemOneAnswer: Codable, Sendable, Equatable {
             return rawScore
         }
 
-        if levelCount > 1, rawScore >= 0, rawScore <= Double(levelCount - 1) {
+        if levelCount > 1, hasZeroBasedLevels, rawScore >= 0, rawScore <= Double(levelCount - 1) {
             return minimum + (rawScore / Double(levelCount - 1)) * span
         }
 
-        if rawScore >= 0, rawScore <= span {
+        if hasZeroBasedLevels, rawScore >= 0, rawScore <= span {
             return minimum + rawScore
         }
 
@@ -266,9 +284,12 @@ public struct SystemOneAnswer: Codable, Sendable, Equatable {
         isInteger: Bool,
         levelCount: Int
     ) -> [Int: T] {
-        guard isInteger,
+        guard !source.isEmpty,
+              isInteger,
               let minimum,
               let maximum,
+              minimum.isFinite,
+              maximum.isFinite,
               minimum.rounded() == minimum,
               maximum.rounded() == maximum,
               levelCount > 1,
@@ -277,7 +298,7 @@ public struct SystemOneAnswer: Codable, Sendable, Equatable {
             return source
         }
 
-        let offset = Int(minimum)
+        let offset = ScoreValue.clampedInt(from: minimum)
         return Dictionary(uniqueKeysWithValues: source.map { (key, value) in
             (key + offset, value)
         })

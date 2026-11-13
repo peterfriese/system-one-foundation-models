@@ -53,6 +53,7 @@ public struct SystemOneProxyBackend: SystemOneBackend, Sendable, Hashable {
     }
 
     public func evaluate(request: SystemOneRequest) async throws -> SystemOneResponse {
+        try Task.checkCancellation()
         try ProxyEndpointValidator.validate(proxyEndpoint)
 
         let requestData: Data
@@ -77,6 +78,10 @@ public struct SystemOneProxyBackend: SystemOneBackend, Sendable, Hashable {
 
                 if statusCode == 401 || statusCode == 403 {
                     throw SystemOneError.authenticationFailed(body)
+                }
+
+                if statusCode == 422, let refusal = Self.decodeSafetyRefusal(from: resError.data) {
+                    throw refusal
                 }
 
                 let isLastAttempt = attempts >= maxAttempts
@@ -128,6 +133,27 @@ public struct SystemOneProxyBackend: SystemOneBackend, Sendable, Hashable {
         let data: Data
     }
 
+    private struct ProxySafetyRefusalEnvelope: Decodable {
+        struct ErrorDetail: Decodable {
+            let type: String?
+            let question: String?
+            let message: String?
+        }
+        let error: ErrorDetail
+    }
+
+    private static func decodeSafetyRefusal(from data: Data) -> SystemOneError? {
+        guard let envelope = try? JSONDecoder().decode(ProxySafetyRefusalEnvelope.self, from: data),
+              envelope.error.type == "safety_refusal" else {
+            return nil
+        }
+        let reason = envelope.error.message.flatMap { $0.isEmpty ? nil : $0 }
+            ?? "Content blocked by safety policy"
+        let questionName = envelope.error.question.flatMap { $0.isEmpty ? nil : $0 }
+            ?? "unknown"
+        return .safetyRefusal(reason: reason, questionName: questionName)
+    }
+
     private static func formatErrorBody(from data: Data, fallbackCode: Int) -> String {
         guard let rawString = String(data: data, encoding: .utf8), !rawString.isEmpty else {
             return "HTTP error \(fallbackCode)"
@@ -139,6 +165,7 @@ public struct SystemOneProxyBackend: SystemOneBackend, Sendable, Hashable {
     }
 
     private func performSingleEvaluation(requestData: Data) async throws -> SystemOneResponse {
+        try Task.checkCancellation()
         var urlRequest = URLRequest(url: proxyEndpoint)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")

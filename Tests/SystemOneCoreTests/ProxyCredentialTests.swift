@@ -565,4 +565,77 @@ struct ProxyCredentialTests {
         #expect(visionProxyModel.capabilities.contains(.vision))
         #expect(try await visionProxyModel.supportsDataAttachmentType(.png) == true)
     }
+
+    @Test("SystemOneProxyBackend decodes HTTP 422 safety_refusal into SystemOneError.safetyRefusal without retrying")
+    func testHTTP422SafetyRefusalDecodedWithoutRetry() async throws {
+        let proxyURL = URL(string: "https://gateway.company.com/v1/systemone")!
+        let request = SystemOneRequest(
+            state: "Harmful prompt test",
+            questions: ["isUrgent": .noul(instructions: "Urgent?")]
+        )
+
+        // 1. Proxy 422 safety_refusal envelope -> SystemOneError.safetyRefusal (non-retryable)
+        let refusalPayload = """
+        {
+          "error": {
+            "type": "safety_refusal",
+            "question": "isUrgent",
+            "message": "Blocked by upstream safety policy"
+          }
+        }
+        """.data(using: .utf8)!
+
+        MockSystemOneProxyURLProtocol.reset()
+        MockSystemOneProxyURLProtocol.enqueue(
+            statusCode: 422,
+            headers: ["Content-Type": "application/json"],
+            body: refusalPayload
+        )
+
+        let backend = SystemOneProxyBackend(
+            proxyEndpoint: proxyURL,
+            credential: .appCheck { "valid-tok" },
+            session: makeSession(),
+            retryPolicy: RetryPolicy(
+                maxAttempts: 3,
+                initialDelay: .zero,
+                retryableStatuses: [422, 429, 503]
+            )
+        )
+
+        do {
+            _ = try await backend.evaluate(request: request)
+            Issue.record("Expected SystemOneError.safetyRefusal for HTTP 422 safety_refusal envelope")
+        } catch let SystemOneError.safetyRefusal(reason, questionName) {
+            #expect(reason == "Blocked by upstream safety policy")
+            #expect(questionName == "isUrgent")
+        }
+
+        // Must not retry even when 422 is included in retryableStatuses
+        #expect(MockSystemOneProxyURLProtocol.recordedRequests.count == 1)
+
+        // 2. Generic non-refusal 422 -> SystemOneError.apiError(statusCode: 422, ...)
+        MockSystemOneProxyURLProtocol.reset()
+        MockSystemOneProxyURLProtocol.enqueue(
+            statusCode: 422,
+            headers: ["Content-Type": "application/json"],
+            body: Data("{\"error\":{\"type\":\"validation_error\",\"message\":\"Invalid schema\"}}".utf8)
+        )
+
+        let standardBackend = SystemOneProxyBackend(
+            proxyEndpoint: proxyURL,
+            credential: .appCheck { "valid-tok" },
+            session: makeSession(),
+            retryPolicy: .default
+        )
+
+        do {
+            _ = try await standardBackend.evaluate(request: request)
+            Issue.record("Expected SystemOneError.apiError for generic HTTP 422")
+        } catch let SystemOneError.apiError(statusCode, message) {
+            #expect(statusCode == 422)
+            #expect(message.contains("validation_error"))
+        }
+        #expect(MockSystemOneProxyURLProtocol.recordedRequests.count == 1)
+    }
 }

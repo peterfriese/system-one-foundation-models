@@ -63,7 +63,15 @@ public struct SystemOneImage: Codable, Sendable, Equatable {
     }
 
     public init(fileURL: URL, identifier: String? = nil) throws {
-        let data = try Data(contentsOf: fileURL)
+        guard fileURL.isFileURL else {
+            throw SystemOneError.modelExecutionError("Image URL must be a local file:// URL, got '\(fileURL.scheme ?? "unknown")'.")
+        }
+        let data: Data
+        do {
+            data = try Data(contentsOf: fileURL)
+        } catch {
+            throw SystemOneError.modelExecutionError("Failed to read image file at '\(fileURL.path)': \(error.localizedDescription)")
+        }
         let utType = UTType(filenameExtension: fileURL.pathExtension) ?? .data
         try self.init(data: data, utType: utType, identifier: identifier ?? fileURL.lastPathComponent)
     }
@@ -134,69 +142,109 @@ public struct SystemOneImage: Codable, Sendable, Equatable {
 
     /// Lightweight header-only dimension parser to avoid full bitmap decompression in memory.
     public static func extractDimensions(data: Data, format: Format) -> (width: Int, height: Int)? {
+        let bytes = [UInt8](data)
+
         switch format {
         case .png:
             // PNG signature (8 bytes) + IHDR chunk header (4 length + 4 type) -> width at offset 16, height at offset 20
-            guard data.count >= 24 else { return nil }
-            let width = data[16..<20].withUnsafeBytes { $0.loadUnaligned(as: UInt32.self).bigEndian }
-            let height = data[20..<24].withUnsafeBytes { $0.loadUnaligned(as: UInt32.self).bigEndian }
+            let pngSignature: [UInt8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
+            let ihdrType: [UInt8] = [0x49, 0x48, 0x44, 0x52]
+            guard bytes.count >= 24,
+                  Array(bytes[0..<8]) == pngSignature,
+                  Array(bytes[12..<16]) == ihdrType else {
+                return nil
+            }
+            let width = (UInt32(bytes[16]) << 24) | (UInt32(bytes[17]) << 16) | (UInt32(bytes[18]) << 8) | UInt32(bytes[19])
+            let height = (UInt32(bytes[20]) << 24) | (UInt32(bytes[21]) << 16) | (UInt32(bytes[22]) << 8) | UInt32(bytes[23])
+            guard width > 0, height > 0 else { return nil }
             return (Int(width), Int(height))
 
         case .jpeg:
-            // Scan for SOF0 (0xFF, 0xC0) or SOF2 (0xFF, 0xC2) markers
+            // Verify JPEG SOI marker (0xFF 0xD8)
+            guard bytes.count >= 11, bytes[0] == 0xFF, bytes[1] == 0xD8 else {
+                return nil
+            }
             var offset = 2
-            while offset < data.count - 8 {
-                if data[offset] == 0xFF {
-                    let marker = data[offset + 1]
-                    if marker == 0xC0 || marker == 0xC1 || marker == 0xC2 {
-                        let height = data[(offset + 5)..<(offset + 7)].withUnsafeBytes { $0.loadUnaligned(as: UInt16.self).bigEndian }
-                        let width = data[(offset + 7)..<(offset + 9)].withUnsafeBytes { $0.loadUnaligned(as: UInt16.self).bigEndian }
-                        return (Int(width), Int(height))
-                    } else if marker == 0xD9 || marker == 0xDA {
-                        // End of image or start of scan
-                        break
-                    } else {
-                        // Advance by marker segment length
-                        let length = data[(offset + 2)..<(offset + 4)].withUnsafeBytes { $0.loadUnaligned(as: UInt16.self).bigEndian }
-                        offset += 2 + Int(length)
-                    }
-                } else {
+            while offset < bytes.count {
+                while offset < bytes.count && bytes[offset] != 0xFF {
                     offset += 1
                 }
+                while offset < bytes.count && bytes[offset] == 0xFF {
+                    offset += 1
+                }
+                guard offset < bytes.count else { break }
+                let marker = bytes[offset]
+                offset += 1
+
+                // Stuffed byte (0x00), TEM (0x01), or RST0...RST7 (0xD0...0xD7), SOI (0xD8) have no length payload
+                if marker == 0x00 || marker == 0x01 || (0xD0...0xD8).contains(marker) {
+                    continue
+                }
+                // EOI (0xD9) or SOS (0xDA) ends header scanning
+                if marker == 0xD9 || marker == 0xDA {
+                    break
+                }
+
+                guard offset + 2 <= bytes.count else { return nil }
+                let segLength = Int((UInt16(bytes[offset]) << 8) | UInt16(bytes[offset + 1]))
+                guard segLength >= 2, offset + segLength <= bytes.count else {
+                    return nil
+                }
+
+                // SOF markers: 0xC0...0xCF excluding DHT (0xC4), JPG (0xC8), DAC (0xCC)
+                let isSOF = (0xC0...0xCF).contains(marker) && marker != 0xC4 && marker != 0xC8 && marker != 0xCC
+                if isSOF {
+                    guard segLength >= 7, offset + 7 <= bytes.count else { return nil }
+                    let height = Int((UInt16(bytes[offset + 3]) << 8) | UInt16(bytes[offset + 4]))
+                    let width = Int((UInt16(bytes[offset + 5]) << 8) | UInt16(bytes[offset + 6]))
+                    guard width > 0, height > 0 else { return nil }
+                    return (width, height)
+                }
+
+                offset += segLength
             }
             return nil
 
         case .webp:
-            // RIFF header (4) + file size (4) + WEBP (4) + VP8/VP8L/VP8X header
-            guard data.count >= 30 else { return nil }
-            let chunkType = String(data: data[12..<16], encoding: .ascii)
+            // RIFF (4) + file size (4) + WEBP (4) + chunk fourcc (4) = 16 minimum header bytes
+            let riffMagic: [UInt8] = [0x52, 0x49, 0x46, 0x46]
+            let webpMagic: [UInt8] = [0x57, 0x45, 0x42, 0x50]
+            guard bytes.count >= 16,
+                  Array(bytes[0..<4]) == riffMagic,
+                  Array(bytes[8..<12]) == webpMagic else {
+                return nil
+            }
+            let chunkType = String(bytes: bytes[12..<16], encoding: .ascii)
             if chunkType == "VP8 " {
-                // Keyframe check
-                guard data.count >= 26 else { return nil }
-                let width = data[26..<28].withUnsafeBytes { $0.loadUnaligned(as: UInt16.self).littleEndian } & 0x3FFF
-                let height = data[28..<30].withUnsafeBytes { $0.loadUnaligned(as: UInt16.self).littleEndian } & 0x3FFF
-                return (Int(width), Int(height))
+                // Lossy WebP keyframe check (0x9D 0x01 0x2A at offset 23..25)
+                guard bytes.count >= 30 else { return nil }
+                let width = Int((UInt16(bytes[26]) | (UInt16(bytes[27]) << 8)) & 0x3FFF)
+                let height = Int((UInt16(bytes[28]) | (UInt16(bytes[29]) << 8)) & 0x3FFF)
+                guard width > 0, height > 0 else { return nil }
+                return (width, height)
             } else if chunkType == "VP8L" {
-                // Lossless WebP
-                guard data.count >= 25 else { return nil }
-                let b1 = UInt32(data[21])
-                let b2 = UInt32(data[22])
-                let b3 = UInt32(data[23])
-                let b4 = UInt32(data[24])
-                let width = 1 + Int((b1 | ((b2 & 0x3F) << 8)))
-                let height = 1 + Int(((b2 >> 6) | (b3 << 2) | ((b4 & 0xF) << 10)))
+                // Lossless WebP (25 bytes minimum: 12 RIFF/WEBP + 8 chunk header + 1 signature 0x2F + 4 packed dim bytes)
+                guard bytes.count >= 25 else { return nil }
+                let b1 = UInt32(bytes[21])
+                let b2 = UInt32(bytes[22])
+                let b3 = UInt32(bytes[23])
+                let b4 = UInt32(bytes[24])
+                let width = 1 + Int(b1 | ((b2 & 0x3F) << 8))
+                let height = 1 + Int((b2 >> 6) | (b3 << 2) | ((b4 & 0x0F) << 10))
+                guard width > 0, height > 0 else { return nil }
                 return (width, height)
             } else if chunkType == "VP8X" {
                 // Extended WebP
-                guard data.count >= 30 else { return nil }
-                let w1 = UInt32(data[24])
-                let w2 = UInt32(data[25])
-                let w3 = UInt32(data[26])
-                let h1 = UInt32(data[27])
-                let h2 = UInt32(data[28])
-                let h3 = UInt32(data[29])
+                guard bytes.count >= 30 else { return nil }
+                let w1 = UInt32(bytes[24])
+                let w2 = UInt32(bytes[25])
+                let w3 = UInt32(bytes[26])
+                let h1 = UInt32(bytes[27])
+                let h2 = UInt32(bytes[28])
+                let h3 = UInt32(bytes[29])
                 let width = 1 + Int(w1 | (w2 << 8) | (w3 << 16))
                 let height = 1 + Int(h1 | (h2 << 8) | (h3 << 16))
+                guard width > 0, height > 0 else { return nil }
                 return (width, height)
             }
             return nil

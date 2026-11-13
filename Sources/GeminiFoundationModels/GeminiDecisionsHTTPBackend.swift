@@ -177,7 +177,8 @@ public struct GeminiDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
     private func evaluateWithTiming(
         request: GeminiDecisionsRequest
     ) async throws -> (response: GeminiDecisionsResponse, transportDurationMs: Double, serverDurationMs: Double?) {
-        try ProxyEndpointValidator.validate(endpoint.url)
+        try Task.checkCancellation()
+        let targetURL = try endpoint.validatedURL()
         let resolvedKey = try resolveAPIKey()
         let sanitizedClientRequestID = try resolveClientRequestID()
 
@@ -195,6 +196,7 @@ public struct GeminiDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
             attempts += 1
             do {
                 return try await performSingleEvaluation(
+                    targetURL: targetURL,
                     requestData: requestData,
                     apiKey: resolvedKey,
                     clientRequestID: sanitizedClientRequestID
@@ -262,11 +264,13 @@ public struct GeminiDecisionsHTTPBackend: SystemOneBackend, Sendable, Hashable {
     }
 
     private func performSingleEvaluation(
+        targetURL: URL,
         requestData: Data,
         apiKey: String?,
         clientRequestID: String?
     ) async throws -> (response: GeminiDecisionsResponse, transportDurationMs: Double, serverDurationMs: Double?) {
-        var urlRequest = URLRequest(url: endpoint.url)
+        try Task.checkCancellation()
+        var urlRequest = URLRequest(url: targetURL)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")

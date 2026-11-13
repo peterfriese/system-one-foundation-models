@@ -1,4 +1,5 @@
 import Foundation
+import SystemOneCore
 
 /// A native Swift Byte-level BPE / WordPiece tokenizer for ModernBERT backbones (`laya` 421M and `laya-typed-decisions`).
 ///
@@ -39,13 +40,73 @@ public struct ModernBERTTokenizer: LayaTokenizer, Sendable {
 
     /// Initializes a tokenizer by loading a Hugging Face `tokenizer.json` file.
     public init(jsonURL: URL) throws {
-        let data = try Data(contentsOf: jsonURL)
-        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let model = root["model"] as? [String: Any],
-              let vocabDict = model["vocab"] as? [String: Int] else {
-            throw NSError(domain: "ModernBERTTokenizer", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid tokenizer.json"])
+        guard jsonURL.isFileURL else {
+            throw SystemOneError.modelExecutionError(
+                "Tokenizer URL must be a local file:// URL, got '\(jsonURL.scheme ?? "unknown")'."
+            )
         }
-        self.init(vocab: vocabDict)
+        let data: Data
+        do {
+            data = try Data(contentsOf: jsonURL)
+        } catch {
+            throw SystemOneError.modelExecutionError(
+                "Failed to read tokenizer file at '\(jsonURL.path)': \(error.localizedDescription)"
+            )
+        }
+
+        let jsonObject: Any
+        do {
+            jsonObject = try JSONSerialization.jsonObject(with: data)
+        } catch {
+            throw SystemOneError.modelExecutionError(
+                "Failed to parse tokenizer JSON at '\(jsonURL.path)': \(error.localizedDescription)"
+            )
+        }
+
+        guard let root = jsonObject as? [String: Any],
+              let model = root["model"] as? [String: Any],
+              let rawVocab = model["vocab"] as? [String: Any] else {
+            throw SystemOneError.modelExecutionError(
+                "Invalid ModernBERT tokenizer.json at '\(jsonURL.path)': missing model.vocab dictionary."
+            )
+        }
+
+        var vocabDict: [String: Int] = [:]
+        vocabDict.reserveCapacity(rawVocab.count)
+        for (token, rawId) in rawVocab {
+            if let intId = rawId as? Int {
+                vocabDict[token] = intId
+            } else if let numId = rawId as? NSNumber {
+                vocabDict[token] = numId.intValue
+            }
+        }
+
+        if let addedTokens = root["added_tokens"] as? [[String: Any]] {
+            for entry in addedTokens {
+                guard let content = entry["content"] as? String else { continue }
+                if let intId = entry["id"] as? Int {
+                    vocabDict[content] = intId
+                } else if let numId = entry["id"] as? NSNumber {
+                    vocabDict[content] = numId.intValue
+                }
+            }
+        }
+
+        guard !vocabDict.isEmpty else {
+            throw SystemOneError.modelExecutionError(
+                "Invalid ModernBERT tokenizer.json at '\(jsonURL.path)': vocabulary is empty."
+            )
+        }
+
+        self.init(
+            vocab: vocabDict,
+            clsTokenId: vocabDict["[CLS]"] ?? 50281,
+            sepTokenId: vocabDict["[SEP]"] ?? 50282,
+            padTokenId: vocabDict["[PAD]"] ?? 50283,
+            maskTokenId: vocabDict["[MASK]"] ?? 50284,
+            maskToken: "[MASK]",
+            unkTokenId: vocabDict["[UNK]"] ?? 50280
+        )
     }
 
     /// Creates a default tokenizer with common English vocabulary and special tokens for testing or fallback.
@@ -72,7 +133,6 @@ public struct ModernBERTTokenizer: LayaTokenizer, Sendable {
             "does": 14,
             "not": 15
         ]
-        // Add basic ASCII characters and common digits/letters
         for code in 32...126 {
             let charStr = String(UnicodeScalar(code)!)
             if sampleVocab[charStr] == nil {
@@ -88,7 +148,6 @@ public struct ModernBERTTokenizer: LayaTokenizer, Sendable {
             tokenIds.append(clsTokenId)
         }
 
-        // Tokenize by whitespace and subwords
         let words = text.split(whereSeparator: \.isWhitespace).map(String.init)
         for word in words {
             let subwords = tokenizeWord(word)
@@ -110,15 +169,15 @@ public struct ModernBERTTokenizer: LayaTokenizer, Sendable {
         if let direct = vocab[word] {
             return [direct]
         }
-        // Subword greedy longest matching with bounded prefix search
         var result: [Int] = []
         var remaining = word[...]
         let maxSubwordLen = 64
         while !remaining.isEmpty {
             var matched = false
-            let searchLen = min(remaining.count, maxSubwordLen)
+            let window = remaining.prefix(maxSubwordLen)
+            let searchLen = window.count
             for end in stride(from: searchLen, to: 0, by: -1) {
-                let sub = String(remaining.prefix(end))
+                let sub = String(window.prefix(end))
                 if let id = vocab[sub] {
                     result.append(id)
                     remaining = remaining.dropFirst(end)
@@ -127,7 +186,6 @@ public struct ModernBERTTokenizer: LayaTokenizer, Sendable {
                 }
             }
             if !matched {
-                // If single character not found, emit unk or character code
                 let firstChar = String(remaining.prefix(1))
                 result.append(vocab[firstChar] ?? unkTokenId)
                 remaining = remaining.dropFirst(1)

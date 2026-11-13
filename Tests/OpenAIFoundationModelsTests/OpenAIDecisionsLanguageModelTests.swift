@@ -35,7 +35,7 @@ struct OpenAIDecisionsLanguageModelTests {
 
     @Test("OpenAIDecisionsLanguageModel and OpenAILanguageModel typealias advertise guidedGeneration and vision")
     func testCapabilities() {
-        let model: OpenAILanguageModel = OpenAIDecisionsLanguageModel(backend: MockOpenAIDecisionsBackend())
+        let model: OpenAILanguageModel = OpenAIDecisionsLanguageModel(backend: MockSystemOneBackend())
         #expect(model.capabilities.contains(.guidedGeneration))
         #expect(model.capabilities.contains(.vision))
 
@@ -54,7 +54,7 @@ struct OpenAIDecisionsLanguageModelTests {
 
     @Test("OpenAIDecisionsLanguageModel supports PNG, JPEG, and WebP data attachments")
     func testSupportedDataAttachmentTypes() async throws {
-        let model = OpenAIDecisionsLanguageModel(backend: MockOpenAIDecisionsBackend())
+        let model = OpenAIDecisionsLanguageModel(backend: MockSystemOneBackend())
 
         let supportsPNG = try await model.supportsDataAttachmentType(.png)
         let supportsJPEG = try await model.supportsDataAttachmentType(.jpeg)
@@ -69,12 +69,14 @@ struct OpenAIDecisionsLanguageModelTests {
         #expect(supportsText == false)
 
         let supportsDataEntry = try await model.supportsDataEntryType(.png)
-        #expect(supportsDataEntry == false)
+        let supportsPDFDataEntry = try await model.supportsDataEntryType(.pdf)
+        #expect(supportsDataEntry == true)
+        #expect(supportsPDFDataEntry == false)
     }
 
-    @Test("End-to-end: Evaluates @Generable struct via LanguageModelSession with MockOpenAIDecisionsBackend")
+    @Test("End-to-end: Evaluates @Generable struct via LanguageModelSession with MockSystemOneBackend")
     func testLanguageModelSessionEvaluation() async throws {
-        let mockBackend = MockOpenAIDecisionsBackend { request in
+        let mockBackend = MockSystemOneBackend { _ in
             let answers: [String: SystemOneAnswer] = [
                 "isApproved": SystemOneAnswer(
                     type: "noul",
@@ -144,9 +146,84 @@ struct OpenAIDecisionsLanguageModelTests {
         #expect(judgement.answer == true)
     }
 
+    @Test("End-to-end: OpenAI 1-based @Guide(.range(1...5)) score answers are NOT shifted off-by-one (C4)")
+    func testOpenAIOneBasedScoreRangeNotShiftedOffByOne() async throws {
+        let backend = MockSystemOneBackend { _ in
+            let wireResponse = OpenAIDecisionsResponse(
+                id: "dec_1based",
+                object: "decision",
+                model: "gpt-6-luna",
+                answers: [
+                    OpenAIDecisionsAnswer(
+                        name: "isApproved",
+                        type: "predicate",
+                        probability: 0.95,
+                        confidence: 0.95
+                    ),
+                    OpenAIDecisionsAnswer(
+                        name: "category",
+                        type: "choice",
+                        choice: "meals",
+                        confidence: 0.91,
+                        probabilities: [
+                            .init(value: "meals", probability: 0.91),
+                            .init(value: "travel", probability: 0.09)
+                        ]
+                    ),
+                    OpenAIDecisionsAnswer(
+                        name: "riskScore",
+                        type: "score",
+                        score: 3.0,
+                        confidence: 0.85,
+                        probabilities: [
+                            .init(value: "1", probability: 0.02, label: "Level 1"),
+                            .init(value: "2", probability: 0.05, label: "Level 2"),
+                            .init(value: "3", probability: 0.85, label: "Level 3"),
+                            .init(value: "4", probability: 0.05, label: "Level 4"),
+                            .init(value: "5", probability: 0.03, label: "Level 5")
+                        ]
+                    )
+                ],
+                usage: .init(inputTokens: 48, outputTokens: 0)
+            )
+            return try OpenAIDecisionsPayloadAdapter.adaptResponse(
+                wireResponse,
+                transportDurationMs: 14.0,
+                serverDurationMs: 10.0
+            )
+        }
+
+        let session = LanguageModelSession(model: OpenAIDecisionsLanguageModel(backend: backend))
+        let response = try await session.respond(to: "Team dinner receipt $142.50", generating: ExpenseAuditDecision.self)
+
+        #expect(response.content.riskScore == 3)
+        let scoreVal = try #require(response.scoreValue(for: "riskScore"))
+        #expect(scoreVal.rounded == 3)
+        #expect(abs(scoreVal.value - 3.0) < 0.0001)
+        #expect(scoreVal.probabilities[3] == 0.85)
+        #expect(scoreVal.legend[3] == "Level 3")
+    }
+
     @Test("End-to-end: Evaluates @Generable struct with image attachment")
     func testLanguageModelSessionWithAttachment() async throws {
-        let mockBackend = MockOpenAIDecisionsBackend()
+        let mockBackend = MockSystemOneBackend { request in
+            let openAIReq = try OpenAIDecisionsPayloadAdapter.adaptRequest(request)
+            if case .multimodal(let messages) = openAIReq.input {
+                #expect(messages.count == 1)
+                #expect(messages[0].content.count == 2)
+            } else {
+                Issue.record("Expected multimodal message payload for attachment")
+            }
+            return SystemOneResponse(
+                model: "gpt-6-luna",
+                answers: [
+                    "isApproved": SystemOneAnswer(type: "noul", noul: 0.92, confidence: 0.92),
+                    "category": SystemOneAnswer(type: "choice", choice: "meals", confidence: 0.90),
+                    "riskScore": SystemOneAnswer(type: "score", score: 0.0, confidence: 0.88, probabilities: ["0": 0.88, "1": 0.12])
+                ],
+                usage: SystemOneUsage(inputTokens: 120, outputTokens: 0)
+            )
+        }
         let model = OpenAIDecisionsLanguageModel(backend: mockBackend)
         let session = LanguageModelSession(model: model)
 
@@ -168,20 +245,33 @@ struct OpenAIDecisionsLanguageModelTests {
         }
 
         let response = try await session.respond(to: prompt, generating: ExpenseAuditDecision.self)
-
         #expect(response.content.isApproved == true)
-        #expect(mockBackend.lastOpenAIRequest != nil)
-        if case .multimodal(let messages) = mockBackend.lastOpenAIRequest?.input {
-            #expect(messages.count == 1)
-            #expect(messages[0].content.count == 2)
-        } else {
-            Issue.record("Expected multimodal message payload for attachment")
+        #expect(response.content.riskScore == 1)
+    }
+
+    @available(*, deprecated)
+    @Test("Deprecated MockOpenAIDecisionsBackend remains source-compatible and reset() clears custom handler")
+    func testDeprecatedMockOpenAIDecisionsBackendCompatibility() async throws {
+        try await verifyDeprecatedMockBackend()
+    }
+
+    @available(*, deprecated)
+    private func verifyDeprecatedMockBackend() async throws {
+        let mock = MockOpenAIDecisionsBackend { _ in
+            throw SystemOneError.networkError("custom handler fail")
         }
+        await #expect(throws: SystemOneError.self) {
+            _ = try await mock.evaluate(request: SystemOneRequest(state: "S", questions: ["q": .noul(instructions: "I")]))
+        }
+        mock.reset()
+        let fallback = try await mock.evaluate(request: SystemOneRequest(state: "S", questions: ["q": .noul(instructions: "I")]))
+        #expect(fallback.answers["q"]?.noul == 0.95)
+        #expect(mock.lastOpenAIRequest != nil)
     }
 
     @Test("OpenAIDecisionsExecutor rejects unstructured free-form text requests")
     func testStructuredOutputRequired() async throws {
-        let model = OpenAIDecisionsLanguageModel(backend: MockOpenAIDecisionsBackend())
+        let model = OpenAIDecisionsLanguageModel(backend: MockSystemOneBackend())
         let session = LanguageModelSession(model: model)
 
         do {
@@ -200,13 +290,13 @@ struct OpenAIDecisionsLanguageModelTests {
 
     @Test("OpenAIDecisionsExecutor rejects absent answer array and throws decodingError instead of fabricating fallbacks")
     func testLanguageModelSessionWithAbsentAnswersThrows() async throws {
-        let mockBackend = MockOpenAIDecisionsBackend { _ in
-            SystemOneResponse(
+        let mockBackend = MockSystemOneBackend(
+            fixedResponse: SystemOneResponse(
                 model: "gpt-6-luna",
-                answers: [:], // Empty/absent answers
+                answers: [:],
                 usage: SystemOneUsage(inputTokens: 50, outputTokens: 0)
             )
-        }
+        )
 
         let model = OpenAIDecisionsLanguageModel(backend: mockBackend)
         let session = LanguageModelSession(model: model)
@@ -225,21 +315,19 @@ struct OpenAIDecisionsLanguageModelTests {
 
     @Test("OpenAIDecisionsExecutor rejects partial answer array and throws decodingError instead of fabricating fallbacks")
     func testLanguageModelSessionWithPartialAnswersThrows() async throws {
-        let mockBackend = MockOpenAIDecisionsBackend { _ in
-            // Return only isApproved, missing category and riskScore
-            let partialAnswers: [String: SystemOneAnswer] = [
-                "isApproved": SystemOneAnswer(
-                    type: "noul",
-                    noul: 0.95,
-                    confidence: 0.95
-                )
-            ]
-            return SystemOneResponse(
+        let mockBackend = MockSystemOneBackend(
+            fixedResponse: SystemOneResponse(
                 model: "gpt-6-luna",
-                answers: partialAnswers,
+                answers: [
+                    "isApproved": SystemOneAnswer(
+                        type: "noul",
+                        noul: 0.95,
+                        confidence: 0.95
+                    )
+                ],
                 usage: SystemOneUsage(inputTokens: 50, outputTokens: 0)
             )
-        }
+        )
 
         let model = OpenAIDecisionsLanguageModel(backend: mockBackend)
         let session = LanguageModelSession(model: model)

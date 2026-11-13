@@ -174,6 +174,6 @@ public struct OpenAIDecisionsLanguageModel: LanguageModel, Sendable {
     }
 
     public func supportsDataEntryType(_ type: UTType) async throws -> Bool {
-        false
+        type.conforms(to: .png) || type.conforms(to: .jpeg) || type.conforms(to: .webP)
     }
 }

@@ -7,6 +7,14 @@ public struct MockSystemOneBackend: SystemOneBackend, Sendable {
 
     public init(
         id: UUID = UUID(),
+        fixedResponse: SystemOneResponse = SystemOneResponse(model: "mock-systemone", answers: [:])
+    ) {
+        self.id = id
+        self.handler = { _ in fixedResponse }
+    }
+
+    public init(
+        id: UUID = UUID(),
         handler: @escaping @Sendable (SystemOneRequest) async throws -> SystemOneResponse
     ) {
         self.id = id

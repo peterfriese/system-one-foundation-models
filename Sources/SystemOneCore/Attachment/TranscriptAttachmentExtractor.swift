@@ -7,11 +7,21 @@ import ImageIO
 /// Utilities for extracting image attachments from Apple Foundation Models transcripts.
 /// See `tech-notes/0015-clef-multimodal-token-estimation-and-data-url-encoding.md`.
 public enum TranscriptAttachmentExtractor {
-    /// Extracts and validates image attachments from a Foundation Models transcript.
+    /// Extracts and validates image attachments from the active turn of a Foundation Models transcript.
     public static func extractImages(from transcript: Transcript) throws -> [SystemOneImage] {
         var images: [SystemOneImage] = []
+        let entries = Array(transcript)
+        let activeStartIndex: Int
+        if let lastResponseIndex = entries.lastIndex(where: {
+            if case .response = $0 { return true }
+            return false
+        }) {
+            activeStartIndex = entries.index(after: lastResponseIndex)
+        } else {
+            activeStartIndex = entries.startIndex
+        }
 
-        for entry in transcript {
+        for entry in entries[activeStartIndex...] {
             switch entry {
             case .prompt(let prompt):
                 for segment in prompt.segments {
@@ -49,6 +59,7 @@ public enum TranscriptAttachmentExtractor {
 
         case .image(let imageAttachment):
             if let url = imageAttachment.url,
+               url.isFileURL,
                let image = try? extractImage(fromFileURL: url, identifier: attachmentSegment.label, maxDimension: 1024) {
                 return image
             }
@@ -97,7 +108,10 @@ public enum TranscriptAttachmentExtractor {
         identifier: String? = nil,
         maxDimension: Int = 1024
     ) throws -> SystemOneImage {
-        try withAutoreleasePool {
+        guard url.isFileURL else {
+            throw SystemOneError.modelExecutionError("Image URL must be a local file URL.")
+        }
+        return try withAutoreleasePool {
             let resolvedIdentifier = identifier ?? url.lastPathComponent
             let sourceOptions: [CFString: Any] = [kCGImageSourceShouldCache: false]
             guard let source = CGImageSourceCreateWithURL(url as CFURL, sourceOptions as CFDictionary) else {

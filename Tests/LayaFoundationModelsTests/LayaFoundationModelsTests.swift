@@ -282,4 +282,63 @@ struct LayaFoundationModelsTests {
             _ = try await insecureBackend.evaluate(request: request)
         }
     }
+
+    @Test("LayaEndpoint.validatedURL rejects invalid TCP ports without crashing .url")
+    func testLayaEndpointPortValidation() throws {
+        // Accessing .url never traps even on out-of-range ports
+        _ = LayaEndpoint.local(port: 0).url
+        _ = LayaEndpoint.local(port: 70000).url
+        _ = LayaEndpoint.local(port: -5).url
+
+        #expect(throws: SystemOneError.self) {
+            _ = try LayaEndpoint.local(port: 0).validatedURL()
+        }
+        #expect(throws: SystemOneError.self) {
+            _ = try LayaEndpoint.local(port: 70000).validatedURL()
+        }
+        let valid = try LayaEndpoint.local(port: 8770).validatedURL()
+        #expect(valid.absoluteString == "http://127.0.0.1:8770/v1/systemone")
+    }
+
+    @Test("LayaHTTPBackend retries 503 responses and LayaLanguageModel supports init(backend:)")
+    func testLayaRetryAndBackendInitializer() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: config)
+
+        final class AttemptCounter: @unchecked Sendable {
+            var count = 0
+        }
+        let counter = AttemptCounter()
+        MockURLProtocol.requestHandler = { request in
+            counter.count += 1
+            if counter.count == 1 {
+                let r503 = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 503,
+                    httpVersion: nil,
+                    headerFields: ["Retry-After": "0"]
+                )!
+                return (r503, Data("busy".utf8))
+            }
+            let json = """
+            {"model":"english","answers":{"decision":{"type":"noul","noul":0.82,"confidence":0.82}}}
+            """
+            let r200 = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            return (r200, Data(json.utf8))
+        }
+        defer { MockURLProtocol.requestHandler = nil }
+
+        let retryPolicy = RetryPolicy(maxAttempts: 2, initialDelay: .milliseconds(1), jitter: 0.0)
+        let httpBackend = LayaHTTPBackend(endpoint: .localDefault, session: session, retryPolicy: retryPolicy)
+        let lmSession = LanguageModelSession(model: LayaLanguageModel(backend: httpBackend))
+        let prob = try await lmSession.probability(of: "Should retry succeed?", state: "Test")
+        #expect(counter.count == 2)
+        #expect(abs(prob - 0.82) < 0.0001)
+    }
 }

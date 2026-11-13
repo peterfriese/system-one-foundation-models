@@ -75,7 +75,7 @@ for target in project.targets {
 ## Implications for Sample Mobile Applications
 
 1. **JSON-First Project Definitions**:
-   Mobile sample applications in `Examples/` (e.g., `NutritionLabelScannerApp`) adopt JSON-first representations, moving toward full `.xcproj` adoption as development environments standardize on Xcode 27.2+.
+   Mobile sample applications in `Examples/` that ship Xcode 27.2+ JSON project configurations (`Apps/VisionScannerApp` and `TraitSamples/05-SecureAppCheckApp`) use `project.xcproj` directly, while transitional projects (`Apps/MailTriageApp` and `Apps/NutritionLabelScannerApp`) retain `.pbxproj` for broader toolchain compatibility.
 2. **Simplified Toolchain**:
    We no longer need heavy Ruby gems or complex YAML abstractions to generate or update Xcode projects. AI agents can directly emit clean `project.xcproj` JSON structures or lightweight JSON manifests.
 3. **FlowDeck Integration**:

@@ -82,23 +82,29 @@ public struct RetryPolicy: Sendable, Hashable {
         retryAfter(headerValue: response.value(forHTTPHeaderField: "Retry-After"), now: now)
     }
 
+    private static let httpDateLock = NSLock()
+    private static let httpDateFormatters: [DateFormatter] = [
+        "EEE, dd MMM yyyy HH:mm:ss zzz",
+        "EEEE, dd-MMM-yy HH:mm:ss zzz",
+        "EEE MMM d HH:mm:ss yyyy"
+    ].map { format in
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = format
+        return formatter
+    }
+
     /// RFC 9110 permits three date formats; modern servers predominantly send IMF-fixdate.
     private static func httpDate(_ raw: String) -> Date? {
-        let formats = [
-            "EEE, dd MMM yyyy HH:mm:ss zzz",
-            "EEEE, dd-MMM-yy HH:mm:ss zzz",
-            "EEE MMM d HH:mm:ss yyyy"
-        ]
-        for format in formats {
-            let formatter = DateFormatter()
-            formatter.locale = Locale(identifier: "en_US_POSIX")
-            formatter.timeZone = TimeZone(secondsFromGMT: 0)
-            formatter.dateFormat = format
-            if let date = formatter.date(from: raw) {
-                return date
+        httpDateLock.withLock {
+            for formatter in httpDateFormatters {
+                if let date = formatter.date(from: raw) {
+                    return date
+                }
             }
+            return nil
         }
-        return nil
     }
 }
 

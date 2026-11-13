@@ -1,4 +1,5 @@
 import Foundation
+import SystemOneCore
 
 /// Target endpoint configuration for the Google Gemini Decisions API (`gemini-decision-1`).
 ///
@@ -27,7 +28,16 @@ public enum GeminiDecisionsEndpoint: Hashable, Sendable {
     }
 
     /// The default official Google Gemini Decisions API URL.
-    public static let defaultURL = URL(string: "https://generativelanguage.googleapis.com/v1beta/decisions")!
+    public static let defaultURL: URL = {
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = "generativelanguage.googleapis.com"
+        components.path = "/v1beta/decisions"
+        guard let built = components.url else {
+            preconditionFailure("Static GeminiDecisionsEndpoint.defaultURL components must form a valid URL")
+        }
+        return built
+    }()
 
     /// The default official System One decision model identifier for Google Gemini.
     public static let defaultModel = "gemini-decision-1"
@@ -40,6 +50,13 @@ public enum GeminiDecisionsEndpoint: Hashable, Sendable {
         case .custom(let customURL, _, _):
             return customURL
         }
+    }
+
+    /// Validates the endpoint URL for transport security (HTTPS required for remote hosts; HTTP allowed only on loopback).
+    public func validatedURL() throws -> URL {
+        let candidate = url
+        try ProxyEndpointValidator.validate(candidate)
+        return candidate
     }
 
     /// The target model identifier to be transmitted over the wire.

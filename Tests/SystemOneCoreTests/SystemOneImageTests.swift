@@ -2,80 +2,282 @@ import Testing
 import Foundation
 import CoreGraphics
 import ImageIO
-import FoundationModels
 import UniformTypeIdentifiers
+import FoundationModels
 import SystemOneCore
 
 @Suite("SystemOneImage & Multimodal Core Tests")
 struct SystemOneImageTests {
 
-    @Test("SystemOneImage initializes from Data with mimeType and encodes RFC 2397 Data URL")
-    func testImageInitializationFromData() throws {
-        let dummyData = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) // PNG header
-        let image = try SystemOneImage(data: dummyData, mimeType: "image/png", identifier: "test.png")
+    // MARK: - Sample Image Fixtures
 
-        #expect(image.format == .png)
-        #expect(image.identifier == "test.png")
-        #expect(image.dataURL.hasPrefix("data:image/png;base64,"))
-        #expect(image.rawData == dummyData)
+    private static func makePNGData(width: UInt32 = 800, height: UInt32 = 600) -> Data {
+        var data = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+        data.append(contentsOf: [0x00, 0x00, 0x00, 0x0D])
+        data.append(contentsOf: [0x49, 0x48, 0x44, 0x52])
+        withUnsafeBytes(of: width.bigEndian) { data.append(contentsOf: $0) }
+        withUnsafeBytes(of: height.bigEndian) { data.append(contentsOf: $0) }
+        data.append(contentsOf: [0x08, 0x06, 0x00, 0x00, 0x00])
+        data.append(contentsOf: [0x00, 0x00, 0x00, 0x00])
+        return data
     }
 
-    @Test("SystemOneImage initializes from UTType correctly")
-    func testImageInitializationFromUTType() throws {
-        let dummyData = Data([0xFF, 0xD8, 0xFF, 0xE0]) // JPEG header
-        let image = try SystemOneImage(data: dummyData, utType: .jpeg, identifier: "photo.jpg")
-
-        #expect(image.format == .jpeg)
-        #expect(image.identifier == "photo.jpg")
-        #expect(image.dataURL.hasPrefix("data:image/jpeg;base64,"))
+    private static func makeJPEGData(width: UInt16 = 640, height: UInt16 = 480, marker: UInt8 = 0xC0, fillBytes: Int = 0) -> Data {
+        var data = Data([0xFF, 0xD8])
+        if fillBytes > 0 {
+            data.append(contentsOf: Array(repeating: UInt8(0xFF), count: fillBytes))
+        }
+        data.append(contentsOf: [0xFF, marker])
+        data.append(contentsOf: [0x00, 0x11])
+        data.append(0x08)
+        withUnsafeBytes(of: height.bigEndian) { data.append(contentsOf: $0) }
+        withUnsafeBytes(of: width.bigEndian) { data.append(contentsOf: $0) }
+        data.append(contentsOf: [0x03, 0x01, 0x11, 0x00, 0x02, 0x11, 0x00, 0x03, 0x11, 0x00])
+        data.append(contentsOf: [0xFF, 0xD9])
+        return data
     }
 
-    @Test("SystemOneImage roundtrip encoding with Codable encodes directly as Data URL string")
-    func testImageCodableRoundtrip() throws {
-        let dummyData = Data("hello world".utf8)
-        let image = SystemOneImage(data: dummyData, format: .webp)
+    private static func makeWebPData(width: UInt32 = 1024, height: UInt32 = 768) -> Data {
+        var data = Data("RIFF".utf8)
+        let totalSize: UInt32 = 38
+        withUnsafeBytes(of: totalSize.littleEndian) { data.append(contentsOf: $0) }
+        data.append(contentsOf: "WEBP".utf8)
+        data.append(contentsOf: "VP8X".utf8)
+        let chunkLength: UInt32 = 10
+        withUnsafeBytes(of: chunkLength.littleEndian) { data.append(contentsOf: $0) }
+        data.append(contentsOf: [0x00, 0x00, 0x00, 0x00])
+        let wMinus1 = width - 1
+        let hMinus1 = height - 1
+        data.append(UInt8(wMinus1 & 0xFF))
+        data.append(UInt8((wMinus1 >> 8) & 0xFF))
+        data.append(UInt8((wMinus1 >> 16) & 0xFF))
+        data.append(UInt8(hMinus1 & 0xFF))
+        data.append(UInt8((hMinus1 >> 8) & 0xFF))
+        data.append(UInt8((hMinus1 >> 16) & 0xFF))
+        return data
+    }
+
+    private static func makeMinimalVP8LData(width: UInt32 = 16, height: UInt32 = 12) -> Data {
+        var data = Data("RIFF".utf8)
+        let totalSize: UInt32 = 17
+        withUnsafeBytes(of: totalSize.littleEndian) { data.append(contentsOf: $0) }
+        data.append(contentsOf: "WEBP".utf8)
+        data.append(contentsOf: "VP8L".utf8)
+        let chunkLength: UInt32 = 5
+        withUnsafeBytes(of: chunkLength.littleEndian) { data.append(contentsOf: $0) }
+        data.append(0x2F) // VP8L signature byte at offset 20
+        let w = width - 1
+        let h = height - 1
+        let packed: UInt32 = (w & 0x3FFF) | ((h & 0x3FFF) << 14)
+        data.append(UInt8(packed & 0xFF))
+        data.append(UInt8((packed >> 8) & 0xFF))
+        data.append(UInt8((packed >> 16) & 0xFF))
+        data.append(UInt8((packed >> 24) & 0xFF))
+        return data // Exactly 25 bytes (< 30 bytes!)
+    }
+
+    // MARK: - Initialization & Validation Tests
+
+    @Test("Initializes from raw Data with PNG, JPEG, and WebP MIME types and UTTypes")
+    func testInitializationFromRawDataAndUTTypes() throws {
+        let pngData = Self.makePNGData()
+        let pngImage = try SystemOneImage(data: pngData, mimeType: "image/png", identifier: "inspection.png")
+        #expect(pngImage.format == .png)
+        #expect(pngImage.identifier == "inspection.png")
+        #expect(pngImage.dataURL.hasPrefix("data:image/png;base64,"))
+        #expect(pngImage.rawData == pngData)
+
+        let jpegData = Self.makeJPEGData()
+        let jpegImage = try SystemOneImage(data: jpegData, utType: .jpeg, identifier: "photo.jpg")
+        #expect(jpegImage.format == .jpeg)
+
+        let webpData = Self.makeWebPData()
+        let webpImage = try SystemOneImage(data: webpData, utType: .webP, identifier: "defect.webp")
+        #expect(webpImage.format == .webp)
+
+        #expect(throws: SystemOneError.self) {
+            try SystemOneImage(data: Data([1, 2, 3]), utType: .pdf)
+        }
+        #expect(throws: SystemOneError.self) {
+            try SystemOneImage(data: Data([1, 2, 3]), mimeType: "image/gif")
+        }
+    }
+
+    @Test("SystemOneImage(fileURL:) rejects non-file URLs without network egress")
+    func testRejectsRemoteFileURL() {
+        let remoteURL = URL(string: "https://example.com/secret.png")!
+        #expect(throws: SystemOneError.self) {
+            try SystemOneImage(fileURL: remoteURL)
+        }
+    }
+
+    @Test("extractDimensions safely handles non-zero startIndex Data slices, JPEG fill bytes, SOF3+, and 25-byte VP8L")
+    func testDimensionExtractionHardening() {
+        // 1. Non-zero startIndex Data slice (previously crashed with index out of bounds)
+        var padded = Data([0xAA, 0xBB, 0xCC, 0xDD])
+        padded.append(Self.makePNGData(width: 1920, height: 1080))
+        let pngSlice = padded[4...]
+        #expect(pngSlice.startIndex == 4)
+        let sliceDims = SystemOneImage.extractDimensions(data: pngSlice, format: .png)
+        #expect(sliceDims?.width == 1920)
+        #expect(sliceDims?.height == 1080)
+
+        // 2. Reject spoofed non-PNG header even if >= 24 bytes
+        let fakePNG = Data(repeating: 0x42, count: 32)
+        #expect(SystemOneImage.extractDimensions(data: fakePNG, format: .png) == nil)
+
+        // 3. JPEG with 0xFF fill bytes and SOF3 (0xC3) lossless marker
+        let jpegSOF3 = Self.makeJPEGData(width: 1280, height: 720, marker: 0xC3, fillBytes: 3)
+        let jpegDims = SystemOneImage.extractDimensions(data: jpegSOF3, format: .jpeg)
+        #expect(jpegDims?.width == 1280)
+        #expect(jpegDims?.height == 720)
+
+        // 4. Minimal 25-byte Lossless WebP (VP8L < 30 bytes)
+        let vp8l = Self.makeMinimalVP8LData(width: 24, height: 18)
+        #expect(vp8l.count == 25)
+        let vp8lDims = SystemOneImage.extractDimensions(data: vp8l, format: .webp)
+        #expect(vp8lDims?.width == 24)
+        #expect(vp8lDims?.height == 18)
+    }
+
+    @Test("Guardrails enforce 16MP resolution, max 4 images, and 13 MiB payload size")
+    func testValidationGuardrails() throws {
+        let validPNG = Self.makePNGData(width: 4000, height: 3000)
+        try SystemOneImage(data: validPNG, format: .png).validate()
+
+        let oversizedPNG = Self.makePNGData(width: 5000, height: 4000)
+        #expect(throws: SystemOneError.self) {
+            try SystemOneImage(data: oversizedPNG, format: .png).validate()
+        }
+
+        let smallPNG = Self.makePNGData(width: 64, height: 64)
+        let fiveImages = (1...5).map { SystemOneImage(data: smallPNG, format: .png, identifier: "img_\($0)") }
+        #expect(throws: SystemOneError.self) {
+            try SystemOneImage.validate(images: fiveImages)
+        }
+
+        let oversizedBase64 = String(repeating: "A", count: 14 * 1024 * 1024)
+        let hugePayload = SystemOneImage(base64Encoded: oversizedBase64, format: .jpeg)
+        #expect(throws: SystemOneError.self) {
+            try SystemOneImage.validate(images: [hugePayload])
+        }
+    }
+
+    @Test("Codable supports both RFC 2397 Data URL strings and structured dictionary objects")
+    func testCodableRepresentations() throws {
+        let raw = Data([0x01, 0x02, 0x03, 0x04])
+        let image = SystemOneImage(data: raw, format: .jpeg, identifier: "cam_feed")
 
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.withoutEscapingSlashes]
-        let data = try encoder.encode(image)
-
-        let jsonString = try #require(String(data: data, encoding: .utf8))
+        let encoded = try encoder.encode(image)
+        let jsonString = try #require(String(data: encoded, encoding: .utf8))
         #expect(jsonString == "\"\(image.dataURL)\"")
 
-        let decodedString = try JSONDecoder().decode(String.self, from: data)
-        #expect(decodedString == image.dataURL)
+        let decodedFromString = try JSONDecoder().decode(SystemOneImage.self, from: encoded)
+        #expect(decodedFromString.dataURL == image.dataURL)
+        #expect(decodedFromString.format == image.format)
+        #expect(decodedFromString.identifier == nil)
 
-        let decoder = JSONDecoder()
-        let decoded = try decoder.decode(SystemOneImage.self, from: data)
-
-        #expect(decoded == image)
-        #expect(decoded.format == .webp)
-        #expect(decoded.dataURL == image.dataURL)
-        #expect(decoded.rawData == dummyData)
+        let dictJSON = """
+        {
+            "format": "image/webp",
+            "data_url": "data:image/webp;base64,\(raw.base64EncodedString())",
+            "identifier": "sensor_01"
+        }
+        """
+        let decodedFromDict = try JSONDecoder().decode(SystemOneImage.self, from: Data(dictJSON.utf8))
+        #expect(decodedFromDict.format == .webp)
+        #expect(decodedFromDict.identifier == "sensor_01")
+        #expect(decodedFromDict.rawData == raw)
     }
 
-    @Test("SystemOneImage guardrail enforces maximum 4 images")
-    func testImageCountGuardrail() {
-        let dummyData = Data([0x01, 0x02, 0x03])
-        let images = (1...5).map { idx in
-            SystemOneImage(data: dummyData, format: .jpeg, identifier: "img_\(idx).jpg")
+    @Test("TranscriptAttachmentExtractor scopes extraction to the active turn and downscales >1024px file URLs")
+    func testActiveTurnExtractionAndLocalFileDownscaling() async throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        // Write a real 2000x1000 opaque PNG to disk (> 1024px maxDimension)
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let ctx = CGContext(
+            data: nil,
+            width: 2000,
+            height: 1000,
+            bitsPerComponent: 8,
+            bytesPerRow: 2000 * 4,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+        )!
+        let largeCGImage = ctx.makeImage()!
+        let largeFileURL = tempDir.appendingPathComponent("large_input.png")
+        let dest = CGImageDestinationCreateWithURL(largeFileURL as CFURL, UTType.png.identifier as CFString, 1, nil)!
+        CGImageDestinationAddImage(dest, largeCGImage, nil)
+        #expect(CGImageDestinationFinalize(dest))
+
+        // Build multi-turn transcript: 4 images in turn 1 -> response -> 1 large file URL image in turn 2
+        let smallCtx = CGContext(
+            data: nil,
+            width: 16,
+            height: 16,
+            bitsPerComponent: 8,
+            bytesPerRow: 64,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        let smallCGImage = smallCtx.makeImage()!
+
+        let turn1Prompt = Prompt {
+            "Turn 1"
+            Attachment(smallCGImage)
+            Attachment(smallCGImage)
+            Attachment(smallCGImage)
+            Attachment(smallCGImage)
+        }
+        let turn2Prompt = Prompt {
+            "Turn 2 active inspection"
+            Attachment(imageURL: largeFileURL)
         }
 
-        #expect(throws: SystemOneError.self) {
-            try SystemOneImage.validate(images: images)
+        // Verify via a vision-enabled SystemOneLanguageModel session across two turns!
+        actor TurnRecorder {
+            var imageCounts: [Int] = []
+            var lastImage: SystemOneImage?
+            func record(_ images: [SystemOneImage]?) {
+                imageCounts.append(images?.count ?? 0)
+                lastImage = images?.first
+            }
         }
+        let recorder = TurnRecorder()
+        let backend = MockSystemOneBackend { req in
+            await recorder.record(req.images)
+            return SystemOneResponse(
+                model: "vision-test",
+                answers: ["decision": SystemOneAnswer(type: "noul", noul: 0.9, confidence: 0.9)]
+            )
+        }
+        let session = LanguageModelSession(model: SystemOneLanguageModel(backend: backend, supportsVision: true))
+
+        _ = try await session.probability(of: "Check turn 1", prompt: turn1Prompt)
+        _ = try await session.probability(of: "Check turn 2", prompt: turn2Prompt)
+
+        // Turn 1 sent 4 images; Turn 2 must ONLY send the 1 active-turn image (not 5!)
+        let recordedCounts = await recorder.imageCounts
+        #expect(recordedCounts == [4, 1])
+
+        // And the 2000x1000 local file attachment in Turn 2 was downscaled to 1024x512 JPEG!
+        let downscaled = try #require(await recorder.lastImage)
+        #expect(downscaled.format == .jpeg)
+        let raw = try #require(downscaled.rawData)
+        let dims = try #require(SystemOneImage.extractDimensions(data: raw, format: .jpeg))
+        #expect(dims.width == 1024)
+        #expect(dims.height == 512)
     }
 
     @Test("SystemOneRequest encoding excludes images when nil or empty for backward compatibility")
     func testRequestEncodingBackwardCompatibility() throws {
-        let requestWithoutImages = SystemOneRequest(
-            state: "Text state",
-            model: "systemone-default",
-            questions: [:]
-        )
-
-        let encoder = JSONEncoder()
-        let dataWithoutImages = try encoder.encode(requestWithoutImages)
+        let requestWithoutImages = SystemOneRequest(state: "Text state", model: "systemone-default", questions: [:])
+        let dataWithoutImages = try JSONEncoder().encode(requestWithoutImages)
         let jsonWithoutImages = try #require(String(data: dataWithoutImages, encoding: .utf8))
         #expect(!jsonWithoutImages.contains("\"images\""))
 
@@ -86,7 +288,7 @@ struct SystemOneImageTests {
             questions: [:],
             images: [image]
         )
-        let dataWithImages = try encoder.encode(requestWithImages)
+        let dataWithImages = try JSONEncoder().encode(requestWithImages)
         let jsonWithImages = try #require(String(data: dataWithImages, encoding: .utf8))
         #expect(jsonWithImages.contains("\"images\""))
     }

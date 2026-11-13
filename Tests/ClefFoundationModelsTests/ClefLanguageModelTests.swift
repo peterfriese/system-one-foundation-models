@@ -164,7 +164,22 @@ struct ClefLanguageModelTests {
         #expect(supportsText == false)
 
         let supportsDataEntry = try await model.supportsDataEntryType(.png)
-        #expect(supportsDataEntry == false)
+        let supportsPDFDataEntry = try await model.supportsDataEntryType(.pdf)
+        #expect(supportsDataEntry == true)
+        #expect(supportsPDFDataEntry == false)
+    }
+
+    @Test("ClefLanguageModel supports homogeneous init(backend:)")
+    func testClefBackendInitializer() async throws {
+        let backend = MockSystemOneBackend(
+            fixedResponse: SystemOneResponse(
+                model: "@cf/cloudflare/clef-flash",
+                answers: ["decision": SystemOneAnswer(type: "noul", noul: 0.88, confidence: 0.88)]
+            )
+        )
+        let session = LanguageModelSession(model: ClefLanguageModel(backend: backend))
+        let p = try await session.probability(of: "Has surface defect?", state: "Inspection frame")
+        #expect(abs(p - 0.88) < 0.0001)
     }
 
     // MARK: - LanguageModelSession Evaluation

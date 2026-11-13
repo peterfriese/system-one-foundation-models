@@ -8,7 +8,7 @@ import SystemOneCore
 /// bundling upstream TypeSafe API keys on-device.
 ///
 /// See `tech-notes/0010-proxy-transport-and-dynamic-attestation.md`.
-public struct ProxyTransport: JevTransport, Sendable {
+public struct ProxyTransport: JevTransport, SystemOneBackend, Sendable {
 
     /// Authentication mechanisms supported by the proxy gateway, unified with `SystemOneCore.ProxyCredential`.
     public typealias Credential = ProxyCredential
@@ -70,7 +70,12 @@ public struct ProxyTransport: JevTransport, Sendable {
         self.now = now
     }
 
+    public func evaluate(request: SystemOneRequest) async throws -> SystemOneResponse {
+        try await send(request: request, apiKey: nil, endpoint: proxyEndpoint)
+    }
+
     public func send(request: JevRequest, apiKey: String?, endpoint: URL) async throws -> JevResponse {
+        try Task.checkCancellation()
         try validateProxyEndpointSecurity()
 
         let requestData: Data
@@ -80,8 +85,10 @@ public struct ProxyTransport: JevTransport, Sendable {
             throw JevError.decodingError("Failed to encode JevRequest: \(error.localizedDescription)")
         }
 
+        let clock = ContinuousClock()
         var attempt = 1
         while true {
+            try Task.checkCancellation()
             var urlRequest = URLRequest(url: proxyEndpoint)
             urlRequest.httpMethod = "POST"
             urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -91,6 +98,7 @@ public struct ProxyTransport: JevTransport, Sendable {
             // Apply configured credentials for each attempt to support rotating/refreshed tokens
             try await applyCredential(to: &urlRequest)
 
+            let start = clock.now
             let data: Data
             let response: URLResponse
             do {
@@ -102,6 +110,9 @@ public struct ProxyTransport: JevTransport, Sendable {
             } catch {
                 throw JevError.networkError(error.localizedDescription)
             }
+            let elapsed = clock.now - start
+            let transportDurationMs = Double(elapsed.components.seconds) * 1000.0
+                + Double(elapsed.components.attoseconds) / 1_000_000_000_000_000.0
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw JevError.networkError("Invalid HTTP response received from proxy.")
@@ -110,6 +121,7 @@ public struct ProxyTransport: JevTransport, Sendable {
             if (200...299).contains(httpResponse.statusCode) {
                 do {
                     var decoded = try JSONDecoder().decode(JevResponse.self, from: data)
+                    decoded.transportDurationMs = transportDurationMs
                     if let serviceTimeHeader = httpResponse.value(forHTTPHeaderField: "x-envoy-upstream-service-time"),
                        let serviceTimeMs = Double(serviceTimeHeader) {
                         decoded.serverDurationMs = serviceTimeMs

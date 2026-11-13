@@ -1,10 +1,9 @@
 import Foundation
 import FoundationModels
-import SystemOneCore
 
 // MARK: - Item Category Schema
 
-/// Standard item categories for visual inspection and item triage with Cloudflare Clef.
+/// Standard item categories for multimodal visual inspection and item triage across System One models (`Clef`, `OpenAI`, `Gemini`).
 @Generable
 public enum ItemCategory: String, Sendable, CaseIterable, Codable, Choosable {
     case snack

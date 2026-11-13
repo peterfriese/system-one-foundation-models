@@ -44,7 +44,7 @@ public struct ResponseSynthesizer: Sendable {
             let answer = answers[questionKey]
             let value = computeScoreValue(answer: answer, min: min, max: max, isInteger: isInteger)
             if isInteger {
-                return "\(Int(round(value)))"
+                return "\(ScoreValue.clampedInt(from: value))"
             } else {
                 return "\(value)"
             }
@@ -149,18 +149,21 @@ public struct ResponseSynthesizer: Sendable {
             }
             return nil
 
-        case .choice(let options):
+        case .choice:
             if let choice = answer?.choice {
                 return choice
             }
-            return options.first
+            return nil
 
         case .score(let min, let max, let isInteger):
             guard answer != nil else { return nil }
             let val = computeScoreValue(answer: answer, min: min, max: max, isInteger: isInteger)
-            return isInteger ? Int(round(val)) : val
+            return isInteger ? ScoreValue.clampedInt(from: val) : val
 
         case .nested(let childDescriptors):
+            if !descriptor.isRequired && !hasAnyAnswer(in: descriptor, answers: answers) {
+                return nil
+            }
             var childDict: [String: Any] = [:]
             for (childName, childDesc) in childDescriptors {
                 if let childVal = extractPropertyValue(descriptor: childDesc, answers: answers) {
@@ -170,6 +173,23 @@ public struct ResponseSynthesizer: Sendable {
                 }
             }
             return childDict
+        }
+    }
+
+    private func hasAnyAnswer(
+        in descriptor: SchemaPropertyDescriptor,
+        answers: [String: SystemOneAnswer]
+    ) -> Bool {
+        switch descriptor.kind {
+        case .boolean:
+            let answer = answers[descriptor.questionKey]
+            return answer?.noul != nil || answer?.choice != nil
+        case .choice:
+            return answers[descriptor.questionKey]?.choice != nil
+        case .score:
+            return answers[descriptor.questionKey]?.score != nil
+        case .nested(let children):
+            return children.values.contains { hasAnyAnswer(in: $0, answers: answers) }
         }
     }
 
@@ -192,7 +212,7 @@ public struct ResponseSynthesizer: Sendable {
         case .choice(let options):
             return options.first ?? ""
         case .score(let min, _, let isInteger):
-            return isInteger ? Int(min) : min
+            return isInteger ? ScoreValue.clampedInt(from: min) : min
         case .nested(let children):
             var dict: [String: Any] = [:]
             for (k, v) in children where v.isRequired {
