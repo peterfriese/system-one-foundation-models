@@ -6,13 +6,12 @@ description: >-
   Cloudflare Clef & Clef-Flash, OpenAI Decisions gpt-6-luna, Google Gemini Decisions
   gemini-decision-1, and vendor-agnostic SystemOneProxyBackend gateways) natively through
   Apple's Foundation Models framework in Swift 6. Use when building iOS 27+, macOS 27+, or
-  visionOS 27+ apps that evaluate strongly-typed @Generable structs and enums using
-  LanguageModelSession, running models on-device via Core ML (Apple Neural Engine), deploying
-  multimodal visual triage, securing mobile proxies via zero-dependency ProxyCredential and
-  Firebase App Check, implementing confidence routing (RoutingPolicy, NoulJudgement, ScoreValue),
-  configuring resilient network retries (RetryPolicy), or writing deterministic offline unit
-  tests with MockSystemOneBackend, MockOpenAIDecisionsBackend, MockGeminiDecisionsBackend, and
-  MockClefBackendProtocol.
+  visionOS 27+ apps that evaluate strongly-typed @Generable structs, enums, or
+  `.probability`/`.choice`/`.score` shortcuts using LanguageModelSession, running models
+  on-device via Core ML (Apple Neural Engine), deploying multimodal visual triage, securing
+  mobile proxies via zero-dependency ProxyCredential and Firebase App Check, implementing
+  confidence routing (RoutingPolicy, NoulJudgement, ScoreValue), configuring resilient network
+  retries (RetryPolicy), or writing deterministic offline unit tests with MockSystemOneBackend.
 metadata:
   author: peterfriese
   version: "2.2"
@@ -36,9 +35,18 @@ System One models are **non-autoregressive decision models**, not text-generatin
 
 ---
 
-## 2. Pluggable Backends
+## 2. Pluggable Backends & Homogeneous Initialization
 
-Developers choose among seven execution backends by passing the appropriate `LanguageModel` to `LanguageModelSession`:
+All **6** providers support progressive-disclosure **zero-argument initialization (`init()`)** with automatic environment-variable / bundle resolution, uniform **`init(backend: any SystemOneBackend)`**, and universal **`init(proxyEndpoint:credential:)`** across networked models:
+
+| Provider | Zero-Arg Call Site | Auto-Resolved Environment / Resource |
+| :--- | :--- | :--- |
+| `LayaOnDeviceLanguageModel` | `try LayaOnDeviceLanguageModel()` | `LAYA_MODEL_PATH` or bundled `LayaDecisionModel.mlmodelc` + `LAYA_TOKENIZER_PATH` / adjacent `tokenizer.json` |
+| `LayaLanguageModel` | `LayaLanguageModel()` | `LAYA_SERVE_URL` / `LAYA_ENDPOINT` (defaults to `http://127.0.0.1:8000/v1/systemone`) + optional `LAYA_API_KEY` |
+| `JevLanguageModel` | `JevLanguageModel()` | `TYPESAFE_API_KEY` on `JevEndpoint.hosted` (`https://api.typesafe.ai/v1/systemone`) |
+| `ClefLanguageModel` | `ClefLanguageModel()` | `CLEF_ENDPOINT`, `CLOUDFLARE_ACCOUNT_ID` (+ `CLOUDFLARE_GATEWAY_ID`) + `CLOUDFLARE_API_TOKEN`, or `CLEF_LOCAL_PORT` |
+| `OpenAIDecisionsLanguageModel` (`OpenAILanguageModel`) | `OpenAILanguageModel()` | `OPENAI_API_KEY` on `OpenAIDecisionsEndpoint.hosted()` (`https://api.openai.com/v1/decisions`, `gpt-6-luna`) |
+| `GeminiDecisionsLanguageModel` (`GeminiLanguageModel`) | `GeminiLanguageModel()` | `GEMINI_API_KEY` (fallback `GOOGLE_API_KEY`) on `GeminiDecisionsEndpoint.hosted()` (`gemini-decision-1`) |
 
 ### Option A: On-Device Core ML (`LayaOnDevice`)
 Runs Laya's 322M (multilingual mmBERT) or 421M (ModernBERT) model directly on the **Apple Neural Engine (ANE)** and GPU. 100% offline, zero network requests, zero secrets:
@@ -47,38 +55,45 @@ Runs Laya's 322M (multilingual mmBERT) or 421M (ModernBERT) model directly on th
 import FoundationModels
 import LayaOnDevice
 
+// Progressive disclosure: auto-resolves LAYA_MODEL_PATH or bundled LayaDecisionModel.mlmodelc
+let session = LanguageModelSession(model: try LayaOnDeviceLanguageModel())
+
+// Or explicit Core ML engine configuration:
 let modelURL = Bundle.main.url(forResource: "LayaModernBERT", withExtension: "mlmodelc")!
 let engine = try LayaCoreMLEngine(
     modelURL: modelURL,
     tokenizer: ModernBERTTokenizer.defaultTokenizer()
 )
-
-let model = LayaOnDeviceLanguageModel(engine: engine)
-let session = LanguageModelSession(model: model)
+let customSession = LanguageModelSession(model: LayaOnDeviceLanguageModel(engine: engine))
 ```
 
 ### Option B: Self-Hosted or Remote Laya HTTP (`LayaFoundationModels`)
-Connects to `laya-serve` (speaking the Jev-compatible `POST /v1/systemone` protocol):
+Connects to `laya-serve` (speaking the Jev-compatible `POST /v1/systemone` protocol) with `RetryPolicy` resilience:
 
 ```swift
 import FoundationModels
 import LayaFoundationModels
 
-// Local server (localhost:8000 or localhost:8770) or hosted endpoint
-let model = LayaLanguageModel(endpoint: .localDefault) // or .local(port: 8770) or .hosted
-let session = LanguageModelSession(model: model)
+// Auto-resolves LAYA_SERVE_URL / LAYA_API_KEY or defaults to localhost:8000
+let session = LanguageModelSession(model: LayaLanguageModel())
+
+// Or explicit endpoint (.localDefault, .local(port: 8770), .hosted, or .custom(url))
+let explicitModel = LayaLanguageModel(endpoint: .local(port: 8770), retryPolicy: .default)
 ```
 
 ### Option C: TypeSafe AI Jev Cloud (`JevFoundationModels`)
-Connects to TypeSafe AI's hosted decision API (`POST https://api.typesafe.ai/v1/systemone`) with automated HTTP retry resilience and backoff:
+Connects to TypeSafe AI's hosted decision API (`JevEndpoint.hosted` or `.custom(url)`) with automated HTTP retry resilience and backoff:
 
 ```swift
 import FoundationModels
 import JevFoundationModels
 
+// Auto-resolves TYPESAFE_API_KEY
+let session = LanguageModelSession(model: JevLanguageModel())
+
+// Or explicit configuration
 let retryPolicy = RetryPolicy(maxAttempts: 3, initialDelay: .milliseconds(250), jitter: 0.15)
-let model = JevLanguageModel(apiKey: apiKey, retryPolicy: retryPolicy)
-let session = LanguageModelSession(model: model)
+let explicitModel = JevLanguageModel(endpoint: .hosted, apiKey: apiKey, retryPolicy: retryPolicy)
 ```
 
 ### Option D: Cloudflare Clef & Clef-Flash Multimodal (`ClefFoundationModels`)
@@ -88,10 +103,12 @@ Connects to Cloudflare's **Clef** (27B) or **Clef-Flash** (9B) multimodal decisi
 import FoundationModels
 import ClefFoundationModels
 
+// Auto-resolves CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_API_TOKEN, CLEF_ENDPOINT, or CLEF_LOCAL_PORT
+let autoSession = LanguageModelSession(model: ClefLanguageModel())
+
 // 1. Direct Cloudflare Workers AI Edge
 let workersEndpoint = ClefEndpoint.workersAI(accountID: "cf-account-id", model: .clefFlash)
 let workersModel = ClefLanguageModel(endpoint: workersEndpoint, apiToken: "cf-api-token")
-let session = LanguageModelSession(model: workersModel)
 
 // 2. Cloudflare AI Gateway (with edge caching, analytics, and rate limiting)
 let gatewayEndpoint = ClefEndpoint.gateway(
@@ -101,24 +118,26 @@ let gatewayEndpoint = ClefEndpoint.gateway(
 )
 let gatewayModel = ClefLanguageModel(endpoint: gatewayEndpoint, apiToken: "cf-api-token")
 
-// 3. Local Native Runner (Docker Model Runner, vLLM, Cog, MLX on port 8000)
-let localEndpoint = ClefEndpoint.local(port: 8000, model: .clefFlash)
-let localModel = ClefLanguageModel(endpoint: localEndpoint)
+// 3. Local Native Runner (Tools/ClefLocalRunner/server.py, vLLM, MLX on port 8000)
+let localModel = ClefLanguageModel(endpoint: .local(port: 8000, model: .clefFlash))
 ```
 
-### Option E: OpenAI Decisions API (`OpenAIFoundationModels`)
-Connects to OpenAI's multimodal Decisions API (`POST https://api.openai.com/v1/decisions`, default model `"gpt-6-luna"`), supporting `OpenAILanguageModel` (`typealias` for `OpenAIDecisionsLanguageModel`) and optional enterprise multi-tenant headers (`OpenAI-Organization`, `OpenAI-Project`, `X-Client-Request-Id`):
+### Option E: OpenAI Decisions API — `gpt-6-luna` (`OpenAIFoundationModels`)
+Connects to OpenAI's purpose-built non-autoregressive Decisions API (`POST https://api.openai.com/v1/decisions`) powered by **`gpt-6-luna`** (~35–80ms latency, multimodal vision support, $0.10/1M input tokens, and **$0.00 output tokens**):
 
 ```swift
 import FoundationModels
 import OpenAIFoundationModels
 
-let model = OpenAILanguageModel(
+// Auto-resolves OPENAI_API_KEY
+let session = LanguageModelSession(model: OpenAIDecisionsLanguageModel())
+
+// Or configure enterprise multi-tenant headers (OpenAI-Organization, OpenAI-Project, X-Client-Request-Id)
+let enterpriseModel = OpenAIDecisionsLanguageModel(
     apiKey: apiKey,
-    organization: organizationID,
-    project: projectID
+    organization: "org-...",
+    project: "proj-..."
 )
-let session = LanguageModelSession(model: model)
 ```
 
 ### Option F: Google Gemini Decisions API (`GeminiFoundationModels`)
@@ -128,12 +147,15 @@ Connects to Google's high-density multimodal Gemini Decisions API (`POST https:/
 import FoundationModels
 import GeminiFoundationModels
 
-let model = GeminiLanguageModel(apiKey: apiKey)
-let session = LanguageModelSession(model: model)
+// Auto-resolves GEMINI_API_KEY or GOOGLE_API_KEY
+let session = LanguageModelSession(model: GeminiLanguageModel())
+
+// Or explicit API key
+let explicitModel = GeminiLanguageModel(apiKey: apiKey)
 ```
 
 ### Option G: Vendor-Agnostic Proxy Gateway (`SystemOneCore`)
-Dispatches canonical `SystemOneRequest` JSON via `SystemOneProxyBackend` so your backend gateway can route, A/B test, or fail over between Gemini, OpenAI, Clef, Jev, and Laya server-side with zero client code changes (see §6):
+Dispatches canonical `SystemOneRequest` JSON via `SystemOneProxyBackend` (with `ProxyCredential`) so your backend gateway can route, A/B test, or fail over between Gemini, OpenAI, Clef, Jev, and Laya server-side with zero client code changes (see §6):
 
 ```swift
 import FoundationModels
@@ -149,30 +171,34 @@ let session = LanguageModelSession(model: model)
 
 ---
 
-## 3. Multimodal Decision Evaluation
+## 3. Multimodal Decision Evaluation (`Clef`, `OpenAI` & `Gemini`)
 
 Unlike autoregressive vision-language models that generate text captions or verbose descriptions, multimodal System One backends — **Cloudflare Clef (`ClefLanguageModel`)**, **OpenAI Decisions (`OpenAILanguageModel`)**, **Google Gemini Decisions (`GeminiLanguageModel`)**, and **`SystemOneLanguageModel(supportsVision: true)`** — evaluate contextual text + image attachments (`PNG`, `JPEG`, `WebP`) in a **single forward pass**, computing calibrated decision primitives with **zero output tokens** (`output_tokens: 0`).
 
-### Passing Image Attachments via `Prompt`
+### Passing Image Attachments via `Prompt` & Ergonomic Shortcuts
 
-Visual inputs are attached to standard Apple Foundation Models `Prompt` builder blocks using `Attachment(cgImage)` or `Attachment(data:type:)`:
+Visual inputs are attached to standard Apple Foundation Models `Prompt` builder blocks using `Attachment(cgImage)`, `Attachment(imageURL: url)`, or failable `Attachment(jpegData, type: .jpeg)`:
 
 ```swift
 import FoundationModels
 import GeminiFoundationModels // or ClefFoundationModels / OpenAIFoundationModels
 import CoreGraphics
 
-let session = LanguageModelSession(model: GeminiLanguageModel(apiKey: apiKey))
+let session = LanguageModelSession(model: GeminiLanguageModel())
 
-// Attach CGImage or raw Data
+// 1. Composite @Generable decision with Prompt
 let prompt = Prompt {
     "Inspect the physical condition of this returned merchandise item."
     Attachment(capturedCGImage)
-    // Or pass raw Data: Attachment(data: jpegData, type: .jpeg)
 }
-
 let response = try await session.respond(to: prompt, generating: VisualInspectionDecision.self)
 let decision: VisualInspectionDecision = response.content
+
+// 2. Direct @PromptBuilder ergonomic shortcuts (.probability, .choice, .score)
+let damagedProb = try await session.probability(of: "The parcel has visible exterior damage") {
+    "Inspect delivery photo for crushed corners or water damage."
+    Attachment(capturedCGImage)
+}
 ```
 
 ### Apple Framework Capability Gating: `LanguageModelCapabilities.Capability.vision`
@@ -418,7 +444,7 @@ In contrast, local runners (Docker Model Runner, MLX, `laya-serve`) return raw `
 
 ## 8. Package Traits Architecture (Swift 6.1 / SE-0402)
 
-`SystemOneFoundationModels` adopts Swift 6.1 Package Traits (SE-0402) so consumers can either link the full multi-backend suite by default or narrow compilation to individual model boundaries:
+`SystemOneFoundationModels` adopts Swift 6.1 Package Traits (SE-0402) to maintain zero runtime bloat. By default, `Package.swift` sets `.default(enabledTraits: ["All"])` for seamless out-of-the-box access, while allowing consumers to narrow along **model boundaries**:
 
 | Trait | Category | Included Capabilities | Intended Deployment |
 | :--- | :--- | :--- | :--- |
@@ -430,23 +456,22 @@ In contrast, local runners (Docker Model Runner, MLX, `laya-serve`) return raw `
 | `Gemini` | Model Boundary | `GeminiFoundationModels`, Google Gemini Decisions API client (`gemini-decision-1`) | High-context (256K) & multimodal cloud decisions |
 | `OnDevice` | Persona / Shorthand | Enables `["Laya"]` | Zero-network mobile applications |
 | `Remote` | Persona / Shorthand | Enables `["Jev", "LayaServe", "Clef", "OpenAI", "Gemini"]` | Client/server apps using networked models |
-| `All` | Persona / Shorthand | Enables `["Jev", "Laya", "LayaServe", "Clef", "OpenAI", "Gemini"]` | Multi-backend apps (e.g. MailTriageApp) |
-| *default* | Default Trait | Enables `["All"]` | Out-of-the-box access to all backends |
+| `All` *(default)* | Persona / Shorthand | Enables `["Jev", "Laya", "LayaServe", "Clef", "OpenAI", "Gemini"]` | Multi-backend apps & default ergonomics |
 
 ### Consumer Configuration in `Package.swift`
 
 ```swift
 // 1. Default: enables ["All"] (Core ML + Jev + LayaServe + Clef + OpenAI + Gemini)
-.package(url: "https://github.com/peterfriese/system-one-foundation-models.git", from: "0.2.0")
+.package(url: "https://github.com/peterfriese/system-one-foundation-models.git", from: "0.3.0")
 
 // 2. Air-gapped on-device Core ML only (zero network client targets)
-.package(url: "https://github.com/peterfriese/system-one-foundation-models.git", from: "0.2.0", traits: ["OnDevice"])
+.package(url: "https://github.com/peterfriese/system-one-foundation-models.git", from: "0.3.0", traits: ["OnDevice"])
 
-// 3. Single hosted provider (e.g. Google Gemini Decisions or Cloudflare Clef)
-.package(url: "https://github.com/peterfriese/system-one-foundation-models.git", from: "0.2.0", traits: ["Gemini"])
+// 3. Single hosted provider (e.g. Google Gemini Decisions, OpenAI, or Cloudflare Clef)
+.package(url: "https://github.com/peterfriese/system-one-foundation-models.git", from: "0.3.0", traits: ["Gemini"])
 
 // 4. All networked backends without Core ML (`Jev`, `LayaServe`, `Clef`, `OpenAI`, `Gemini`)
-.package(url: "https://github.com/peterfriese/system-one-foundation-models.git", from: "0.2.0", traits: ["Remote"])
+.package(url: "https://github.com/peterfriese/system-one-foundation-models.git", from: "0.3.0", traits: ["Remote"])
 ```
 
 ---
@@ -557,4 +582,14 @@ struct ClefBackendTests {
     }
 }
 ```
+
+---
+
+## 10. Reference Examples Hierarchy (`Examples/`)
+
+When looking for runnable reference implementations in the repository, follow the 4-tier `Examples/` layout:
+- **`Examples/Quickstarts/`**: 6 `< 10`-line single-file executables (`jev-quickstart`, `laya-quickstart`, `laya-ondevice-quickstart`, `clef-quickstart`, `openai-quickstart`, `gemini-quickstart`).
+- **`Examples/CLI/`**: Unified `system-one-cli` (`ticket-triage`, `duplicate-article`, `file-organizer`, `vision-inspect`) across `--provider jev|laya|laya-ondevice|clef|openai|gemini|proxy`.
+- **`Examples/TraitSamples/`**: `01-OfflineLayaApp` through `09-RemotePersonaRouter` verifying SE-0402 trait isolation and `ProxyCredential` (`05-SecureAppCheckApp`).
+- **`Examples/Apps/`**: Production SwiftUI apps — `MailTriageApp`, `VisionScannerApp`, and `NutritionLabelScannerApp`.
 

@@ -33,29 +33,52 @@ We maintain a strict mandate that **all core package unit tests must run 100% of
 Run the complete test suite from your terminal:
 
 ```bash
-# Standard Swift Package Manager test run
+# Standard Swift Package Manager test run (all 7 test targets)
 swift test
 
 # Or via just
 just test
+
+# Run an individual test target
+swift test --filter SystemOneCoreTests
+swift test --filter JevFoundationModelsTests
+swift test --filter LayaFoundationModelsTests
+swift test --filter LayaOnDeviceTests
+swift test --filter ClefFoundationModelsTests
+swift test --filter OpenAIFoundationModelsTests
+swift test --filter GeminiFoundationModelsTests
 ```
+
+### Core Package Test Targets (7 Suites)
+| Test Target | Module Under Test | Coverage Scope |
+| :--- | :--- | :--- |
+| `SystemOneCoreTests` | `SystemOneCore` | `SchemaTranslator`, `ResponseSynthesizer`, `SystemOneExecutor`, `ProxyCredential`, `ProxyEndpointValidator`, `SystemOneProxyBackend`, `SystemOneImage`, `RoutingPolicy`, `RetryPolicy`, and `.probability` / `.choice` / `.score` shortcuts. |
+| `JevFoundationModelsTests` | `JevFoundationModels` | `JevLanguageModel`, `JevEndpoint`, `JevClient`, `URLSessionTransport` & `ProxyTransport` retries/cancellation, and `MockJevTransport` / `MockSystemOneBackend` conformance. |
+| `LayaFoundationModelsTests` | `LayaFoundationModels` | `LayaLanguageModel`, `LayaEndpoint` URL validation, `LayaHTTPBackend` retry/error handling, `ProxyCredential`, and `LAYA_SERVE_URL` resolution. |
+| `LayaOnDeviceTests` | `LayaOnDevice` | `LayaCoreMLEngine` fixed-shape `[1, 512]` tensor padding, `ModernBERTTokenizer`, `MMBERTTokenizer` (WordPiece & SentencePiece Unigram), and `TemperatureCalibration`. |
+| `ClefFoundationModelsTests` | `ClefFoundationModels` | `ClefLanguageModel`, `ClefEndpoint` catalog/body decoupling, Client API v4 dual-decoding, 1024px JPEG attachment scaling, `ProxyCredential`, and multimodal evaluation. |
+| `OpenAIFoundationModelsTests` | `OpenAIFoundationModels` | `OpenAIDecisionsLanguageModel` (`OpenAILanguageModel`), `OpenAIDecisionsPayloadAdapter` (`predicate`/`choice`/`score` 0-based & 1-based alignment), enterprise headers, `ProxyCredential`, and multimodal Data URL guardrails. |
+| `GeminiFoundationModelsTests` | `GeminiFoundationModels` | `GeminiDecisionsLanguageModel` (`GeminiLanguageModel`), `GeminiDecisionsPayloadAdapter` dictionary-keyed `noul`/`choice`/`score` wire mapping, flat typed multimodal Base64 `input` blocks, `x-goog-api-key` & `ProxyCredential` auth, and `x-goog-processing-ms` timing. |
 
 ### Testing Guidelines
 - **Use Swift Testing**: Write modern Swift Testing suites (`@Suite`, `@Test`, `#expect(...)`) rather than legacy `XCTest`.
-- **Never Depend on Live Network in Core Tests**: Use `MockSystemOneBackend` or `MockJevTransport` to test protocol encoding, error states, and response synthesis offline.
-- **Opt-in Live Integration Tests**: Tests that hit live endpoints (such as `api.typesafe.ai`) must conditionally check for `ProcessInfo.processInfo.environment["TYPESAFE_API_KEY"]` and skip gracefully or mock behavior if credentials are not present.
+- **Never Depend on Live Network in Core Tests**: Inject `MockSystemOneBackend` (accepted via `init(backend:)` on all 6 providers and `SystemOneLanguageModel`) or `MockJevTransport` to test protocol encoding, error states, and response synthesis offline.
+- **Opt-in Live Integration Tests**: Tests that hit live endpoints (such as `api.typesafe.ai`) must conditionally check for environment variables (e.g. `TYPESAFE_API_KEY`) and skip cleanly via `@Test(.enabled(if: ...))` when credentials are absent.
 
 ### Running App and UI Tests
-To test the reference application `MailTriageApp`:
+To test the reference applications in `Examples/Apps/` (`MailTriageApp`, `VisionScannerApp`, `NutritionLabelScannerApp`) on iOS Simulator (FlowDeck 1.26.5+) or macOS:
 
 ```bash
-# Using FlowDeck
-flowdeck test -w Examples/MailTriageApp/apps/apple/MailTriageApp.xcodeproj -s MailTriageApp
-flowdeck test --package-path Examples/MailTriageApp/apps/apple/Packages/AppCore
+# Build MailTriageApp via FlowDeck
+flowdeck build -w Examples/Apps/MailTriageApp/apps/apple/MailTriageApp.xcodeproj -s MailTriageApp -S "iPhone 18 Pro"
 
-# Or using just
-just mail-test
-just mail-test-core
+# Run AppCore & AppUI package tests on iOS Simulator via FlowDeck 1.26.5+
+flowdeck test -p Examples/Apps/MailTriageApp/apps/apple/Packages/AppCore -s AppCore-Package -S "iPhone 18 Pro"
+flowdeck test -p Examples/Apps/MailTriageApp/apps/apple/Packages/AppUI -s AppUI -S "iPhone 18 Pro"
+
+# Run fast macOS package unit tests directly via SwiftPM
+swift test --package-path Examples/Apps/MailTriageApp/apps/apple/Packages/AppCore
+swift test --package-path Examples/Apps/MailTriageApp/apps/apple/Packages/AppUI
 ```
 
 ---
@@ -80,7 +103,7 @@ When authoring or refactoring code in `Sources/` or `Examples/`:
 - Never introduce blocking operations (`sleep()`, synchronous semaphore waits) into async contexts.
 
 ### 3. Zero External Third-Party Runtime Dependencies in Core
-- The core library targets (`SystemOneCore`, `LayaOnDevice`, `LayaFoundationModels`, `JevFoundationModels`) must remain **zero-dependency**.
+- All core library targets (`SystemOneCore`, `SystemOneFoundationModels`, `LayaOnDevice`, `LayaFoundationModels`, `JevFoundationModels`, `ClefFoundationModels`, `OpenAIFoundationModels`, `GeminiFoundationModels`) must remain **zero-dependency**.
 - Use native `URLSession`, `JSONDecoder`, and `JSONSerialization` for networking and serialization. Do not introduce third-party HTTP clients.
 - If integrating with third-party vendor SDKs (e.g. Firebase App Check), distribute the integration as a standalone example or drop-in file (see `Integrations/FirebaseAppCheckProxy/`).
 

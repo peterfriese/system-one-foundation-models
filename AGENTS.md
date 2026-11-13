@@ -1,6 +1,6 @@
 # Workspace Agent Directives & Principles
 
-Welcome to the **System One for Apple Foundation Models (Jev & Laya) & ACMD Mobile Engineering** workspace. This repository provides a native bridge between **Apple's Foundation Models framework** (`LanguageModel`, `LanguageModelExecutor`, `@Generable`) and **System One decision models** (TypeSafe AI's Jev and Laya on-device / self-hosted models), alongside reference native mobile applications (`Examples/MailTriageApp/`).
+Welcome to the **System One for Apple Foundation Models & ACMD Mobile Engineering** workspace. This repository provides a native bridge between **Apple's Foundation Models framework** (`LanguageModel`, `LanguageModelExecutor`, `@Generable`, `Attachment`) and all **6 System One decision model providers** (`LayaOnDevice` Core ML, `LayaFoundationModels` `laya-serve`, `JevFoundationModels` TypeSafe Cloud, `ClefFoundationModels` Cloudflare Clef 27B/9B, `OpenAIFoundationModels` `gpt-6-luna`, and `GeminiFoundationModels` `gemini-decision-1`) plus universal `ProxyCredential` / `SystemOneProxyBackend` mobile security, alongside 4 tiers of runnable examples (`Examples/Quickstarts/`, `Examples/CLI/`, `Examples/TraitSamples/`, and `Examples/Apps/`).
 
 ---
 
@@ -122,7 +122,7 @@ The bridge translates Foundation Models generation schemas to TypeSafe System On
 
 ---
 
-## 📱 Mobile Platform Engineering Standards (`Examples/MailTriageApp`)
+## 📱 Mobile Platform Engineering Standards (`Examples/Apps/`)
 
 ### 🍏 Apple Platform (Swift & SwiftUI)
 - **Language**: Swift 6 (strict concurrency compliance, `Sendable`, actor isolation, `@MainActor`).
@@ -130,6 +130,8 @@ The bridge translates Foundation Models generation schemas to TypeSafe System On
 - **DI**: FactoryKit container registrations in `Container+*.swift` with `@ObservationIgnored @Injected`.
 - **Previews**: Lightweight `#Preview` blocks with `@Previewable @State` and Factory mock overrides.
 - **Build & Test Toolchain (MANDATORY)**: **ALWAYS use FlowDeck CLI (`flowdeck`)** as the required, primary tool for Apple builds and tests:
-  - Build: `flowdeck build -w Examples/MailTriageApp/apps/apple/<App>.xcodeproj -s <App>`
-  - Test: `flowdeck test -w Examples/MailTriageApp/apps/apple/<App>.xcodeproj -s <App>`
-  - Package Tests: `flowdeck test --package-path Examples/MailTriageApp/apps/apple/Packages/AppCore`
+  - Build App: `flowdeck build -w Examples/Apps/MailTriageApp/apps/apple/MailTriageApp.xcodeproj -s MailTriageApp -S "iPhone 18 Pro"`
+  - Test App: `flowdeck test -w Examples/Apps/MailTriageApp/apps/apple/MailTriageApp.xcodeproj -s MailTriageApp -S "iPhone 18 Pro"`
+  - Package Tests (`AppCore` / `AppUI`):
+    - `flowdeck test -p Examples/Apps/MailTriageApp/apps/apple/Packages/AppCore -s AppCore-Package -S "iPhone 18 Pro"`
+    - `flowdeck test -p Examples/Apps/MailTriageApp/apps/apple/Packages/AppUI -s AppUI -S "iPhone 18 Pro"`

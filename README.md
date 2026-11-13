@@ -1,472 +1,168 @@
 # System One for Apple Foundation Models 🧠⚡️
 
-[![Swift 6](https://img.shields.io/badge/Swift-6.0-orange.svg?style=flat&logo=swift)](https://developer.apple.com/swift/)
-[![Xcode 27](https://img.shields.io/badge/Xcode-27.0+-blue.svg?style=flat&logo=xcode)](https://developer.apple.com/xcode/)
-[![iOS 27.0+](https://img.shields.io/badge/iOS-27.0+-black.svg?style=flat&logo=apple)](https://developer.apple.com/ios/)
-[![macOS 27.0+](https://img.shields.io/badge/macOS-27.0+-black.svg?style=flat&logo=apple)](https://developer.apple.com/macos/)
-[![](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fpeterfriese%2Fsystem-one-foundation-models%2Fbadge%3Ftype%3Dswift-versions)](https://swiftpackageindex.com/peterfriese/system-one-foundation-models)
-[![](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fpeterfriese%2Fsystem-one-foundation-models%2Fbadge%3Ftype%3Dplatforms)](https://swiftpackageindex.com/peterfriese/system-one-foundation-models)
-[![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Swift 6.1](https://img.shields.io/badge/Swift-6.1-F05138.svg?style=flat&logo=swift&logoColor=white)](https://swift.org)
+[![Platforms](https://img.shields.io/badge/Platforms-iOS%2027%2B%20%7C%20macOS%2027%2B%20%7C%20visionOS%2027%2B-007AFF.svg)](https://developer.apple.com)
+[![Zero Dependencies](https://img.shields.io/badge/Dependencies-Zero-34C759.svg)](Package.swift)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
-A lightweight, native Swift 6 bridge integrating **System One decision models** into Apple's **Foundation Models** framework (`LanguageModel`, `LanguageModelExecutor`, `@Generable`).
+**System One for Apple Foundation Models** bridges Apple's native [`FoundationModels`](https://developer.apple.com/documentation/foundationmodels) framework (`LanguageModelSession`, `@Generable`, `@Guide`, `Attachment`) to **non-autoregressive System One decision models**. Instead of sampling chat tokens one by one, System One models evaluate application state and camera frames in a single forward pass—returning strongly-typed Swift values alongside calibrated probabilities (`0.0...1.0`) in **2–150ms** with **zero output tokens** (`$0.00` output billing).
 
-Evaluate strongly typed `@Generable` structs and enums against application state in **15–150ms** with zero hallucinations, calibrated probabilities, and full Apple Intelligence API compatibility across:
-- **On-Device Core ML (`LayaOnDevice`)**: Run Laya's 322M (multilingual mmBERT) and 421M (English/typed-decisions ModernBERT) parameter models locally on the Apple Neural Engine and GPU with zero network calls.
-- **Self-Hosted HTTP (`LayaFoundationModels`)**: Connect to `laya-serve` (PR #31 merged into `NandhaKishorM/laya`) speaking the Jev-compatible `POST /v1/systemone` protocol with presets for `localhost:8000`, `localhost:8770`, and hosted `api.impossibl.com`.
-- **Cloudflare Clef (`ClefFoundationModels`)**: Run open-weight multimodal decision models—**Clef (27B)** and **Clef-Flash (9B)**—running via Cloudflare Workers AI edge, Cloudflare AI Gateway, or local runner (`Tools/ClefLocalRunner`), judging camera frames and image attachments alongside text in a single feed-forward pass.
-- **OpenAI Decisions (`OpenAIFoundationModels`)**: Non-autoregressive decision computing via OpenAI's Decisions API (`POST https://api.openai.com/v1/decisions`) powered by **`gpt-6-luna`** with ~150ms latency, zero output token billing ($0.10/1M input, $0.00 output), and enterprise multi-tenant header isolation (`OpenAI-Organization`, `OpenAI-Project`).
-- **Google Gemini Decisions (`GeminiFoundationModels`)**: High-density multimodal decision evaluation via Google's Gemini Decisions API (`POST https://generativelanguage.googleapis.com/v1beta/decisions`) powered by **`gemini-decision-1`** with up to 256K-token context, up to 1,000 concurrent questions per pass, ~150ms–250ms latency, and zero output token billing ($0.10/1M input, $0.00 output).
-- **TypeSafe AI Cloud (`JevFoundationModels`)**: Full backwards-compatible support for hosted TypeSafe Jev endpoints with automated HTTP retries (`RetryPolicy`), cooperative cancellation, and confidence routing (`RoutingPolicy`).
+- **Laya On-Device (`LayaOnDevice`)** — 100% offline Core ML inference on the Apple Neural Engine (< 2ms, zero network egress).
+- **Laya HTTP Server (`LayaFoundationModels`)** — Self-hosted `laya-serve` on `localhost` or private enterprise VPCs.
+- **TypeSafe AI Jev (`JevFoundationModels`)** — Hosted cloud System One API (`POST /v1/systemone`).
+- **Cloudflare Clef (`ClefFoundationModels`)** — Open-weight **Clef 27B** & **Clef-Flash 9B** multimodal models on Workers AI, AI Gateway, or local MPS.
+- **OpenAI Decisions (`OpenAIFoundationModels`)** — Frontier **`gpt-6-luna`** multimodal decision API (`POST /v1/decisions`).
+- **Google Gemini Decisions (`GeminiFoundationModels`)** — High-density **`gemini-decision-1`** multimodal decision API (256K context, up to 1,000 questions/pass).
 
 > [!WARNING]
-> **Security Advisory: Never Embed API Keys in Mobile Apps**
-> Cloud API keys (`GEMINI_API_KEY`, `OPENAI_API_KEY`, `CLOUDFLARE_API_TOKEN`, `TYPESAFE_API_KEY`) must **never** be hardcoded or bundled inside client-side iOS, iPadOS, watchOS, or visionOS application binaries. Anyone can inspect or decompile mobile apps to extract embedded secrets.
->
-> **Safe Deployment Patterns:**
-> - **On-Device Core ML (`LayaOnDevice`)**: Run models locally on hardware with 100% offline privacy and zero secrets required.
-> - **Backend / Server / CLI**: Use `GeminiLanguageModel`, `OpenAILanguageModel`, `ClefLanguageModel`, `LayaLanguageModel`, or `JevLanguageModel` directly in server-side Swift services or CLI tools where environment variables remain server-side.
-> - **Mobile Applications with Cloud APIs**: Route mobile requests through your own authenticated reverse proxy protected by Apple App Attest and Firebase App Check using universal `ProxyCredential` (`.appCheck`, `.header`, `.bearer`, `.custom`, or inline `authorize:` closures) and `SystemOneProxyBackend` (see [Mobile Security Guide](docs/mobile-security.md), [ADR-2026-11-12-01](docs/architecture/ADR-2026-11-12-01-universal-proxy-credentials.md), and [Tech Note 0010](tech-notes/0010-proxy-transport-and-dynamic-attestation.md)).
+> **Mobile Security — Never Ship API Keys in Client Apps**: Upstream keys (`GEMINI_API_KEY`, `OPENAI_API_KEY`, `CLOUDFLARE_API_TOKEN`, `TYPESAFE_API_KEY`) can be extracted from app binaries. For iOS, macOS, and visionOS client apps, run offline with `LayaOnDevice` or route through an attested proxy via `ProxyCredential` — see the [**Mobile Security Guide**](docs/mobile-security.md).
 
 ---
 
-## 💡 Why Decision Models in Apple Foundation Models?
+## 🎯 Why Decision Models?
 
-Traditional Large Language Models (LLMs) are generative text engines: coercing them into producing deterministic structured decisions requires constrained token sampling or prompt-and-parse pipelines.
+`SchemaTranslator` compiles your Swift `@Generable` types directly into calibrated System One decision primitives, eliminating JSON prompt engineering and hallucinated enum values:
 
-**System One decision models** evaluate typed questions directly against state in a single feed-forward pass:
-
-| Apple Foundation Models (`@Generable`) | System One Decision Primitive | Behavior |
+| Apple `FoundationModels` Type | System One Primitive | Returned Signal |
 | :--- | :--- | :--- |
-| `Bool` | **`noul`** | Binary judgment with calibrated probability of truth |
-| `enum` / String | **`choice`** | Categorical selection across discrete options |
-| `@Guide(description: "...")` | **`instructions`** | Semantic criteria evaluated against state |
-| `@Guide(.range(...))` | **`score`** | Bounded ordinal rubric scoring |
-| `Response.metadata` | **`confidence` & `probabilities`** | Direct access to model uncertainty |
+| `Bool` | **`noul`** | Calibrated probability of truth ($0.0 \dots 1.0$) + epistemic `NoulJudgement` |
+| `enum: String` / `Choosable` | **`choice`** | Categorical distribution across cases + winning `confidence` |
+| `Int` / `Double` + `@Guide(.range(min...max))` | **`score`** | Ordinal rubric distribution + probability-weighted mean (`ScoreValue`) |
+| `@Guide(description: "...")` | **`instructions`** | Per-question semantic rubric steering model judgment |
 
-### Multimodal Visual Decisions
-
-With **Cloudflare Clef (`ClefFoundationModels`)**, System One decision modeling extends natively into visual workflows:
-- **Single-Pass Evaluation**: Evaluates camera frames or image attachments (`Attachment(cgImage)`) alongside textual state in a single feed-forward pass—without generative captioning bottlenecks, hallucinations, or multi-stage prompt engineering.
-- **Native Apple Foundation Models Vision**: Fully complies with `LanguageModelCapabilities([.guidedGeneration, .vision])`, accepting standard `Prompt` attachments and returning strongly typed `@Generable` outcomes.
-- **Calibrated Visual Uncertainty**: Obtains discrete decision outputs (pass/fail, defect categories, priority tiers) alongside continuous probability distributions and confidence scores directly from visual features.
+For visual workflows, pass native Apple `Attachment(cgImage)` or `Attachment(imageURL:)` values directly inside `Prompt { ... }`. Vision-capable providers (`Clef`, `OpenAI`, `Gemini`, and `SystemOneLanguageModel`) automatically downscale frames to 1024px and evaluate up to 4 images in a single feed-forward pass (`output_tokens: 0`).
 
 ---
 
-## 🚀 Quick Start
+## ⚡ Quick Start in 6 Lines
 
-### 1. Add Package Dependency & Configure Traits
+Every provider conforms to Apple's `LanguageModel` protocol and supports zero-argument initialization (`init()`):
 
-Add `SystemOneFoundationModels` to your `Package.swift` or via Xcode (**File > Add Package Dependencies...**):
+```swift
+import FoundationModels
+import GeminiFoundationModels // swap any provider module below
+
+let session = LanguageModelSession(model: GeminiLanguageModel())
+let fraudProb = try await session.probability(of: "Transaction requires manual fraud review", state: txLog)
+print("Fraud probability: \(fraudProb)")
+```
+
+| Provider | 1-Line Initializer | Auto-Resolved Environment / Resource | Vision | `< 10`-Line Quickstart |
+| :--- | :--- | :--- | :---: | :--- |
+| **TypeSafe Jev** | `JevLanguageModel()` | `TYPESAFE_API_KEY` | Text | `swift run jev-quickstart` |
+| **Laya HTTP** | `LayaLanguageModel()` | `LAYA_SERVE_URL` (default `localhost:8000`) + `LAYA_API_KEY` | Text | `swift run laya-quickstart` |
+| **Laya On-Device** | `try LayaOnDeviceLanguageModel()` | `LAYA_MODEL_PATH` or bundled `LayaDecisionModel.mlmodelc` | Text | `swift run laya-ondevice-quickstart` |
+| **Cloudflare Clef** | `ClefLanguageModel()` | `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN` or `CLEF_LOCAL_PORT` | **Vision** | `swift run clef-quickstart` |
+| **OpenAI (`gpt-6-luna`)** | `OpenAILanguageModel()` | `OPENAI_API_KEY` | **Vision** | `swift run openai-quickstart` |
+| **Gemini (`gemini-decision-1`)** | `GeminiLanguageModel()` | `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) | **Vision** | `swift run gemini-quickstart` |
+
+---
+
+## 📦 Installation, Targets & Package Traits
+
+Add the package in `Package.swift` (defaults to `traits: ["All"]`; narrow with Swift 6.1 SE-0402 traits to exclude unused SDKs at compile time):
 
 ```swift
 dependencies: [
     .package(url: "https://github.com/peterfriese/system-one-foundation-models.git", from: "0.3.0")
+    // Or isolate specific providers: traits: ["OnDevice"], ["Remote"], ["Gemini"], ["OpenAI"], ["Clef"], ["Jev"]
 ]
 ```
 
-#### Swift 6.1 Package Traits
+| Library Product / Target | Package Trait | Primary Use Case | Network / Key Requirement |
+| :--- | :--- | :--- | :--- |
+| [`SystemOneFoundationModels`](Sources/SystemOneFoundationModels/README.md) | `All` *(default)*, `OnDevice`, `Remote` | Umbrella module exporting enabled provider traits | Depends on active trait(s) |
+| [`LayaOnDevice`](Sources/LayaOnDevice/README.md) | `Laya` / `OnDevice` | Offline Core ML on Apple Neural Engine (ModernBERT / mmBERT) | **None** (100% offline `.mlmodelc`) |
+| [`LayaFoundationModels`](Sources/LayaFoundationModels/README.md) | `LayaServe` | Self-hosted `laya-serve` HTTP daemon or private VPC | Localhost or `LAYA_API_KEY` |
+| [`JevFoundationModels`](Sources/JevFoundationModels/README.md) | `Jev` | Hosted TypeSafe AI Jev cloud decisions | `TYPESAFE_API_KEY` or Proxy |
+| [`ClefFoundationModels`](Sources/ClefFoundationModels/README.md) | `Clef` | Multimodal edge vision on Workers AI, AI Gateway, or local MPS | Cloudflare token, local port, or Proxy |
+| [`OpenAIFoundationModels`](Sources/OpenAIFoundationModels/README.md) | `OpenAI` | Multimodal enterprise decisions on OpenAI `gpt-6-luna` | `OPENAI_API_KEY` or Proxy |
+| [`GeminiFoundationModels`](Sources/GeminiFoundationModels/README.md) | `Gemini` | High-context (256K) multimodal decisions on `gemini-decision-1` | `GEMINI_API_KEY` or Proxy |
+| [`SystemOneCore`](Sources/SystemOneCore/README.md) | *(always linked)* | Shared schemas, `RoutingPolicy`, `RetryPolicy`, `ProxyCredential`, shortcuts | Vendor-agnostic (`SystemOneProxyBackend`) |
 
-Using Swift 6.1 Package Traits ([SE-0402](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0402-package-traits.md)), you can enable precisely the backend capabilities you need, eliminating unnecessary dependencies, cloud secrets, or neural model binaries:
+---
+
+## 🧩 Core API Highlights
+
+### 1. `@Generable` Schemas & Calibrated `RoutingPolicy`
 
 ```swift
-// Default (TypeSafe Jev hosted cloud API):
-.package(url: "https://github.com/peterfriese/system-one-foundation-models.git", from: "0.3.0")
+@Generable enum Department: String, Sendable { case billing, engineering, security }
 
-// On-Device only (Core ML + Apple Neural Engine, zero network/cloud code):
-.package(url: "https://github.com/peterfriese/system-one-foundation-models.git", from: "0.3.0", traits: ["OnDevice"])
+@Generable struct TicketTriage: Sendable {
+    @Guide(description: "Is this ticket blocking production?") var isUrgent: Bool
+    @Guide(description: "Owning support department") var department: Department
+    @Guide(description: "Customer frustration from 0 to 3", .range(0...3)) var frustration: Int
+}
 
-// Remote only (Jev cloud, self-hosted laya-serve HTTP, Clef, OpenAI, and Gemini; no Core ML binaries):
-.package(url: "https://github.com/peterfriese/system-one-foundation-models.git", from: "0.3.0", traits: ["Remote"])
+let response = try await session.respond(to: ticketText, generating: TicketTriage.self)
+let policy = RoutingPolicy(escalateBelow: 0.60, autoAtOrAbove: 0.85) // 0.35...0.65 undecided band
 
-// All backends (Core ML, Laya HTTP, Jev cloud, Cloudflare Clef, OpenAI, and Google Gemini):
-.package(url: "https://github.com/peterfriese/system-one-foundation-models.git", from: "0.3.0", traits: ["All"])
+switch response.judgement(for: "isUrgent", policy: policy).decision {
+case .auto:     response.content.isUrgent ? pageOnCall() : enqueueStandard()
+case .confirm:  suggestPriorityInUI(response.content.department)
+case .escalate: routeToHumanSupervisor()
+}
 ```
 
-| Trait | Type | Description |
-| :--- | :--- | :--- |
-| `Jev` *(default)* | Model Boundary | Enables TypeSafe Jev hosted cloud API client (`JevFoundationModels`) |
-| `Laya` | Model Boundary | Enables on-device Laya decision models via Core ML and Apple Neural Engine (`LayaOnDevice`) |
-| `LayaServe` | Model Boundary | Enables HTTP transport for self-hosted `laya-serve` instances (`LayaFoundationModels`) |
-| `Clef` | Model Boundary | Enables Cloudflare Clef and Clef-Flash hosted and local multimodal decision models (`ClefFoundationModels`) |
-| `OpenAI` | Model Boundary | Enables OpenAI Decisions API (`gpt-6-luna`) remote hosted client (`OpenAIFoundationModels`) |
-| `Gemini` | Model Boundary | Enables Google Gemini Decisions API (`gemini-decision-1`) remote hosted client (`GeminiFoundationModels`) |
-| `OnDevice` | Persona Shorthand | Enables on-device capabilities (activates `["Laya"]`) |
-| `Remote` | Persona Shorthand | Enables remote hosted and self-hosted decision model clients (activates `["Jev", "LayaServe", "Clef", "OpenAI", "Gemini"]`) |
-| `All` | Persona Shorthand | Enables all System One model backends and transports (activates `["Jev", "Laya", "LayaServe", "Clef", "OpenAI", "Gemini"]`) |
+### 2. Zero-Boilerplate Shortcuts & Multimodal Vision (`Attachment`)
 
-### Which Target Should I Import?
+Skip `@Generable` boilerplate for single questions—including live `CGImage` or file `Attachment`s via `@PromptBuilder` (see [**Decision Shortcuts**](docs/decision-shortcuts.md)):
 
-The package is split into focused, modular targets so you only link the code and dependencies your project needs:
-
-| Target / Library | Primary Capability | Network Required | API Key Required | Dependencies |
-| :--- | :--- | :---: | :---: | :--- |
-| `LayaOnDevice` | 100% offline inference via Core ML on Apple Neural Engine & GPU | ❌ No | ❌ No | `SystemOneCore` |
-| `LayaFoundationModels` | Connect to local (`localhost:8000`) or self-hosted `laya-serve` instances | ✅ Yes (Local/LAN) | ❌ No (Optional token) | `SystemOneCore` |
-| `ClefFoundationModels` | Multimodal decisions (Clef 27B & Clef-Flash 9B) via Cloudflare Workers AI or local runner | ✅ Yes (Workers AI or Local) | Optional (`CLOUDFLARE_API_TOKEN` for cloud) | `SystemOneCore` |
-| `OpenAIFoundationModels` | Non-autoregressive decisions via OpenAI Decisions API (`gpt-6-luna`) | ✅ Yes (Cloud HTTPS) | ✅ Yes (`OPENAI_API_KEY`) | `SystemOneCore` |
-| `GeminiFoundationModels` | Non-autoregressive multimodal decisions via Google Gemini Decisions API (`gemini-decision-1`) | ✅ Yes (Cloud HTTPS) | ✅ Yes (`GEMINI_API_KEY` or `GOOGLE_API_KEY`) | `SystemOneCore` |
-| `JevFoundationModels` | Connect to TypeSafe AI cloud API with exponential retries | ✅ Yes (Cloud HTTPS) | ✅ Yes (`TYPESAFE_API_KEY`) | `SystemOneCore` |
-| `SystemOneCore` | Core abstractions, `@Generable` schema translation, `RoutingPolicy`, offline mocks | ❌ No | ❌ No | None |
-| `SystemOneFoundationModels` | Umbrella module bundling Core ML, Laya HTTP, Clef, OpenAI, Gemini, and Jev Cloud backends | Varies by backend | Varies by backend | All above |
-
-### 2. Choose Your Execution Backend
-
-#### Option A: On-Device Core ML (Zero Network, Air-Gapped Privacy)
 ```swift
-import FoundationModels
-import LayaOnDevice
-
-// 1. Initialize on-device engine with compiled Core ML model
-let engine = try LayaCoreMLEngine(
-    modelURL: Bundle.main.url(forResource: "LayaModernBERT", withExtension: "mlmodelc")!,
-    tokenizer: ModernBERTTokenizer.defaultTokenizer()
-)
-
-// 2. Initialize native Apple Foundation Models session
-let session = LanguageModelSession(model: LayaOnDeviceLanguageModel(engine: engine))
+let damaged = try await session.probability(of: "The parcel has visible exterior damage") {
+    "Inspect delivery photo for crushed corners or water damage."
+    Attachment(parcelCGImage)
+}
+let route = try await session.choice("Assign team", options: ["claims", "warehouse", "fraud"], state: note)
+let condition = try await session.score("Rate packaging", levels: ["Damaged", "Worn", "Pristine"]) {
+    Attachment(parcelCGImage)
+}
 ```
 
-#### Option B: Self-Hosted or Remote Laya HTTP (`laya-serve`)
+### 3. Zero-Secret Mobile Attestation (`ProxyCredential`)
+
+Authenticate client apps through Firebase App Check / Apple App Attest (or custom OAuth/HMAC headers) across every networked provider without adding third-party dependencies to `Package.swift`:
+
 ```swift
-import FoundationModels
-import LayaFoundationModels
-
-// 1. Connect to local laya-serve (localhost:8000 or localhost:8770) or hosted endpoint
-let model = LayaLanguageModel(endpoint: .localDefault) // or .local(port: 8770) or .hosted
-
-// 2. Initialize native Apple Foundation Models session
+let model = GeminiLanguageModel(proxyEndpoint: proxyURL, credential: .appCheck {
+    try await AppCheck.appCheck().token(forcingRefresh: false).token
+})
 let session = LanguageModelSession(model: model)
 ```
 
-#### Option C: TypeSafe AI Jev Cloud with Resilience (Server / CLI)
-```swift
-import FoundationModels
-import JevFoundationModels
+### 4. Deterministic Offline Testing (`MockSystemOneBackend`)
 
-// 1. Connect to TypeSafe AI API with automated retry resilience
-let retryPolicy = RetryPolicy(maxAttempts: 3, initialDelay: .milliseconds(250), jitter: 0.15)
-let jev = JevLanguageModel(apiKey: ProcessInfo.processInfo.environment["TYPESAFE_API_KEY"]!, retryPolicy: retryPolicy)
-
-// 2. Initialize native Apple Foundation Models session
-let session = LanguageModelSession(model: jev)
-```
-
-#### Option D: Cloudflare Clef & Clef-Flash Multimodal (`ClefFoundationModels`)
-```swift
-import FoundationModels
-import ClefFoundationModels
-
-// 1. Connect to Cloudflare Workers AI edge (or .gateway / .local)
-let clef = ClefLanguageModel(
-    endpoint: .workersAI(
-        accountID: ProcessInfo.processInfo.environment["CLOUDFLARE_ACCOUNT_ID"]!,
-        model: .clefFlash // or .clef (27B)
-    ),
-    apiToken: ProcessInfo.processInfo.environment["CLOUDFLARE_API_TOKEN"]
-)
-
-// 2. Initialize native Apple Foundation Models session
-let session = LanguageModelSession(model: clef)
-
-// 3. Evaluate multimodal decision with visual Attachment
-let prompt = Prompt {
-    "Inspect the item presented in this camera frame for physical condition, category, and safety compliance."
-    Attachment(cgImage)
-}
-let response = try await session.respond(to: prompt, generating: VisualInspectionDecision.self)
-```
-
-#### Option E: OpenAI Decisions API (`gpt-6-luna`)
-```swift
-import FoundationModels
-import OpenAIFoundationModels
-
-// 1. Connect to OpenAI Decisions API with optional enterprise headers
-let openai = OpenAILanguageModel(
-    apiKey: ProcessInfo.processInfo.environment["OPENAI_API_KEY"]!,
-    organization: ProcessInfo.processInfo.environment["OPENAI_ORGANIZATION"],
-    project: ProcessInfo.processInfo.environment["OPENAI_PROJECT"]
-)
-
-// 2. Initialize native Apple Foundation Models session
-let session = LanguageModelSession(model: openai)
-```
-
-#### Option F: Google Gemini Decisions API (`gemini-decision-1`)
-```swift
-import FoundationModels
-import GeminiFoundationModels
-
-// 1. Connect to Google Gemini Decisions API (resolves GEMINI_API_KEY or GOOGLE_API_KEY)
-let gemini = GeminiLanguageModel(
-    apiKey: ProcessInfo.processInfo.environment["GEMINI_API_KEY"]
-)
-
-// 2. Initialize native Apple Foundation Models session
-let session = LanguageModelSession(model: gemini)
-```
-
-#### Option G: Mobile Security & Zero-Secret App Check Gateways (`ProxyCredential` & `SystemOneProxyBackend`)
-Every hosted System One model (`GeminiLanguageModel`, `OpenAILanguageModel`, `ClefLanguageModel`, `LayaLanguageModel`, `JevLanguageModel`, and vendor-agnostic `SystemOneLanguageModel`) supports dynamic, per-attempt credential injection (`.appCheck`, `.header`, `.bearer`, `.custom`, or inline `authorize:` trailing closures) with zero third-party SDK dependencies in `SystemOneFoundationModels`:
+Every provider accepts `init(backend:)` so unit tests run 100% offline with Swift Testing (`swift test`) and zero API keys:
 
 ```swift
-import FoundationModels
-import GeminiFoundationModels // or OpenAIFoundationModels / ClefFoundationModels / LayaFoundationModels / JevFoundationModels
-import FirebaseAppCheck       // or Apple App Attest / OAuth 2.0
-
-// 1. Reusable zero-dependency App Check credential (resolved on every attempt inside the retry loop)
-let appCheck = ProxyCredential.appCheck {
-    try await AppCheck.appCheck().token(forcingRefresh: false).token
-}
-
-// Pattern A: Provider-specific passthrough proxy (works identically across Gemini, OpenAI, Clef, Laya, and Jev)
-let gemini = GeminiLanguageModel(
-    proxyEndpoint: URL(string: "https://us-central1-myproject.cloudfunctions.net/geminiDecisions")!,
-    credential: appCheck
-)
-
-// Pattern B: Vendor-agnostic gateway (server routes between Gemini, OpenAI, Clef, Jev, or Laya)
-let gatewayModel = SystemOneLanguageModel(
-    proxyEndpoint: URL(string: "https://us-central1-myproject.cloudfunctions.net/systemone")!,
-    credential: appCheck,
-    modelID: "gemini-decision-1"
-)
-
-// Or use the inline trailing-closure `authorize:` syntax for multi-header gateways (App Check + User JWT):
-let customAuthModel = OpenAILanguageModel(
-    proxyEndpoint: URL(string: "https://api.mycompany.com/v1/decisions")!
-) { request in
-    let attestToken = try await AppCheck.appCheck().token(forcingRefresh: false).token
-    request.setValue(attestToken, forHTTPHeaderField: "X-Firebase-AppCheck")
-    request.setValue("Bearer \(try await AuthManager.shared.validAccessToken())", forHTTPHeaderField: "Authorization")
-}
-
-// 2. Initialize native Apple Foundation Models session
-let session = LanguageModelSession(model: gemini)
-```
-
-### 3. Define Your Decision Type & Evaluate
-
-```swift
-import FoundationModels
-
-@Generable
-struct CustomerTriage: Sendable {
-    @Guide(description: "Is this inquiry urgent or time-sensitive?")
-    var isUrgent: Bool
-
-    @Guide(description: "Which team should handle this request?")
-    var department: Department
-
-    @Guide(description: "Customer frustration score", .range(0...2))
-    var frustration: Int
-}
-
-@Generable
-enum Department: String, Sendable {
-    case billing
-    case technical
-    case account
-}
-
-// Evaluate state
-let ticket = "My account was double charged this morning! Please fix this ASAP."
-let response = try await session.respond(to: ticket, generating: CustomerTriage.self)
-
-// Access typed results
-let triage = response.content
-print("Urgent: \(triage.isUrgent)")             // true
-print("Route: \(triage.department)")           // .billing
-print("Frustration: \(triage.frustration)")    // 2
-
-// Confidence routing with RoutingPolicy
-let policy = RoutingPolicy(escalateBelow: 0.60, autoAtOrAbove: 0.85)
-switch response.decision(for: "department", policy: policy) {
-case .auto:     print("Auto-routed to \(triage.department)")
-case .confirm:  print("Suggesting \(triage.department) for confirmation")
-case .escalate: print("Escalated to human supervisor")
-}
-
-let judgement = response.judgement(for: "isUrgent", policy: policy)
-if judgement.decision == .auto && judgement.answer == true {
-    print("Urgency: Decisive True -> Page on-call engineering P0")
-}
-
-// Canonical calibrated probability inspection
-if let urgencyProb = response.probability(for: "isUrgent") {
-    print("Urgency probability: \(urgencyProb)")
-}
-if let typedProb = response.typedProbability(for: "isUrgent") {
-    print("Decisiveness: \(typedProb.decisiveness)")
-}
-```
-
-### 4. Direct Ergonomic Decision Shortcuts (No `@Generable` Boilerplate)
-
-For ad-hoc questions where declaring a composite `@Generable` struct is unnecessary ceremony, `LanguageModelSession` provides direct, calibrated evaluation shortcuts:
-
-#### Binary Probability (`session.probability`)
-Evaluate the calibrated truth probability (0.0 to 1.0) of any statement against state:
-```swift
-// Direct statement evaluation
-let isUrgent = try await session.probability(
-    of: "Is this inquiry urgent or time-sensitive?",
-    state: ticket
-)
-print("Urgency probability: \(isUrgent)") // e.g. 0.94
-
-// Optional criteria steering
-let isSpam = try await session.probability(
-    of: "Is this message phishing or malicious?",
-    state: emailBody,
-    criteria: (
-        whenTrue: "requests wire transfers, credentials, or urgent gift cards",
-        whenFalse: "routine correspondence from an existing vendor"
+let mock = MockSystemOneBackend { _ in
+    SystemOneResponse(
+        model: "mock",
+        answers: ["isUrgent": SystemOneAnswer(type: "noul", noul: 0.96, confidence: 0.96)]
     )
-)
-```
-
-#### Strongly-Typed Categorical Choice (`session.choice` with `Choosable`)
-Evaluate discrete categorization across cases of any Swift enum conforming to `Choosable`:
-```swift
-enum TicketPriority: String, Choosable {
-    case critical = "CRITICAL"
-    case high = "HIGH"
-    case normal = "NORMAL"
-    case low = "LOW"
-
-    var optionDescription: String? {
-        switch self {
-        case .critical: "Complete service outage affecting all users"
-        case .high: "Core workflow degraded"
-        case .normal: "Standard request or minor bug"
-        case .low: "Cosmetic issue or feature request"
-        }
-    }
 }
-
-let choice = try await session.choice(
-    "Select the triage priority",
-    from: TicketPriority.self,
-    state: ticket
-)
-
-print("Winning case: \(choice.value)")             // .critical
-print("Model confidence: \(choice.confidence)")     // 0.92
-print("Distribution: \(choice.distribution)")       // [.critical: 0.92, .high: 0.07, ...]
-print("P(critical): \(choice.probability(of: .critical))")
-```
-
-#### Dynamic String Options (`session.choice`)
-Categorize state among dynamic runtime string options:
-```swift
-let routing = try await session.choice(
-    "Which team should handle this request?",
-    options: ["billing", "technical", "account"],
-    state: ticket
-)
-print("Chosen route: \(routing.value)")        // "billing"
-print("Confidence: \(routing.confidence)")     // 0.95
-```
-
-#### Ordinal Rubric Scoring (`session.score`)
-Rate state across ordered rubric levels to obtain both the discrete winner and the probability-weighted continuous mean score:
-```swift
-let frustration = try await session.score(
-    "Rate customer frustration level based on sentiment and phrasing",
-    levels: ["Calm", "Mildly Annoyed", "Frustrated", "Extremely Irate"],
-    state: ticket
-)
-
-print("Continuous mean: \(frustration.value)")              // 2.75 (0...3 scale)
-print("Most likely level: \(frustration.mostLikelyLevel)")   // "Extremely Irate"
-print("Level index: \(frustration.mostLikelyIndex)")        // 3
-print("Probabilities: \(frustration.probabilities)")         // [0.01, 0.04, 0.15, 0.80]
+let session = LanguageModelSession(model: GeminiLanguageModel(backend: mock))
 ```
 
 ---
 
-## 📱 Flagship Reference App: MailTriageApp
+## 🗺️ Examples & Repository Navigation
 
-Explore [`Examples/MailTriageApp`](Examples/MailTriageApp/README.md), a complete native macOS and iOS reference application showcasing production-grade System One decision models in a modern Apple Mail interface:
+| Examples Tier | Path | What You'll Find |
+| :--- | :--- | :--- |
+| **1. Provider Quickstarts** | [`Examples/Quickstarts/`](Examples/Quickstarts/README.md) | 6 single-file `< 10`-line executables (`jev`, `laya`, `laya-ondevice`, `clef`, `openai`, `gemini`). |
+| **2. Unified CLI** | [`Examples/CLI/`](Examples/CLI/README.md) | `system-one-cli`: 4 workflows (`ticket-triage`, `duplicate-article`, `file-organizer`, `vision-inspect`) $\times$ 7 provider modes. |
+| **3. Package Trait Samples** | [`Examples/TraitSamples/`](Examples/TraitSamples/README.md) | `01`–`09` standalone packages proving binary isolation (`OnDevice`, `Remote`, `Gemini`, `ProxyCredential`, hybrid routing). |
+| **4. SwiftUI Reference Apps** | [`Examples/Apps/`](Examples/Apps/README.md) | **MailTriageApp**, **VisionScannerApp**, and **NutritionLabelScannerApp** for iOS 27+ & macOS 27+. |
 
-- **Intelligent Email Triage**: Automatically categorizes incoming messages, assigns color-coded urgency priority tokens (`P0 Critical`, `P1 High`, `P2 Normal`, `P3 Low`), extracts suggested follow-up actions (Reply, Forward, Compose), and drives batch triage flows.
-- **8 Selectable Backends**: Hot-swap backends on the fly in Settings:
-  1. **Laya Core ML**: 100% offline inference on the Apple Neural Engine and GPU.
-  2. **Laya Local**: Local `laya-serve` instance running on `http://127.0.0.1:8000`.
-  3. **Laya Remote**: Hosted Laya instance on `https://api.impossibl.com`.
-  4. **Cloudflare Clef**: Serverless Workers AI edge or local runner with multimodal email attachment triage.
-  5. **OpenAI Decisions**: OpenAI Decisions API (`gpt-6-luna`) with ~150ms latency and $0.00 output token billing.
-  6. **Google Gemini Decisions**: Google Gemini Decisions API (`gemini-decision-1`) with multimodal attachment triage, ~150ms latency, and $0.00 output token billing.
-  7. **Jev Cloud**: TypeSafe AI hosted service on `https://api.typesafe.ai`.
-  8. **Generative Baseline / Offline Mock**: On-device generative baseline or instant deterministic mock evaluation.
-- **Pure Native Architecture**: Built with Swift 6 Complete Strict Concurrency, SwiftUI `@Observable`, FactoryKit dependency injection, Liquid Glass design, and multi-window split views.
-- **Catalog of Demos**: Browse [`Examples/README.md`](Examples/README.md) for the full list of runnable CLI tools and sample projects.
-
----
-
-## 🏗️ Architecture
-
-`SystemOneFoundationModels` conforms directly to Apple's public provider protocols (`LanguageModel`, `LanguageModelExecutor`):
-
-```
-┌────────────────────────────────────────────────────────────────────────┐
-│                        LanguageModelSession                            │
-│  session.respond(to: "...", generating: CustomerTriage.self)           │
-└───────────────────────────────────┬────────────────────────────────────┘
-                                    │ passes Request (Transcript + Schema)
-                                    ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│                        SystemOneExecutor                               │
-│  • SchemaTranslator: maps @Generable schema to System One questions    │
-│  • SystemOneBackend (Pluggable Execution Engine):                      │
-│     ├── LayaOnDeviceBackend: Core ML on Apple Neural Engine / GPU      │
-│     ├── LayaHTTPBackend: POST http://localhost:8000/v1/systemone       │
-│     ├── ClefHTTPBackend: Cloudflare Workers AI / Gateway / Local       │
-│     ├── OpenAIDecisionsHTTPBackend: POST https://api.openai.com/...    │
-│     ├── GeminiDecisionsHTTPBackend: POST https://generativelanguage... │
-│     ├── SystemOneProxyBackend: Canonical Vendor-Agnostic Proxy Gateway │
-│     └── JevBackend: POST https://api.typesafe.ai/v1/systemone          │
-│  • ResponseSynthesizer: converts answers into canonical JSON / enums   │
-└───────────────────────────────────┬────────────────────────────────────┘
-                                    │ yields via Channel
-                                    ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│              LanguageModelExecutorGenerationChannel                    │
-│  • .appendText(synthesizedJSON) -> decoded into CustomerTriage         │
-│  • .updateMetadata(probabilities, confidence, scores, duration)        │
-│  • .updateUsage(inputTokens, outputTokens)                             │
-└────────────────────────────────────────────────────────────────────────┘
-```
-
-For more in-depth documentation, see:
-* [Getting Started Guide](docs/getting-started.md)
-* [Reference Demos & Examples Directory](Examples/README.md)
-* [Flagship Reference App (MailTriageApp)](Examples/MailTriageApp/README.md)
-* [Architecture Decision Records (ADRs)](docs/architecture/)
-  * [ADR: Mail Triage System One Engine](docs/architecture/ADR-2026-09-25-mail-triage-system-one-engine.md)
-  * [ADR: Cloudflare Clef Foundation Models Integration](docs/architecture/ADR-2026-10-03-01-clef-foundation-models-integration.md)
-  * [ADR: OpenAI Decisions API Integration](docs/architecture/ADR-2026-10-08-01-openai-decisions-models-integration.md)
-  * [ADR: Google Gemini Decisions API Integration](docs/architecture/ADR-2026-11-11-01-gemini-decisions-models-integration.md)
-  * [ADR: Universal Proxy Credentials & Hardware-Attested Gateways](docs/architecture/ADR-2026-11-12-01-universal-proxy-credentials.md)
-* [Product Requirements Documents (PRDs)](docs/prd/)
-  * [PRD: Mail Triage Engine](docs/prd/PRD-2026-09-25-mail-triage-system-one-engine.md)
-  * [PRD: Clef Multimodal Decision Models](docs/prd/PRD-2026-10-03-clef-decision-models.md)
-  * [PRD: OpenAI Decisions Models (`gpt-6-luna`)](docs/prd/PRD-2026-10-08-openai-decisions-models.md)
-  * [PRD: Google Gemini Decisions Models (`gemini-decision-1`)](docs/prd/PRD-2026-11-11-gemini-decisions-models.md)
-  * [PRD: Universal Proxy Credentials & Hardware-Attested Gateways](docs/prd/PRD-2026-11-12-universal-proxy-credentials.md)
-* [Repository Audit Sweep & Remediation Report](docs/plans/AUDIT-SWEEP-2026-10-09.md)
-* [CLI & Server Deployment Guide](docs/laya-cli-guide.md)
-* [Mobile Deployment & Core ML Guide](docs/laya-mobile-guide.md)
-* [Confidence Routing Guide](docs/confidence-routing.md)
-* [Resilience & Retries Guide](docs/resilience-and-retries.md)
-* [Mobile Security Guide (ProxyTransport & App Check)](docs/mobile-security.md)
-* [Type Mapping Guide](docs/mapping-guide.md)
-* [Tech Notes Index](tech-notes/README.md)
-* [Contributing Guide](CONTRIBUTING.md)
+- **[Documentation Hub (`docs/`)](docs/README.md)** — [Getting Started](docs/getting-started.md), [Decision Shortcuts](docs/decision-shortcuts.md), [Mobile Security](docs/mobile-security.md), [Confidence Routing](docs/confidence-routing.md), [ADRs](docs/architecture/README.md), and [PRDs](docs/prd/README.md).
+- **[Examples Catalog (`Examples/`)](Examples/README.md)** • **[Source Modules (`Sources/`)](Sources/README.md)** • **[Offline Test Suites (`Tests/`)](Tests/README.md)**
+- **[Proxy Integrations (`Integrations/`)](Integrations/README.md)** • **[Model Tools (`Tools/`)](Tools/README.md)** • **[Agent Skills (`skills/`)](skills/README.md)**
+- **[Tech Notes (`tech-notes/`)](tech-notes/README.md)** (0001–0019) • **[Contributing Guide (`CONTRIBUTING.md`)](CONTRIBUTING.md)**
 
 ---
 
 ## 📄 License
 
-This project is licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for details.
+Licensed under the **Apache License, Version 2.0**. See [`LICENSE`](LICENSE) for details.

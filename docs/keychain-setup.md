@@ -55,7 +55,7 @@ Follow these steps to configure Keychain Sharing for `MailTriageApp`:
 
 Launch Xcode and open the project file:
 ```text
-Examples/MailTriageApp/apps/apple/MailTriageApp.xcodeproj
+Examples/Apps/MailTriageApp/apps/apple/MailTriageApp.xcodeproj
 ```
 
 ### Step 2: Navigate to Target Signing & Capabilities

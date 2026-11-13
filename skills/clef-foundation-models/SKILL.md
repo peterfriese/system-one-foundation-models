@@ -11,13 +11,13 @@ description: >-
   AVFoundation camera pipelines, or writing deterministic offline unit tests with MockClefBackendProtocol.
 metadata:
   author: peterfriese
-  version: "1.0"
+  version: "1.1"
 ---
 
 # Cloudflare Clef Foundation Models Bridge
 
 > [!TIP]
-> **Multi-Backend Architecture**: For projects integrating on-device Core ML (`LayaOnDevice`), self-hosted HTTP daemons (`LayaFoundationModels`), and TypeSafe Jev cloud alongside Cloudflare Clef, refer to the unified `system-one-foundation-models` skill and package target. This skill focuses specifically on Cloudflare Clef & Clef-Flash multimodal decision evaluation, AVFoundation camera integration, and Cloudflare edge gateway infrastructure.
+> **Multi-Backend Architecture**: For projects integrating on-device Core ML (`LayaOnDevice`), self-hosted HTTP daemons (`LayaFoundationModels`), TypeSafe Jev (`JevFoundationModels`), OpenAI Decisions (`OpenAIFoundationModels`), and Google Gemini Decisions (`GeminiFoundationModels`) alongside Cloudflare Clef, refer to the unified `system-one-foundation-models` skill and package target. This skill focuses specifically on Cloudflare Clef & Clef-Flash multimodal decision evaluation, AVFoundation camera integration, `ProxyCredential` mobile gateways, and Cloudflare edge gateway infrastructure.
 
 This skill guides the design, implementation, and testing of applications integrating **Cloudflare Clef (27B)** and **Cloudflare Clef-Flash (9B)** multimodal decision models via **Apple's Foundation Models framework** (`FoundationModels`) in Swift 6.
 
@@ -42,13 +42,18 @@ Cloudflare Clef and Clef-Flash are **multimodal System One decision models**, no
 
 ---
 
-## 2. Pluggable Endpoint Topologies (`ClefEndpoint`)
+## 2. Progressive-Disclosure Initialization & Endpoint Topologies (`ClefEndpoint`)
 
-Configure the target endpoint via the `ClefEndpoint` enum. `ClefLanguageModel` connects to global Cloudflare edge nodes or local inference servers:
+`ClefLanguageModel` supports zero-argument environment auto-resolution (`ClefLanguageModel()`), explicit `ClefEndpoint` topologies, zero-secret mobile reverse proxies via `ProxyCredential` (`init(proxyEndpoint:model:credential:)`), and `init(backend: any SystemOneBackend)` (for `MockSystemOneBackend`):
 
 ```swift
 import FoundationModels
 import ClefFoundationModels
+
+// 0. Zero-Argument Progressive Disclosure:
+// Auto-resolves CLEF_ENDPOINT, CLOUDFLARE_ACCOUNT_ID (+ optional CLOUDFLARE_GATEWAY_ID)
+// + CLOUDFLARE_API_TOKEN, or CLEF_LOCAL_PORT from ProcessInfo.processInfo.environment
+let autoSession = LanguageModelSession(model: ClefLanguageModel())
 
 // 1. Cloudflare Workers AI Edge (Direct Edge REST API)
 let workersEndpoint = ClefEndpoint.workersAI(
@@ -66,51 +71,59 @@ let gatewayEndpoint = ClefEndpoint.gateway(
 )
 let gatewayModel = ClefLanguageModel(endpoint: gatewayEndpoint, apiToken: "cloudflare-api-token")
 
-// 3. Local Native Runner (Docker Model Runner, vLLM, Cog, MLX on localhost)
+// 3. Local Native Runner (Tools/ClefLocalRunner/server.py, vLLM, Cog, MLX on localhost)
 let localEndpoint = ClefEndpoint.local(port: 8000, model: .clefFlash)
 let localModel = ClefLanguageModel(endpoint: localEndpoint)
 
-// 4. Custom Fully-Qualified URL
-let customEndpoint = ClefEndpoint.custom(
-    URL(string: "https://ai.internal.mycompany.com/v1/evaluate")!,
-    model: .clef
+// 4. Zero-Secret Mobile Reverse Proxy via ProxyCredential (.appCheck, .bearer, .header)
+let mobileModel = ClefLanguageModel(
+    proxyEndpoint: URL(string: "https://us-central1-my-app.cloudfunctions.net/clefDecisions")!,
+    model: .clefFlash,
+    credential: .appCheck {
+        try await AppCheck.appCheck().token(forcingRefresh: false).token
+    }
 )
-let customModel = ClefLanguageModel(endpoint: customEndpoint, apiToken: "internal-bearer-token")
 ```
 
 ---
 
 ## 3. Multimodal Inputs with Apple Foundation Models (`Attachment`)
 
-### Passing Image Attachments via `Prompt`
+### Passing Image Attachments via `Prompt` & Ergonomic Shortcuts
 
-Visual inputs are attached directly to standard Apple Foundation Models `Prompt` builder blocks using `Attachment(cgImage)` or `Attachment(data:type:)`:
+Visual inputs are attached directly to standard Apple Foundation Models `Prompt` builder blocks using `Attachment(cgImage)`, `Attachment(imageURL: url)`, or failable `Attachment(jpegData, type: .jpeg)`:
 
 ```swift
 import FoundationModels
 import ClefFoundationModels
 import CoreGraphics
 
-let session = LanguageModelSession(
-    model: ClefLanguageModel(
-        endpoint: .workersAI(accountID: accountID, model: .clefFlash),
-        apiToken: apiToken
-    )
-)
+let session = LanguageModelSession(model: ClefLanguageModel())
 
-// Construct multimodal prompt
+// 1. Full @Generable struct evaluation
 let prompt = Prompt {
     "Examine this manufacturing component for surface defects and dimensional integrity."
     Attachment(capturedCGImage)
-    // Or pass raw Data: Attachment(data: jpegData, type: .jpeg)
 }
-
 let response = try await session.respond(
     to: prompt,
     generating: DefectInspectionDecision.self
 )
-
 let decision: DefectInspectionDecision = response.content
+
+// 2. Direct @PromptBuilder shortcuts (.probability, .choice, .score) — no @Generable struct needed!
+let damagedProb = try await session.probability(of: "The parcel has visible exterior damage") {
+    Attachment(imageURL: parcelPhotoURL)
+}
+
+let category = try await session.choice("Classify item", from: ItemCategory.self) {
+    "Select the primary product category shown in this frame."
+    Attachment(capturedCGImage)
+}
+
+let condition = try await session.score("Rate physical condition", levels: ["Damaged", "Worn", "Good", "Pristine"]) {
+    Attachment(capturedCGImage)
+}
 ```
 
 ### Apple Framework Capability Gating: `LanguageModelCapabilities.Capability.vision`
@@ -138,15 +151,15 @@ Modern Apple mobile hardware captures photos at resolutions up to 48MP. Uploadin
 **Production Best Practice**: Always downsample camera frames to a maximum dimension of **1024px** and compress to **JPEG at 0.8 quality**:
 
 ```swift
-// Utility available in SystemOneCore / CameraManager
+// Utility available in SystemOneCore
 if let downsampledData = TranscriptAttachmentExtractor.convertCGImageToJPEG(
     rawCGImage,
     maxDimension: 1024,
     quality: 0.8
-) {
+), let imageAttachment = Attachment(downsampledData, type: .jpeg) {
     let prompt = Prompt {
         "Verify item condition"
-        Attachment(data: downsampledData, type: .jpeg)
+        imageAttachment
     }
 }
 ```
@@ -235,7 +248,7 @@ let recognizedJudgement = response.judgement(for: "isRecognized", policy: policy
 switch recognizedJudgement.decision {
 case .auto:
     if recognizedJudgement.answer == true {
-        print("Item recognized with high confidence:", recognizedJudgement.confidence)
+        print("Item recognized with high decisiveness:", recognizedJudgement.decisiveness)
     } else {
         print("Confident rejection: No valid item in viewfinder frame")
     }
@@ -287,13 +300,19 @@ public final class CameraTriageService: NSObject {
     private let ciContext = CIContext()
     private let sessionQueue = DispatchQueue(label: "com.clef.camera.session")
 
-    public func captureDownsampledFrame() -> CGImage? {
+    public func captureDownsampledJPEG() -> Data? {
         guard let frame = currentFrame else { return nil }
-        return TranscriptAttachmentExtractor.downsample(image: frame, maxDimension: 1024)
+        return TranscriptAttachmentExtractor.convertCGImageToJPEG(
+            frame,
+            maxDimension: 1024,
+            quality: 0.8
+        )
     }
 
     public func performVisualTriage(endpoint: ClefEndpoint, apiToken: String) async throws {
-        guard !isInspecting, let cgImage = captureDownsampledFrame() else { return }
+        guard !isInspecting,
+              let jpegData = captureDownsampledJPEG(),
+              let attachment = Attachment(jpegData, type: .jpeg) else { return }
         isInspecting = true
         defer { isInspecting = false }
 
@@ -302,7 +321,7 @@ public final class CameraTriageService: NSObject {
 
         let prompt = Prompt {
             "Analyze the item in this camera viewfinder frame."
-            Attachment(cgImage)
+            attachment
         }
 
         let response = try await lmSession.respond(
@@ -513,7 +532,8 @@ struct ClefMultimodalDecisionTests {
 | `AiError: The estimated number of tokens (745945) exceeded context limit (65536)` | Uncompressed 12MP–48MP frame or keyed JSON object triggered text BPE fallback. | Downsample to 1024px, compress to 0.8 lossy JPEG, and serialize directly as RFC 2397 Data URL string (Tech Note 0015). |
 | `LanguageModelSession.GenerationError.unsupportedCapability` | Model did not declare `.vision` capability when prompt contained an `Attachment`. | Ensure model's `capabilities` includes `[.guidedGeneration, .vision]` (Tech Note 0013). |
 | `SystemOneError.decodingError("The data couldn't be read because it is missing.")` | Expected direct root JSON but Cloudflare returned Client API v4 `{ "result": ... }` envelope. | `ClefHTTPBackend.decodeResponse` automatically unwraps `envelope.result` with dual-decoding fallback (Tech Note 0016). |
-| `ClefError.imageCountExceeded` | Passed more than 4 images to a single prompt. | Adhere to `SystemOneImage.Guardrails.maxImageCount = 4`. |
-| `ClefError.imageResolutionExceeded` | Individual image exceeded 16 megapixels. | Downsample using `TranscriptAttachmentExtractor.convertCGImageToJPEG(_:maxDimension:)` before creating `Attachment`. |
-| `SystemOneError.structuredOutputRequired` | Called `session.respond(to: prompt)` without a `generating:` schema. | Always supply a strongly-typed `@Generable` struct or enum. |
+| `SystemOneError.modelExecutionError` (*image count exceeded*) | Passed more than 4 images in the active turn. | Adhere to `SystemOneImage.Guardrails.maxImageCount = 4`. |
+| `SystemOneError.modelExecutionError` (*megapixel / payload limit exceeded*) | Individual image exceeded 16 megapixels or total payload exceeded 13 MiB. | Downsample using `TranscriptAttachmentExtractor.convertCGImageToJPEG(_:maxDimension:quality:)` before creating `Attachment`. |
+| `SystemOneError.authenticationFailed` / `SystemOneError.missingAPIKey` | Missing or invalid `CLOUDFLARE_API_TOKEN` or unconfigured `ClefLanguageModel()`. | Export `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`, or set `CLEF_LOCAL_PORT=8000`. |
+| `SystemOneError.structuredOutputRequired` | Called `session.respond(to: prompt)` without a `generating:` schema. | Always supply a strongly-typed `@Generable` struct/enum or use `.probability`/`.choice`/`.score`. |
 | Zero token generation (`output_tokens: 0`) | Expected streaming text tokens from an LLM. | Normal for System One: decisions are computed in a single forward pass without autoregressive text generation. |
