@@ -31,6 +31,8 @@ Icon\r
 .env
 .env.*
 !.env.example
+.secret.local
+*.secret.local
 *.key
 *.pem
 *credentials*.json

@@ -17,6 +17,7 @@ Features:
 
 import argparse
 import base64
+import hashlib
 import importlib.util
 import io
 import logging
@@ -30,10 +31,8 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 try:
     import torch
-    import torch.nn.functional as F
 except ImportError:
     torch = None
-    F = None
 
 try:
     from PIL import Image
@@ -51,14 +50,9 @@ except ImportError:
     uvicorn = None
 
 try:
-    from pydantic import BaseModel, Field
+    from pydantic import BaseModel
 except ImportError:
-    class _StubBaseModel:
-        def __init__(self, **kwargs):
-            for k, v in kwargs.items():
-                setattr(self, k, v)
-    BaseModel = _StubBaseModel
-    Field = None
+    BaseModel = None
 
 # Configure logging
 logging.basicConfig(
@@ -71,7 +65,11 @@ logger = logging.getLogger("clef-runner")
 MAX_IMAGE_COUNT = 4
 MAX_MEGAPIXELS = 16.0
 MAX_PIXELS = int(MAX_MEGAPIXELS * 1_000_000)
+MAX_PAYLOAD_BYTES = 13 * 1024 * 1024  # 13 MiB encoded payload cap
 DEFAULT_VISION_TOKENS_PER_IMAGE = 1024
+
+if Image is not None:
+    Image.MAX_IMAGE_PIXELS = MAX_PIXELS
 
 # Model ID aliases
 MODEL_MAPPINGS = {
@@ -121,21 +119,10 @@ if BaseModel is not None:
 
 # MARK: - Image Processing & Extraction
 
-def parse_image_attachment(img_data: Union[str, Dict[str, Any]]) -> Image.Image:
-    """
-    Decodes an image attachment from either an RFC 2397 Data URL string or a structured dictionary.
-    """
-    if Image is None:
-        raise RuntimeError("Pillow is not installed. Please install pillow>=10.0.0")
-
-    raw_base64 = ""
+def extract_encoded_image_string(img_data: Union[str, Dict[str, Any]]) -> str:
+    """Extracts the raw encoded string from an RFC 2397 Data URL or dictionary attachment."""
     if isinstance(img_data, str):
-        if img_data.startswith("data:"):
-            # RFC 2397 Data URL: data:<mime-type>;base64,<encoded-data>
-            parts = img_data.split(",", 1)
-            raw_base64 = parts[1] if len(parts) > 1 else parts[0]
-        else:
-            raw_base64 = img_data
+        return img_data
     elif isinstance(img_data, dict):
         raw_val = (
             img_data.get("data_url")
@@ -143,32 +130,62 @@ def parse_image_attachment(img_data: Union[str, Dict[str, Any]]) -> Image.Image:
             or img_data.get("base64")
             or img_data.get("data")
         )
-        if not raw_val:
+        if not raw_val or not isinstance(raw_val, str):
             raise ValueError(f"Image dictionary missing base64 or data_url: {list(img_data.keys())}")
-        return parse_image_attachment(raw_val)
+        return raw_val
     else:
         raise ValueError(f"Unsupported image data format: {type(img_data)}")
 
+
+def parse_image_attachment(img_data: Union[str, Dict[str, Any]]) -> Any:
+    """
+    Decodes an image attachment from either an RFC 2397 Data URL string or a structured dictionary,
+    enforcing payload byte limits before base64 decoding and megapixel limits before RGB expansion.
+    """
+    if Image is None:
+        raise RuntimeError("Pillow is not installed. Please install pillow>=10.0.0")
+
+    raw_encoded = extract_encoded_image_string(img_data)
+    if len(raw_encoded.encode("utf-8")) > MAX_PAYLOAD_BYTES:
+        raise ValueError(
+            f"Image payload exceeds maximum allowed size of {MAX_PAYLOAD_BYTES} bytes (13 MiB)."
+        )
+
+    if raw_encoded.startswith("data:"):
+        parts = raw_encoded.split(",", 1)
+        raw_base64 = parts[1] if len(parts) > 1 else parts[0]
+    else:
+        raw_base64 = raw_encoded
+
     try:
-        image_bytes = base64.b64decode(raw_base64)
-        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        image_bytes = base64.b64decode(raw_base64, validate=False)
     except Exception as e:
         raise ValueError(f"Failed to decode base64 image: {str(e)}")
 
-    # Enforce 16MP guardrail: downscale if necessary while preserving aspect ratio
-    w, h = image.size
-    total_pixels = w * h
-    if total_pixels > MAX_PIXELS:
-        scale = math.sqrt(MAX_PIXELS / float(total_pixels))
-        new_w = max(1, int(w * scale))
-        new_h = max(1, int(h * scale))
-        logger.warning(
-            f"Image exceeds {MAX_MEGAPIXELS}MP ({w}x{h}={total_pixels/1e6:.1f}MP). "
-            f"Downscaling to {new_w}x{new_h}."
+    if len(image_bytes) > MAX_PAYLOAD_BYTES:
+        raise ValueError(
+            f"Decoded image byte length ({len(image_bytes)}) exceeds {MAX_PAYLOAD_BYTES} bytes."
         )
-        image = image.resize((new_w, new_h), Image.Resampling.LANCZOS)
 
-    return image
+    try:
+        raw_image = Image.open(io.BytesIO(image_bytes))
+    except Exception as e:
+        raise ValueError(f"Invalid or oversized image header: {str(e)}")
+
+    if raw_image.width * raw_image.height > MAX_PIXELS:
+        raise ValueError(
+            f"Image resolution ({raw_image.width}x{raw_image.height}) exceeds maximum allowed {MAX_MEGAPIXELS} MP."
+        )
+
+    try:
+        return raw_image.convert("RGB")
+    except Exception as e:
+        raise ValueError(f"Failed to decode RGB bitmap: {str(e)}")
+
+
+def _deterministic_seed(text: str) -> int:
+    digest = hashlib.sha256(text.encode("utf-8")).digest()
+    return int.from_bytes(digest[:4], "big")
 
 
 def estimate_input_tokens(state: str, questions: Dict[str, Any], images_count: int, tokenizer: Any = None) -> int:
@@ -217,7 +234,6 @@ class ClefEngine:
 
         logger.info(f"Targeting device: {self.device}")
 
-        # Look for Cloudflare's joint_schema_model.py
         joint_schema_mod = self._try_load_joint_schema_module()
         if joint_schema_mod is None:
             raise RuntimeError(
@@ -249,7 +265,7 @@ class ClefEngine:
                 return
             else:
                 raise RuntimeError(
-                    f"joint_schema_model.py could not be loaded: missing callable 'load_release_model' in module"
+                    "joint_schema_model.py could not be loaded: missing callable 'load_release_model' in module"
                 )
         except Exception as e:
             logger.error(f"Failed to load via joint_schema_model.load_release_model: {e}")
@@ -260,7 +276,6 @@ class ClefEngine:
 
     def _try_load_joint_schema_module(self):
         """Attempts to discover and import joint_schema_model.py."""
-        # Check current working directory or subpaths
         candidates = [
             "joint_schema_model.py",
             os.path.join(self.model_id_or_path, "joint_schema_model.py"),
@@ -278,14 +293,12 @@ class ClefEngine:
                 except Exception as e:
                     logger.warning(f"Error loading {path}: {e}")
 
-        # Check if already in sys.modules or installed
         try:
             import joint_schema_model
             return joint_schema_model
         except ImportError:
             pass
 
-        # Try downloading joint_schema_model.py from Hugging Face hub if available
         try:
             from huggingface_hub import hf_hub_download
             downloaded_path = hf_hub_download(
@@ -308,7 +321,7 @@ class ClefEngine:
         self,
         state: str,
         questions: Dict[str, Any],
-        images: List[Image.Image],
+        images: List[Any],
         model_name: str
     ) -> Dict[str, Any]:
         """
@@ -325,7 +338,6 @@ class ClefEngine:
             "model": model_name
         }
 
-        # Live inference path: execute real model inference using systemone(self.model, self.processor, payload)
         systemone_fn = None
         if self.joint_schema_module is not None and hasattr(self.joint_schema_module, "systemone"):
             systemone_fn = getattr(self.joint_schema_module, "systemone")
@@ -351,59 +363,11 @@ class ClefEngine:
             "Pass --mock to run in deterministic offline mock mode."
         )
 
-    def _run_pytorch_inference(
-        self,
-        state: str,
-        questions: Dict[str, Any],
-        images: List[Image.Image]
-    ) -> Dict[str, Any]:
-        """Direct PyTorch evaluation through multimodal backbone and routing heads."""
-        answers = {}
-        with torch.no_grad():
-            for q_id, q in questions.items():
-                q_type = q.type if hasattr(q, "type") else q.get("type", "noul")
-                instructions = q.instructions if hasattr(q, "instructions") else q.get("instructions", "")
-                criteria = q.criteria if hasattr(q, "criteria") else q.get("criteria", None)
-                options = q.options if hasattr(q, "options") else q.get("options", None)
-
-                # Multimodal embedding projection or forward pass
-                # Compute calibrated outputs per primitive
-                if q_type == "noul":
-                    # Generate stable calibrated probability
-                    score_val = self._synthesize_noul_probability(state, instructions, len(images))
-                    answers[q_id] = {
-                        "type": "noul",
-                        "noul": round(score_val, 4),
-                        "confidence": round(score_val if score_val >= 0.5 else (1.0 - score_val), 4)
-                    }
-
-                elif q_type == "choice":
-                    candidates = self._extract_choice_candidates(criteria, options)
-                    probs, chosen = self._synthesize_choice_probabilities(state, instructions, candidates)
-                    answers[q_id] = {
-                        "type": "choice",
-                        "choice": chosen,
-                        "confidence": round(probs[chosen], 4),
-                        "probabilities": {k: round(v, 4) for k, v in probs.items()}
-                    }
-
-                elif q_type == "score":
-                    levels = self._extract_score_levels(criteria)
-                    score_val, conf, level_probs = self._synthesize_score_rubric(state, instructions, levels)
-                    answers[q_id] = {
-                        "type": "score",
-                        "score": round(score_val, 2),
-                        "confidence": round(conf, 4),
-                        "probabilities": {str(k): round(v, 4) for k, v in level_probs.items()}
-                    }
-
-        return answers
-
     def _run_mock_inference(
         self,
         state: str,
         questions: Dict[str, Any],
-        images: List[Image.Image]
+        images: List[Any]
     ) -> Dict[str, Any]:
         """Calibrated deterministic mock evaluation for offline testing and verification."""
         answers = {}
@@ -444,7 +408,6 @@ class ClefEngine:
 
         return answers
 
-    # Helpers for question parsing & calibrated probability synthesis
     def _extract_choice_candidates(self, criteria: Any, options: Any) -> List[str]:
         if isinstance(criteria, dict):
             return list(criteria.keys())
@@ -462,17 +425,16 @@ class ClefEngine:
         return ["1", "2", "3", "4", "5"]
 
     def _synthesize_noul_probability(self, state: str, instructions: str, img_count: int) -> float:
-        # Deterministic hash seed
-        seed = hash(state + instructions + str(img_count)) & 0xFFFFFFFF
-        # Base sigmoid output centered at 0.85 for high-confidence match
+        seed = _deterministic_seed(f"{state}|{instructions}|{img_count}")
         raw = (seed % 1000) / 1000.0
-        # Calibrate into realistic decision range [0.82, 0.98]
         return 0.80 + (raw * 0.18)
 
-    def _synthesize_choice_probabilities(self, state: str, instructions: str, candidates: List[str]) -> Tuple[Dict[str, float], str]:
+    def _synthesize_choice_probabilities(
+        self, state: str, instructions: str, candidates: List[str]
+    ) -> Tuple[Dict[str, float], str]:
         if not candidates:
             return {"default": 1.0}, "default"
-        seed = hash(state + instructions) & 0xFFFFFFFF
+        seed = _deterministic_seed(f"{state}|{instructions}")
         winner_idx = seed % len(candidates)
         winner = candidates[winner_idx]
 
@@ -486,28 +448,29 @@ class ClefEngine:
             else:
                 probs[cand] = round(remaining / max(1, other_count), 4)
 
-        # Normalize to ensure sum == 1.0
         total = sum(probs.values())
         normalized = {k: v / total for k, v in probs.items()}
         return normalized, winner
 
-    def _synthesize_score_rubric(self, state: str, instructions: str, levels: List[str]) -> Tuple[float, float, Dict[str, float]]:
+    def _synthesize_score_rubric(
+        self, state: str, instructions: str, levels: List[str]
+    ) -> Tuple[float, float, Dict[int, float]]:
         if not levels:
-            return 3.0, 0.85, {"1": 0.05, "2": 0.10, "3": 0.70, "4": 0.10, "5": 0.05}
+            return 2.0, 0.70, {0: 0.05, 1: 0.10, 2: 0.70, 3: 0.10, 4: 0.05}
         level_count = len(levels)
-        seed = hash(state + instructions) & 0xFFFFFFFF
+        seed = _deterministic_seed(f"{state}|{instructions}")
         peak_idx = seed % level_count
 
-        level_probs = {}
-        for idx, lvl in enumerate(levels):
+        level_probs: Dict[int, float] = {}
+        for idx in range(level_count):
             dist = abs(idx - peak_idx)
             weight = math.exp(-dist * 1.5)
-            level_probs[lvl] = weight
+            level_probs[idx] = weight
 
         total_weight = sum(level_probs.values())
-        normalized = {k: v / total_weight for k, v in level_probs.items()}
+        normalized = {idx: v / total_weight for idx, v in level_probs.items()}
 
-        expected_score = sum((idx + 1) * normalized[lvl] for idx, lvl in enumerate(levels))
+        expected_score = sum(idx * normalized[idx] for idx in range(level_count))
         confidence = max(normalized.values())
         return expected_score, confidence, normalized
 
@@ -515,26 +478,23 @@ class ClefEngine:
 # MARK: - Device Detection
 
 def detect_device(preferred_device: Optional[str] = None) -> str:
-    """
-    Detects and enables Apple Silicon GPU acceleration (MPS), NVIDIA (CUDA), or CPU fallback.
-    """
+    """Detects and enables Apple Silicon GPU acceleration (MPS), NVIDIA (CUDA), or CPU fallback."""
     if preferred_device and preferred_device != "auto":
         return preferred_device
 
     if torch is not None:
-        device = "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")
-        return device
+        return "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")
 
     return "cpu"
 
 
 # MARK: - FastAPI Application Factory
 
-def create_app(engine: ClefEngine) -> FastAPI:
-    if FastAPI is None or uvicorn is None:
+def create_app(engine: ClefEngine):
+    if FastAPI is None or uvicorn is None or BaseModel is None:
         raise RuntimeError(
-            "Missing required web server dependencies. Please install them via:\n"
-            "pip install -r requirements.txt"
+            "Missing required web server dependencies (fastapi, uvicorn, pydantic). Please install them via:\n"
+            "pip install -r Tools/ClefLocalRunner/requirements.txt"
         )
 
     @asynccontextmanager
@@ -551,22 +511,16 @@ def create_app(engine: ClefEngine) -> FastAPI:
         lifespan=lifespan
     )
 
-    # Telemetry and Timing Middleware
     @app.middleware("http")
     async def add_timing_and_telemetry(request: Request, call_next):
         start_time = time.perf_counter()
         response: Response = await call_next(request)
         duration_ms = (time.perf_counter() - start_time) * 1000.0
 
-        # RFC 7668 Server-Timing header (parsed by ClefHTTPBackend)
         response.headers["Server-Timing"] = f"inference;dur={duration_ms:.2f}"
-        # Envoy upstream service time header
         response.headers["x-envoy-upstream-service-time"] = str(int(duration_ms))
-        # Zero-egress privacy header
         response.headers["x-clef-confidential-execution"] = "local-zero-egress"
         return response
-
-    # MARK: Health & Discovery Endpoints
 
     @app.get("/health", tags=["Health"])
     @app.get("/v1/health", tags=["Health"])
@@ -608,31 +562,35 @@ def create_app(engine: ClefEngine) -> FastAPI:
             ]
         }
 
-    # MARK: System One Evaluation Endpoints
-
     @app.post("/v1/evaluate", tags=["Inference"])
     @app.post("/v1/systemone", tags=["Inference"])
     async def evaluate_decisions(payload: EvaluateRequest):
         start_inference = time.perf_counter()
 
-        # Ingest and validate image attachments
-        pil_images: List[Image.Image] = []
+        pil_images: List[Any] = []
         if payload.images:
             if len(payload.images) > MAX_IMAGE_COUNT:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Exceeded maximum image count. Received {len(payload.images)}, maximum is {MAX_IMAGE_COUNT}."
                 )
+
+            total_encoded_bytes = 0
             for idx, img_item in enumerate(payload.images):
                 try:
-                    pil_images.append(parse_image_attachment(img_item))
+                    encoded_str = extract_encoded_image_string(img_item)
+                    total_encoded_bytes += len(encoded_str.encode("utf-8"))
+                    if total_encoded_bytes > MAX_PAYLOAD_BYTES:
+                        raise ValueError(
+                            f"Total image payload size ({total_encoded_bytes} bytes) exceeds maximum allowed {MAX_PAYLOAD_BYTES} bytes (13 MiB)."
+                        )
+                    pil_images.append(parse_image_attachment(encoded_str))
                 except Exception as img_err:
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail=f"Invalid image attachment at index {idx}: {str(img_err)}"
                     )
 
-        # Estimate input tokens adhering to non-autoregressive decision model principles
         input_token_count = estimate_input_tokens(
             state=payload.state,
             questions=payload.questions,
@@ -642,7 +600,6 @@ def create_app(engine: ClefEngine) -> FastAPI:
 
         effective_model = payload.model or engine.model_id_or_path
 
-        # Single forward-pass evaluation
         try:
             answers = engine.evaluate(
                 state=payload.state,
@@ -659,15 +616,14 @@ def create_app(engine: ClefEngine) -> FastAPI:
 
         duration_ms = (time.perf_counter() - start_inference) * 1000.0
 
-        # Construct calibrated SystemOneResponse
         response_data = {
             "id": f"clef_local_{uuid.uuid4().hex[:12]}",
             "model": effective_model,
             "answers": answers,
-            "questions": answers,  # Parity for clients reading either 'answers' or 'questions'
+            "questions": answers,
             "usage": {
                 "input_tokens": input_token_count,
-                "output_tokens": 0  # Non-autoregressive: 0 generated tokens
+                "output_tokens": 0
             },
             "server_duration_ms": round(duration_ms, 2)
         }
@@ -689,18 +645,8 @@ def main():
         default="clef-flash",
         help="Clef model identifier or local directory path (default: 'clef-flash' or 'Cloudflare/clef-flash')"
     )
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=8000,
-        help="Port to listen on (default: 8000)"
-    )
-    parser.add_argument(
-        "--host",
-        type=str,
-        default="127.0.0.1",
-        help="Host interface to bind (default: 127.0.0.1)"
-    )
+    parser.add_argument("--port", type=int, default=8000, help="Port to listen on (default: 8000)")
+    parser.add_argument("--host", type=str, default="127.0.0.1", help="Host interface to bind (default: 127.0.0.1)")
     parser.add_argument(
         "--device",
         type=str,
@@ -721,12 +667,9 @@ def main():
     )
 
     args = parser.parse_args()
-
-    # Hardware acceleration detection
     resolved_device = detect_device(args.device)
     logger.info(f"Resolved execution hardware device: {resolved_device.upper()}")
 
-    # Engine initialization
     engine = ClefEngine(
         model_id_or_path=args.model,
         device=resolved_device,
@@ -734,10 +677,7 @@ def main():
         trust_remote_code=args.trust_remote_code
     )
 
-    # FastAPI application
     app = create_app(engine)
-
-    # Launch Uvicorn server
     logger.info(f"Starting server on http://{args.host}:{args.port}")
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
 

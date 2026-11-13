@@ -117,14 +117,11 @@ let model = ClefLanguageModel(
 
 let session = LanguageModelSession(model: model)
 
-// 3. Attach image data and prompt
-let photoData = try Data(contentsOf: URL(fileURLWithPath: "inspection_frame.jpg"))
-let imageSegment = Transcript.Segment.data(photoData, type: .jpeg)
-
-let prompt = Transcript.Entry.prompt(
-    "Inspect the mechanical enclosure for quality assurance compliance.",
-    attachments: [imageSegment]
-)
+// 3. Attach image URL and prompt via @PromptBuilder
+let prompt = Prompt {
+    "Inspect the mechanical enclosure for quality assurance compliance."
+    Attachment(imageURL: URL(fileURLWithPath: "inspection_frame.jpg"))
+}
 
 // 4. Evaluate in a single forward pass
 let response = try await session.respond(to: prompt, generating: DefectTriageDecision.self)
@@ -132,7 +129,7 @@ let response = try await session.respond(to: prompt, generating: DefectTriageDec
 print("Damage detected: \(response.content.hasDamage)")
 print("Category: \(response.content.damageCategory)")
 print("Severity: \(response.content.severityRating)/5")
-print("Inference time: \(response.metadata.latencyMs ?? 0) ms")
+print("Inference time: \(response.serverDurationMs ?? 0) ms")
 ```
 
 ---

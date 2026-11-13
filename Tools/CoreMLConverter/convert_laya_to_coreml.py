@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Convert Laya PyTorch decision models (ModernBERT 421M / mmBERT 322M) to Core ML (.mlpackage).
-Optimized for Apple Neural Engine (ANE) and GPU inference on iOS 27+, macOS 27+, and visionOS 27+.
+Optimized for Apple Neural Engine (ANE) and GPU inference on iOS 18+ and macOS 15+.
 
 Usage:
     python convert_laya_to_coreml.py --model convaiinnovations/laya --output LayaModernBERT.mlpackage
@@ -10,12 +10,18 @@ Usage:
 
 import argparse
 import json
+import logging
 import os
 import shutil
 import sys
+
+import numpy as np
 import torch
 import torch.nn as nn
 from huggingface_hub import snapshot_download
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger("convert-laya-coreml")
 
 try:
     import coremltools as ct
@@ -25,7 +31,7 @@ try:
         linear_quantize_weights,
     )
 except ImportError:
-    print("coremltools not installed. Please run: pip install coremltools torch transformers safetensors")
+    print("coremltools not installed. Please run: pip install coremltools numpy torch transformers safetensors")
     sys.exit(1)
 
 
@@ -66,7 +72,7 @@ class CoreMLWrapper(nn.Module):
 
 
 def build_model_from_checkpoint(model_dir: str):
-    """Instantiate Laya model architecture and load safetensors weights."""
+    """Instantiate Laya model architecture and load safetensors weights with strict validation."""
     from safetensors.torch import load_file
     from transformers import AutoConfig, AutoModel
 
@@ -88,7 +94,22 @@ def build_model_from_checkpoint(model_dir: str):
 
     weights_path = os.path.join(model_dir, "model.safetensors")
     weights = load_file(weights_path)
-    model.load_state_dict(weights, strict=False)
+    incompatible = model.load_state_dict(weights, strict=False)
+
+    critical_missing = [
+        key for key in incompatible.missing_keys
+        if "_head" in key or "head" in key or "encoder" in key or "enc." in key
+    ]
+    if critical_missing:
+        raise RuntimeError(
+            f"Checkpoint {weights_path} is missing critical encoder or decision head weights "
+            f"({len(critical_missing)} keys, e.g. {critical_missing[:5]}). Refusing to export uninitialized model."
+        )
+    if incompatible.missing_keys:
+        logger.warning("Non-critical missing state_dict keys: %s", incompatible.missing_keys)
+    if incompatible.unexpected_keys:
+        logger.warning("Unexpected state_dict keys ignored: %s", incompatible.unexpected_keys)
+
     model.eval()
     return model, cfg
 
@@ -123,15 +144,15 @@ def convert_to_coreml(
 
     print("Converting to Core ML with MIL...")
     inputs = [
-        ct.TensorType(name="input_ids", shape=(1, max_seq_len), dtype=int),
-        ct.TensorType(name="attention_mask", shape=(1, max_seq_len), dtype=int),
-        ct.TensorType(name="marker_pos", shape=(1, max_options), dtype=int),
-        ct.TensorType(name="marker_mask", shape=(1, max_options), dtype=float),
-        ct.TensorType(name="qtype", shape=(1,), dtype=int),
+        ct.TensorType(name="input_ids", shape=(1, max_seq_len), dtype=np.int32),
+        ct.TensorType(name="attention_mask", shape=(1, max_seq_len), dtype=np.int32),
+        ct.TensorType(name="marker_pos", shape=(1, max_options), dtype=np.int32),
+        ct.TensorType(name="marker_mask", shape=(1, max_options), dtype=np.float32),
+        ct.TensorType(name="qtype", shape=(1,), dtype=np.int32),
     ]
     outputs = [
-        ct.TensorType(name="logits", dtype=float),
-        ct.TensorType(name="act_logits", dtype=float),
+        ct.TensorType(name="logits", dtype=np.float32),
+        ct.TensorType(name="act_logits", dtype=np.float32),
     ]
 
     mlmodel = ct.convert(
@@ -140,7 +161,7 @@ def convert_to_coreml(
         outputs=outputs,
         convert_to="mlprogram",
         compute_precision=ct.precision.FLOAT16,
-        minimum_deployment_target=ct.target.macOS15,
+        minimum_deployment_target=ct.target.iOS18,
     )
 
     if quantize == "8bit":
@@ -175,7 +196,7 @@ def main():
     if args.subfolder:
         model_dir = os.path.join(model_dir, args.subfolder)
 
-    model, cfg = build_model_from_checkpoint(model_dir)
+    model, _ = build_model_from_checkpoint(model_dir)
     convert_to_coreml(
         model=model,
         output_path=args.output,
